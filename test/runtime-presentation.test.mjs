@@ -40,6 +40,18 @@ test('runtime presentation formats runtime/session/permission labels', () => {
     presentation.formatPermissionsLabel({ provider: 'codex', mode: 'safe' }, 'zh'),
     '沙盒自动审查（workspace-write，approval auto_review）',
   );
+  assert.equal(
+    presentation.formatPermissionsLabel({ provider: 'pi', mode: 'safe' }, 'en'),
+    'read-only tools (--no-approve --tools read)',
+  );
+  assert.equal(
+    presentation.formatPermissionsLabel({ provider: 'omp', mode: 'safe' }, 'en'),
+    'write approval mode (--approval-mode write)',
+  );
+  assert.equal(
+    presentation.formatPermissionsLabel({ provider: 'omp', mode: 'dangerous' }, 'en'),
+    'full access (--approval-mode yolo)',
+  );
 });
 
 test('runtime presentation localizes and renders process/progress helper lines', () => {

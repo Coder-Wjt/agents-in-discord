@@ -58,6 +58,7 @@ import {
   readAntigravitySessionState,
   readClaudeSessionMetaBySessionId,
   readCodexSessionMetaBySessionId,
+  readPiFamilySessionMetaBySessionId,
   resolveAntigravityProjectRootBySessionId,
 } from './provider-sessions.js';
 import { stopChildProcess } from './channel-runtime.js';
@@ -347,6 +348,8 @@ const CODEX_BIN = (process.env.CODEX_BIN || 'codex').trim() || 'codex';
 const CLAUDE_BIN = (process.env.CLAUDE_BIN || 'claude').trim() || 'claude';
 const ANTIGRAVITY_BIN = (process.env.ANTIGRAVITY_BIN || 'agy').trim() || 'agy';
 const ZCODE_BIN = (process.env.ZCODE_BIN || 'zcode').trim() || 'zcode';
+const PI_BIN = (process.env.PI_BIN || 'pi').trim() || 'pi';
+const OMP_BIN = (process.env.OMP_BIN || 'omp').trim() || 'omp';
 const SHOW_REASONING = String(process.env.SHOW_REASONING || 'false').toLowerCase() === 'true';
 const DEBUG_EVENTS = String(process.env.DEBUG_EVENTS || 'false').toLowerCase() === 'true';
 const PROGRESS_UPDATES_ENABLED = String(process.env.PROGRESS_UPDATES_ENABLED || 'true').toLowerCase() !== 'false';
@@ -444,12 +447,16 @@ const getProviderBin = (provider) => getProviderBinBase(provider, {
   claudeBin: CLAUDE_BIN,
   antigravityBin: ANTIGRAVITY_BIN,
   zcodeBin: ZCODE_BIN,
+  piBin: PI_BIN,
+  ompBin: OMP_BIN,
 });
 const getCliHealth = (provider = DEFAULT_PROVIDER) => getCliHealthBase(provider, {
   codexBin: CODEX_BIN,
   claudeBin: CLAUDE_BIN,
   antigravityBin: ANTIGRAVITY_BIN,
   zcodeBin: ZCODE_BIN,
+  piBin: PI_BIN,
+  ompBin: OMP_BIN,
   spawnEnv: SPAWN_ENV,
   safeError,
 });
@@ -569,6 +576,9 @@ const appContext = createAppContext({
       if (provider === 'codex') return readCodexSessionMetaBySessionId(sessionId)?.cwd || null;
       if (provider === 'claude') return readClaudeSessionMetaBySessionId(sessionId)?.cwd || null;
       if (provider === 'antigravity') return resolveAntigravityProjectRootBySessionId(sessionId) || null;
+      if (provider === 'pi' || provider === 'omp') {
+        return readPiFamilySessionMetaBySessionId(provider, sessionId)?.cwd || null;
+      }
       return null;
     },
   },
@@ -579,6 +589,7 @@ const appContext = createAppContext({
     writeCodexDefaults,
     readCodexSessionMetaBySessionId,
     readClaudeSessionMetaBySessionId,
+    readPiFamilySessionMetaBySessionId,
     resolveAntigravityProjectRootBySessionId,
     formatProviderSessionLabel,
     formatRecentSessionsTitle,

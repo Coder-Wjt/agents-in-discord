@@ -169,6 +169,22 @@ test('createReportFormatters.formatStatusReport uses provider defaults for model
   assert.doesNotMatch(report, /\(unknown\)/);
 });
 
+test('createReportFormatters.formatStatusReport shows the last observed Claude runtime model', () => {
+  const formatters = createFormatters();
+  const session = {
+    provider: 'claude',
+    language: 'zh',
+    mode: 'safe',
+    model: 'opus',
+    lastObservedModel: 'claude-opus-5',
+  };
+
+  const report = formatters.formatStatusReport('thread-1', session, { id: 'channel-1' });
+
+  assert.match(report, /model: `claude-opus-5`（实际运行）/);
+  assert.doesNotMatch(report, /model: `opus`（频道覆盖）/);
+});
+
 test('createReportFormatters.formatStatusReport shows extra info token cost', () => {
   const formatters = createFormatters({
     resolveExtraInfoSetting: () => ({
@@ -486,7 +502,7 @@ test('createReportFormatters.formatHelpReport documents browse actions and provi
   const sharedHelp = sharedFormatters.formatHelpReport({ language: 'en' });
   const lockedHelp = lockedFormatters.formatHelpReport({ language: 'en' });
 
-  assert.match(sharedHelp, /!provider <codex\|claude\|antigravity\|zcode\|status>/);
+  assert.match(sharedHelp, /!provider <codex\|claude\|antigravity\|zcode\|pi\|omp\|status>/);
   assert.match(sharedHelp, /!setdir <path\|browse\|default\|status>/);
   assert.match(sharedHelp, /!setdefaultdir <path\|browse\|clear\|status>/);
   assert.match(sharedHelp, /!dq/);
@@ -498,7 +514,7 @@ test('createReportFormatters.formatHelpReport documents browse actions and provi
   assert.doesNotMatch(antigravityHelp, /!config <key=value>/);
   assert.doesNotMatch(antigravityHelp, /!effort </);
   assert.match(antigravityHelp, /raw config passthrough/);
-  assert.doesNotMatch(lockedHelp, /!provider <codex\|claude\|antigravity\|zcode\|status>/);
+  assert.doesNotMatch(lockedHelp, /!provider <codex\|claude\|antigravity\|zcode\|pi\|omp\|status>/);
 });
 
 test('createReportFormatters.workspace reports explain session reset and lock owner', () => {
