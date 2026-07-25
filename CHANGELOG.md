@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 The format is based on Keep a Changelog and this project follows Semantic Versioning.
 
+## [0.14.0] - 2026-07-25
+
+### Added
+- Added Pi Agent and Oh My Pi as shared or dedicated providers, covering CLI argument building, event parsing, session resume and compaction, status and permission-mode labels, slash prefixes, settings and onboarding entries, launch scripts, and service restart support.
+- Added Claude model discovery from local `settings.json`, including `ANTHROPIC_DEFAULT_*_MODEL` overrides and the fable tier, so configured models appear in the model menu.
+- Added `--nonce` to the channel message script so a retried send is deduplicated by Discord instead of posting twice.
+
+### Changed
+- Kept tool and command activity out of the streamed process narration, so tool-heavy runs no longer bury what the agent says about its own progress. Tool progress stays visible on the latest-activity line and in completed milestones.
+- Gave agent narration priority over mechanical tool labels on the latest-activity line, with errors still taking precedence over both.
+- Showed the model observed in Claude runtime events on the progress card instead of reporting an unknown model when no default is configured.
+
+### Fixed
+- Fixed Claude CLI help parsing that truncated multi-line `--model` and `--effort` option blocks to their first line.
+- Forwarded native Codex progress events and restored Codex process commentary.
+
 ## [0.13.0] - 2026-07-21
 
 ### Added
