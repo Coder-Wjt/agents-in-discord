@@ -1,6 +1,6 @@
 # Agents in Discord
 
-A standalone Discord bot that lets you direct **Codex CLI**, **Claude Code**, **Antigravity CLI**, and **ZCode CLI** from inside Discord.
+A standalone Discord bot that lets you direct **Codex CLI**, **Claude Code**, **Antigravity CLI**, **ZCode CLI**, **Pi Agent**, and **Oh My Pi** from inside Discord.
 
 > This project is a standalone Discord bot / bridge. It is **not** an OpenClaw plugin, and it does **not** depend on OpenClaw to run.
 
@@ -52,7 +52,7 @@ ZCode CLI support is available starting with [v0.13.0](https://github.com/atou42
 - If the CLI itself needs login, complete that in the CLI first; this project does not manage provider auth in `.env`
 - One or two Discord Application/Bot tokens
   - Shared mode: one bot token is enough
-  - Dedicated mode: use separate tokens for Codex, Claude, Antigravity, and ZCode bots
+  - Dedicated mode: use separate tokens for Codex, Claude, Antigravity, ZCode, Pi, and OMP bots
 
 ## Quickstart
 
@@ -124,9 +124,11 @@ npm run start:codex
 npm run start:claude
 npm run start:antigravity
 npm run start:zcode
+npm run start:pi
+npm run start:omp
 ```
 
-Use plain keys for shared Discord/runtime settings, then put dedicated bot settings under `CODEX__*`, `CLAUDE__*`, `ANTIGRAVITY__*`, and `ZCODE__*` sections in the same file. In practice, you usually only need `DISCORD_TOKEN`, optional `DEFAULT_MODEL`, optional `DEFAULT_MODE`, and optional CLI path overrides. ZCode maps safe mode to `edit` and dangerous mode to `yolo`. Antigravity currently has no public `--model` launch flag, so this bridge applies Antigravity model choices through `~/.gemini/antigravity-cli/settings.json`; the model menu merges the current settings value, Antigravity's documented reasoning models, and models observed in local CLI logs. Each locked instance uses its own provider-scoped state file and process lock, so channel/session context does not mix across bots.
+Use plain keys for shared Discord/runtime settings, then put dedicated bot settings under `CODEX__*`, `CLAUDE__*`, `ANTIGRAVITY__*`, `ZCODE__*`, `PI__*`, and `OMP__*` sections in the same file. In practice, you usually only need `DISCORD_TOKEN`, optional `DEFAULT_MODEL`, optional `DEFAULT_MODE`, and optional CLI path overrides. Pi and OMP share a compatibility layer while keeping their session stores, resume flags, and permission flags separate. Each locked instance uses its own provider-scoped state file and process lock, so channel/session context does not mix across bots.
 
 ## Configuration (.env)
 
