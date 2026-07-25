@@ -1,4 +1,4 @@
-const PROVIDER_CHOICES = Object.freeze(['codex', 'claude', 'antigravity', 'zcode']);
+const PROVIDER_CHOICES = Object.freeze(['codex', 'claude', 'antigravity', 'zcode', 'pi', 'omp']);
 
 function formatWorkspaceSourceLabel(source, language) {
   const value = String(source || '').trim().toLowerCase();
@@ -248,12 +248,14 @@ export function createOnboardingFlow({
     if (current === 2) {
       if (botProvider) return null;
       const activeProvider = getSessionProvider(session);
-      return new ActionRowBuilder().addComponents(
-        ...PROVIDER_CHOICES.map((provider) => new ButtonBuilder()
-          .setCustomId(buildOnboardingButtonId('set_provider', current, userId, provider))
-          .setLabel(provider)
-          .setStyle(activeProvider === provider ? ButtonStyle.Primary : ButtonStyle.Secondary)),
-      );
+      return Array.from({ length: Math.ceil(PROVIDER_CHOICES.length / 5) }, (_, index) => (
+        new ActionRowBuilder().addComponents(
+          ...PROVIDER_CHOICES.slice(index * 5, index * 5 + 5).map((provider) => new ButtonBuilder()
+            .setCustomId(buildOnboardingButtonId('set_provider', current, userId, provider))
+            .setLabel(provider)
+            .setStyle(activeProvider === provider ? ButtonStyle.Primary : ButtonStyle.Secondary)),
+        )
+      ));
     }
 
     if (current === 3) {
@@ -304,7 +306,8 @@ export function createOnboardingFlow({
     ];
 
     const configRow = buildOnboardingConfigRow(current, key, userId, session, lang);
-    if (configRow) rows.push(configRow);
+    if (Array.isArray(configRow)) rows.push(...configRow);
+    else if (configRow) rows.push(configRow);
     return rows;
   }
 

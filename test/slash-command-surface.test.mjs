@@ -142,7 +142,7 @@ test('buildSlashCommands exposes browse keyword in workspace option descriptions
   assert.match(setdefaultdir.options[0].description, /browse/);
 });
 
-test('buildSlashCommands exposes Antigravity and ZCode as provider choices', () => {
+test('buildSlashCommands exposes all supported provider choices', () => {
   const commands = buildSlashCommands({
     SlashCommandBuilder: MockSlashCommandBuilder,
     slashPrefix: 'cx',
@@ -152,7 +152,7 @@ test('buildSlashCommands exposes Antigravity and ZCode as provider choices', () 
   const provider = commands.find((command) => command.name === 'cx_provider');
   const choices = provider.options[0].choices.map((choice) => choice.value);
 
-  assert.deepEqual(choices, ['codex', 'claude', 'antigravity', 'zcode', 'status']);
+  assert.deepEqual(choices, ['codex', 'claude', 'antigravity', 'zcode', 'pi', 'omp', 'status']);
 });
 
 test('buildSlashCommands registers model as a picker-only command', () => {

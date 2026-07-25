@@ -306,6 +306,24 @@ test('createSettingsPanel opens an overview payload with key channel settings', 
   assert.equal(payload.components[1].components[0].data.label, '关闭');
 });
 
+test('createSettingsPanel keeps provider button rows within Discord limits', () => {
+  const session = { provider: 'codex', language: 'zh', mode: 'safe' };
+  const panel = createPanel({ session });
+
+  const payload = panel.openSettingsPanel({
+    key: 'thread-1',
+    session,
+    userId: '12345',
+    activeSection: 'provider',
+  });
+
+  const labels = payload.components
+    .flatMap((row) => row.components.map((component) => component.data.label))
+    .filter((label) => ['codex', 'claude', 'antigravity', 'zcode', 'pi', 'omp'].includes(label));
+  assert.deepEqual(labels, ['codex', 'claude', 'antigravity', 'zcode', 'pi', 'omp']);
+  assert.ok(payload.components.every((row) => row.components.length <= 5));
+});
+
 test('createSettingsPanel defaults to the global codex defaults section', () => {
   const session = {
     provider: 'codex',

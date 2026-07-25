@@ -45,8 +45,8 @@ test('buildSlashCommandEntries includes aliases and provider toggle only in shar
   assert.equal(Array.isArray(newEntry.aliases), false);
   assert.ok(settingsEntry);
   assert.deepEqual(cancelEntry.aliases, ['abort']);
-  assert.deepEqual(sessionsEntry.aliases, ['rollout_sessions', 'project_sessions', 'conversation_sessions', 'chat_sessions', 'zcode_sessions']);
-  assert.deepEqual(resumeEntry.aliases, ['rollout_resume', 'project_resume', 'conversation_resume', 'chat_resume', 'zcode_resume']);
+  assert.deepEqual(sessionsEntry.aliases, ['rollout_sessions', 'project_sessions', 'conversation_sessions', 'chat_sessions', 'zcode_sessions', 'pi_sessions', 'omp_sessions']);
+  assert.deepEqual(resumeEntry.aliases, ['rollout_resume', 'project_resume', 'conversation_resume', 'chat_resume', 'zcode_resume', 'pi_resume', 'omp_resume']);
   assert.ok(fastEntry);
   assert.ok(runtimeEntry);
   assert.ok(forkEntry);
@@ -76,6 +76,12 @@ test('buildSlashCommandEntries includes aliases and provider toggle only in shar
   const zcodeEntries = buildSlashCommandEntries({ botProvider: 'zcode' });
   assert.deepEqual(zcodeEntries.find((entry) => entry.name === 'sessions').aliases, ['zcode_sessions']);
   assert.deepEqual(zcodeEntries.find((entry) => entry.name === 'resume').aliases, ['zcode_resume']);
+  const piEntries = buildSlashCommandEntries({ botProvider: 'pi' });
+  assert.deepEqual(piEntries.find((entry) => entry.name === 'sessions').aliases, ['pi_sessions']);
+  assert.deepEqual(piEntries.find((entry) => entry.name === 'resume').aliases, ['pi_resume']);
+  const ompEntries = buildSlashCommandEntries({ botProvider: 'omp' });
+  assert.deepEqual(ompEntries.find((entry) => entry.name === 'sessions').aliases, ['omp_sessions']);
+  assert.deepEqual(ompEntries.find((entry) => entry.name === 'resume').aliases, ['omp_resume']);
   assert.deepEqual(
     lockedCompact.configure({
       addStringOption(configure) {

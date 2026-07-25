@@ -638,14 +638,13 @@ export function createSettingsPanel({
     switch (activeSection) {
       case 'provider': {
         if (botProvider) return [];
-        return [
-          new ActionRowBuilder().addComponents(
-            ...['codex', 'claude', 'antigravity', 'zcode'].map((provider) => new ButtonBuilder()
+        return chunk(['codex', 'claude', 'antigravity', 'zcode', 'pi', 'omp'], 5)
+          .map((providers) => new ActionRowBuilder().addComponents(
+            ...providers.map((provider) => new ButtonBuilder()
               .setCustomId(buildSettingsComponentId('set', 'provider', provider, userId))
               .setLabel(provider)
               .setStyle(snapshot.provider === provider ? ButtonStyle.Primary : ButtonStyle.Secondary)),
-          ),
-        ];
+          ));
       }
 
       case 'defaults': {
