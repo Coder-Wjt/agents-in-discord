@@ -157,6 +157,7 @@ Important knobs:
 - `SLASH_PREFIX`: shared/global slash prefix; default `cx` in shared mode (e.g. `/cx_status`)
 - `CODEX__SLASH_PREFIX` / `CLAUDE__SLASH_PREFIX` / `ANTIGRAVITY__SLASH_PREFIX` / `ZCODE__SLASH_PREFIX`: dedicated-bot slash prefix overrides; defaults are `cx`, `cc`, `ag`, and `zc`
 - `DEFAULT_UI_LANGUAGE`: default bot message language for new channels (`zh` or `en`, default `zh`)
+- `SHOW_REASONING`: stream model reasoning summaries onto the progress card (default `false`). The CLI has to emit reasoning events as well — for Codex, set `model_reasoning_summary = "detailed"` in `~/.codex/config.toml`. Note that `gpt-5.6` models (sol/terra/luna) emit no reasoning events under codex-cli 0.144.0, since their `models_cache.json` entries omit the `supports_reasoning_summaries` field the CLI requires; `gpt-5.4` does emit them.
 - `ONBOARDING_ENABLED_DEFAULT`: onboarding default for new channels (`true` or `false`, default `true`)
 - `DEFAULT_MODE`: `safe` or `dangerous`; the example `.env` now uses **`dangerous` by default** so local devs get full power out of the box. For shared / prod servers you should:
   - change `CODEX__DEFAULT_MODE` / `CLAUDE__DEFAULT_MODE` / `ANTIGRAVITY__DEFAULT_MODE` / `ZCODE__DEFAULT_MODE` back to `safe` in `.env`, and only enable `/cx_mode dangerous` in trusted channels; or

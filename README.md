@@ -186,6 +186,14 @@ COMPACT_ON_THRESHOLD=true
 MAX_INPUT_TOKENS_BEFORE_COMPACT=272000
 ```
 
+进度卡默认只展示 agent 自己的过程叙述，不展示模型的 reasoning 摘要。想开的话设 `SHOW_REASONING=true`，同时 CLI 那边也要产出 reasoning 事件——Codex 需要在 `~/.codex/config.toml` 里设 `model_reasoning_summary = "detailed"`。
+
+注意 codex-cli 0.144.0 下 `gpt-5.6` 系列（sol/terra/luna）不产出 reasoning 事件，因为它们在 `~/.codex/models_cache.json` 里缺少 CLI 要求的 `supports_reasoning_summaries` 字段；`gpt-5.4` 可以正常产出。另外 reasoning 是摘要而非完整思维链，内容通常比过程叙述短。
+
+```env
+SHOW_REASONING=false
+```
+
 ## 代理
 
 如果 Discord 或 CLI 需要走代理，可以设置：
