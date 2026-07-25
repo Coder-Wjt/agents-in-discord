@@ -6,39 +6,13 @@ import { createSessionSettings } from './session-settings.js';
 import { createSessionIdentityHelpers } from './session-identity.js';
 import { createCommandSurface } from './command-surface.js';
 import { createWorkspaceRuntime } from './workspace-runtime.js';
-import { createDiscordAccessPolicy } from './discord-access-policy.js';
-import { createDiscordEntryHandlers } from './discord-entry-handlers.js';
-import { createDiscordLifecycle } from './discord-lifecycle.js';
-import { createDiscordPlatformAdapter } from './platforms/discord/adapter.js';
-import { createDiscordPlatformFoundation } from './platforms/discord/foundation.js';
 import { assertPlatformFoundation } from './platforms/foundation.js';
-import { createDiscordMessageDelivery } from './platforms/discord/message-delivery.js';
-import { createDiscordNotificationDelivery } from './platforms/discord/notification-delivery.js';
 import { assertPlatformAdapter } from './platforms/contracts.js';
-import { createDiscordCommandViewRenderer } from './platforms/discord/command-view-renderer.js';
-import { createDiscordCommandRegistryRenderer } from './platforms/discord/command-registry-renderer.js';
-import { createDiscordInteractionResponse } from './platforms/discord/interaction-response.js';
-import { createDiscordConversationSpawn } from './platforms/discord/conversation-spawn.js';
-import { createDiscordConversationPresentation } from './platforms/discord/conversation-presentation.js';
-import { createDiscordConversationSecurity } from './platforms/discord/conversation-security.js';
-import { createDiscordTextPresentation } from './platforms/discord/text-presentation.js';
-import { DISCORD_PLATFORM_CAPABILITIES } from './platforms/capabilities.js';
-import {
-  createCapabilityAwareCommandRegistryRenderer,
-  createCapabilityAwareCommandViewRenderer,
-  createCapabilityAwareInteractionResponse,
-} from './platforms/command-ui-policy.js';
-import {
-  createCapabilityAwareInboundEventNormalizer,
-  createCapabilityAwareMessageDelivery,
-} from './platforms/runtime-capability-policy.js';
 import { createSingleInstanceLock } from './single-instance-lock.js';
 import { formatWorkspaceBusyReport as formatWorkspaceBusyReportBase } from './workspace-busy-report.js';
 
 export function createAppContext({
-  platformCapabilities = DISCORD_PLATFORM_CAPABILITIES,
-  platformFoundation = null,
-  platformFoundationOptions = {},
+  platformFoundation,
   identityOptions = {},
   sessionSettingsOptions = {},
   securityPolicyOptions = {},
@@ -46,15 +20,6 @@ export function createAppContext({
   commandActionsOptions = {},
   workspaceRuntimeOptions = {},
   promptRuntimeOptions = {},
-  messageDeliveryOptions = {},
-  notificationDeliveryOptions = {},
-  commandViewRendererOptions = {},
-  commandRegistryRendererOptions = {},
-  interactionResponseOptions = {},
-  conversationSpawnOptions = {},
-  conversationPresentationOptions = {},
-  conversationSecurityOptions = {},
-  textPresentationOptions = {},
   commandSurfaceOptions = {},
   accessPolicyOptions = {},
   entryHandlerOptions = {},
@@ -71,85 +36,10 @@ export function createAppContext({
     createWorkspaceRuntimeFn = createWorkspaceRuntime,
     createPromptRuntimeFn = createPromptRuntime,
     createCommandSurfaceFn = createCommandSurface,
-    createMessageDeliveryFn = createDiscordMessageDelivery,
-    createNotificationDeliveryFn = createDiscordNotificationDelivery,
-    createCommandViewRendererFn = createDiscordCommandViewRenderer,
-    createCommandRegistryRendererFn = createDiscordCommandRegistryRenderer,
-    createInteractionResponseFn = createDiscordInteractionResponse,
-    createConversationSpawnFn = createDiscordConversationSpawn,
-    createConversationPresentationFn = createDiscordConversationPresentation,
-    createConversationSecurityFn = createDiscordConversationSecurity,
-    createTextPresentationFn = createDiscordTextPresentation,
-    createCapabilityAwareCommandRegistryRendererFn = createCapabilityAwareCommandRegistryRenderer,
-    createCapabilityAwareCommandViewRendererFn = createCapabilityAwareCommandViewRenderer,
-    createCapabilityAwareInteractionResponseFn = createCapabilityAwareInteractionResponse,
-    createCapabilityAwareInboundEventNormalizerFn = createCapabilityAwareInboundEventNormalizer,
-    createCapabilityAwareMessageDeliveryFn = createCapabilityAwareMessageDelivery,
-    createPlatformAdapterFn = createDiscordPlatformAdapter,
-    createPlatformFoundationFn = createDiscordPlatformFoundation,
-    createDiscordAccessPolicyFn = createDiscordAccessPolicy,
-    createDiscordEntryHandlersFn = createDiscordEntryHandlers,
-    createDiscordLifecycleFn = createDiscordLifecycle,
     createSingleInstanceLockFn = createSingleInstanceLock,
   } = factories;
 
-  const {
-    SlashCommandBuilder: foundationSlashCommandBuilder,
-    slashPrefix: foundationSlashPrefix = '',
-  } = commandSurfaceOptions;
-  const foundationPromptOrchestratorOptions = promptRuntimeOptions.promptOrchestratorOptions || {};
-  const {
-    factories: platformFoundationFactoryOverrides = {},
-    ...platformFoundationRest
-  } = platformFoundationOptions;
-  const resolvedPlatformFoundation = assertPlatformFoundation(
-    platformFoundation || createPlatformFoundationFn({
-      capabilities: platformCapabilities,
-      commandRegistryRendererOptions: {
-        SlashCommandBuilder: foundationSlashCommandBuilder,
-        slashPrefix: foundationSlashPrefix,
-        ...commandRegistryRendererOptions,
-      },
-      commandViewRendererOptions,
-      messageDeliveryOptions: {
-        reply: foundationPromptOrchestratorOptions.safeReply,
-        send: foundationPromptOrchestratorOptions.safeChannelSend,
-        splitText: foundationPromptOrchestratorOptions.splitForDiscord,
-        ...messageDeliveryOptions,
-      },
-      notificationDeliveryOptions,
-      interactionResponseOptions: {
-        logger: entryHandlerOptions.logger,
-        withDiscordNetworkRetry: entryHandlerOptions.withDiscordNetworkRetry,
-        ...interactionResponseOptions,
-      },
-      conversationSpawnOptions,
-      conversationPresentationOptions,
-      conversationSecurityOptions: {
-        permissionFlagsBits: securityPolicyOptions.permissionFlagsBits,
-        ...conversationSecurityOptions,
-      },
-      textPresentationOptions,
-      ...platformFoundationRest,
-      factories: {
-        createAdapter: createPlatformAdapterFn,
-        createCommandRegistryRenderer: createCommandRegistryRendererFn,
-        createCommandViewRenderer: createCommandViewRendererFn,
-        createInteractionResponse: createInteractionResponseFn,
-        createMessageDelivery: createMessageDeliveryFn,
-        createNotificationDelivery: createNotificationDeliveryFn,
-        createConversationSpawn: createConversationSpawnFn,
-        createConversationPresentation: createConversationPresentationFn,
-        createConversationSecurity: createConversationSecurityFn,
-        createTextPresentation: createTextPresentationFn,
-        createCommandRegistryPolicy: createCapabilityAwareCommandRegistryRendererFn,
-        createCommandViewPolicy: createCapabilityAwareCommandViewRendererFn,
-        createInteractionResponsePolicy: createCapabilityAwareInteractionResponseFn,
-        createMessageDeliveryPolicy: createCapabilityAwareMessageDeliveryFn,
-        ...platformFoundationFactoryOverrides,
-      },
-    }),
-  );
+  const resolvedPlatformFoundation = assertPlatformFoundation(platformFoundation);
   const resolvedPlatformCapabilities = resolvedPlatformFoundation.capabilities;
 
   const identity = createSessionIdentityHelpersFn(identityOptions);
@@ -191,8 +81,6 @@ export function createAppContext({
   });
   const workspaceRuntime = createWorkspaceRuntimeFn(workspaceRuntimeOptions);
   const {
-    SlashCommandBuilder: legacySlashCommandBuilder,
-    slashPrefix: legacySlashPrefix = '',
     onboardingOptions = {},
     settingsPanelOptions = {},
     reportOptions = {},
@@ -201,8 +89,6 @@ export function createAppContext({
     textCommandOptions = {},
     ...commandSurfaceRest
   } = commandSurfaceOptions;
-  void legacySlashCommandBuilder;
-  void legacySlashPrefix;
   const commandRegistryRenderer = resolvedPlatformFoundation.commandRegistryRenderer;
   const promptSlashRef = (base) => commandRegistryRenderer.formatCommandReference(base);
   const formatWorkspaceBusyReport = (session, workspaceDir, owner = null) => formatWorkspaceBusyReportBase(
@@ -503,16 +389,6 @@ export function createAppContext({
     lifecycleOptions: {
       ...lifecycleOptions,
       cancelAllChannelWork: promptRuntime.cancelAllChannelWork,
-    },
-    factories: {
-      createAccessPolicy: createDiscordAccessPolicyFn,
-      createEntryHandlers: createDiscordEntryHandlersFn,
-      createLifecycle: createDiscordLifecycleFn,
-      createCommandRegistryPolicy: createCapabilityAwareCommandRegistryRendererFn,
-      createCommandViewPolicy: createCapabilityAwareCommandViewRendererFn,
-      createInteractionResponsePolicy: createCapabilityAwareInteractionResponseFn,
-      createEventNormalizerPolicy: createCapabilityAwareInboundEventNormalizerFn,
-      createMessageDeliveryPolicy: createCapabilityAwareMessageDeliveryFn,
     },
   }));
   if (platformAdapter.id !== resolvedPlatformFoundation.id) {

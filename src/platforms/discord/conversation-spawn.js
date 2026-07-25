@@ -5,22 +5,23 @@ import {
   assertConversationSpawn,
   assertSpawnedConversation,
 } from '../conversation-spawn.js';
+import { createInboundMessageContext } from '../inbound-event.js';
 
 function normalizeId(value) {
   return String(value || '').trim() || null;
 }
 
 function getSourceChannel(source) {
-  return source?.conversation?.raw || source?.channel || null;
+  return source?.conversation?.raw || null;
 }
 
 function getSourceActor(source) {
-  return source?.actor?.raw || source?.user || source?.author || {};
+  return source?.actor?.raw || {};
 }
 
 function getSourceClient(source) {
   const channel = getSourceChannel(source);
-  return source?.client || channel?.client || source?.guild?.client || null;
+  return channel?.client || source?.responseTarget?.client || null;
 }
 
 function resolveThreadCreateChannel(channel) {
@@ -67,7 +68,6 @@ function normalizeRecentMessage(message, currentBotUserId) {
     text: String(message?.content || '').trim(),
     createdAtMs: Number(message?.createdTimestamp || 0),
     actor,
-    author: actor,
     raw: message,
   });
 }
@@ -274,26 +274,15 @@ export function createDiscordConversationSpawn({
     });
     const actor = normalizePromptActor(source);
     const normalizedConversation = normalizePromptConversation(source, resolvedConversation, target);
-    const author = actor.raw || { id: actor.id, bot: actor.isBot };
     const client = getSourceClient(source) || target?.client || null;
     const reactions = {
       cache: {
         get: () => ({ users: { remove: async () => {} } }),
       },
     };
-    return {
-      id: String(source?.id || `fork-${Date.now()}`),
-      platformId: 'discord',
-      actor,
-      conversation: normalizedConversation,
-      channelId: resolvedConversation.id,
+    const responseTarget = {
       channel: target,
-      author,
       client,
-      system: false,
-      content: '',
-      attachments: [],
-      replyToMessageId: null,
       reactions,
       react: async () => {},
       reply: async (payload) => (
@@ -301,8 +290,22 @@ export function createDiscordConversationSpawn({
           ? reply(source, payload)
           : target.send(payload)
       ),
-      raw: source?.raw || source || null,
     };
+    return createInboundMessageContext({
+      type: 'message',
+      platformId: 'discord',
+      id: String(source?.id || `fork-${Date.now()}`),
+      actor,
+      conversation: normalizedConversation,
+      rawText: '',
+      text: '',
+      attachments: [],
+      replyToMessageId: null,
+      isSystem: false,
+      targetsBot: false,
+      responseTarget,
+      raw: responseTarget,
+    });
   }
 
   function formatUserMention(userId) {

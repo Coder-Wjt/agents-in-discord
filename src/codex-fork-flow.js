@@ -132,8 +132,6 @@ export function canSpawnForkConversation(source, conversationSpawn) {
   return Boolean(conversationSpawn?.canSpawn?.(source));
 }
 
-export const canCreateDiscordForkThread = canSpawnForkConversation;
-
 export function createSyntheticForkMessage(source, childConversation, conversationSpawn) {
   return assertConversationSpawn(conversationSpawn).createPromptMessage(source, childConversation);
 }
@@ -283,7 +281,7 @@ export async function createProviderForkThread({
     }),
     reason: `${normalizedProvider} fork from ${normalizedParentSessionId}`,
   }));
-  const childThread = childConversation.raw;
+  const childConversationTarget = childConversation.raw;
   if (!childConversation.id) {
     throw new Error(`${presentation.getTerm('childConversation', 'en')} creation did not return a ${presentation.getTerm('childConversationId', 'en')}`);
   }
@@ -361,7 +359,7 @@ export async function createProviderForkThread({
       try {
         const syntheticMessage = createSyntheticForkMessage(source, childConversation, conversationPort);
         const securityContext = typeof resolveSecurityContext === 'function'
-          ? resolveSecurityContext(childThread, childSession)
+          ? resolveSecurityContext(childConversationTarget, childSession)
           : null;
         promptQueue = await enqueuePrompt(syntheticMessage, childConversation.id, normalizedPrompt, securityContext);
       } catch (err) {
@@ -382,7 +380,6 @@ export async function createProviderForkThread({
     forkedFromId: normalizeForkSessionId(forkResult?.forkedFromId) || normalizedParentSessionId,
     childConversation,
     childConversationReference: conversationPort.formatConversationReference(childConversation.id),
-    childThread,
     childSession,
     binding,
     notice,
@@ -442,7 +439,6 @@ export function formatProviderForkResult(
 
   const channelLabel = result.childConversationReference
     || result.childConversation?.id
-    || result.childThread?.name
     || `(new ${presentation.getTerm('childConversationShort', 'en')})`;
   const promptQueued = result.promptQueue?.enqueued;
   const queuedAhead = Number(result.promptQueue?.queuedAhead || 0);

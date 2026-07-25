@@ -1315,7 +1315,7 @@ test('createSlashCommandRouter sets a Codex goal from modal submit', async () =>
   assert.equal(queuedPrompts[0].key, 'channel-1');
   assert.match(queuedPrompts[0].content, /Continue working toward the active Codex goal/);
 
-  await queuedPrompts[0].message.reply('runtime progress card');
+  await queuedPrompts[0].message.responseTarget.reply('runtime progress card');
   assert.deepEqual(channelSends, ['runtime progress card']);
   assert.deepEqual(interactionFollowUps, []);
 });

@@ -23,11 +23,11 @@ test('stageNativeImageAttachments downloads image attachments and cleans up temp
   const writes = [];
   const removes = [];
   const message = {
-    attachments: new Map([
-      ['1', { name: 'one.jpg', contentType: 'image/jpeg', url: 'https://example.com/one.jpg' }],
-      ['2', { name: 'notes.txt', contentType: 'text/plain', url: 'https://example.com/notes.txt' }],
-      ['3', { name: 'two.png', contentType: 'image/png', url: 'https://example.com/two.png' }],
-    ]),
+    attachments: [
+      { id: '1', name: 'one.jpg', mimeType: 'image/jpeg', sizeBytes: null, url: 'https://example.com/one.jpg' },
+      { id: '2', name: 'notes.txt', mimeType: 'text/plain', sizeBytes: null, url: 'https://example.com/notes.txt' },
+      { id: '3', name: 'two.png', mimeType: 'image/png', sizeBytes: null, url: 'https://example.com/two.png' },
+    ],
   };
 
   const result = await stageNativeImageAttachments(message, {
@@ -103,9 +103,9 @@ test('stageNativeImageAttachments accepts normalized-only message attachments', 
 
 test('stageNativeImageAttachments keeps URL fallback notes when image download fails', async () => {
   const message = {
-    attachments: new Map([
-      ['1', { name: 'broken.jpg', contentType: 'image/jpeg', url: 'https://example.com/broken.jpg' }],
-    ]),
+    attachments: [
+      { id: '1', name: 'broken.jpg', mimeType: 'image/jpeg', sizeBytes: null, url: 'https://example.com/broken.jpg' },
+    ],
   };
 
   const result = await stageNativeImageAttachments(message, {

@@ -15,17 +15,21 @@ function createMessage(id, replyLog, reactionLog, overrides = {}) {
     },
   });
 
-  return {
+  const {
+    author = { id: `user-${id}` },
+    channel = { id: `channel-${id}` },
+    attachments = [],
+    ...contextOverrides
+  } = overrides;
+  const responseTarget = {
     id,
-    author: {
-      id: `user-${id}`,
-    },
+    author,
     client: {
       user: {
         id: 'bot-user',
       },
     },
-    channel: { id: `channel-${id}` },
+    channel,
     reactions: { cache },
     async react(emoji) {
       reactionLog.push({ id, emoji });
@@ -36,7 +40,23 @@ function createMessage(id, replyLog, reactionLog, overrides = {}) {
     async reply(payload) {
       replyLog.push({ id, payload });
     },
-    ...overrides,
+  };
+  return {
+    id,
+    platformId: 'test',
+    actor: { id: author.id, displayName: author.id, isBot: false, raw: author },
+    conversation: {
+      id: channel.id,
+      parentId: null,
+      isThread: false,
+      raw: channel,
+    },
+    attachments: Array.isArray(attachments) ? attachments : [...attachments.values()],
+    responseTarget,
+    get removals() {
+      return removals;
+    },
+    ...contextOverrides,
   };
 }
 

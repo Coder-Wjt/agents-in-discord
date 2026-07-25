@@ -16,10 +16,44 @@ function createTextCommandHandler(options = {}) {
 }
 
 function createMessage(overrides = {}) {
+  const {
+    id = 'message-1',
+    author = { id: 'user-1' },
+    channel = { id: 'channel-1' },
+    attachments = [],
+    reference = null,
+    ...contextOverrides
+  } = overrides;
+  const attachmentValues = Array.isArray(attachments)
+    ? attachments
+    : attachments && typeof attachments.values === 'function'
+      ? [...attachments.values()]
+      : [];
   return {
-    author: { id: 'user-1' },
-    channel: { id: 'channel-1' },
-    ...overrides,
+    id,
+    platformId: 'test',
+    actor: { id: author.id, displayName: author.id, isBot: false, raw: author },
+    conversation: {
+      id: channel.id,
+      parentId: null,
+      isThread: false,
+      raw: channel,
+    },
+    attachments: attachmentValues.map((attachment, index) => (
+      attachment?.mimeType
+        ? attachment
+        : {
+          id: attachment?.id || `attachment-${index + 1}`,
+          name: attachment?.name || 'unnamed-file',
+          mimeType: attachment?.contentType || null,
+          sizeBytes: Number.isFinite(attachment?.size) ? attachment.size : null,
+          url: attachment?.url || attachment?.proxyURL || null,
+          raw: attachment,
+        }
+    )),
+    replyToMessageId: reference?.messageId || reference?.message_id || null,
+    responseTarget: { id, author, channel, attachments, reference },
+    ...contextOverrides,
   };
 }
 
@@ -395,7 +429,7 @@ test('createTextCommandHandler shows compact help for removed manual continue su
     },
   });
 
-  await handleCommand({ channel: { id: 'channel-1' }, author: { id: 'user-1' } }, 'thread-1', '!compact continue');
+  await handleCommand(createMessage(), 'thread-1', '!compact continue');
 
   assert.deepEqual(replies, ['compact-help']);
 });
@@ -518,7 +552,7 @@ test('createTextCommandHandler creates native Codex fork from text command', asy
     },
   });
 
-  await handleCommand({
+  await handleCommand(createMessage({
     id: 'message-1',
     author: { id: 'user-1' },
     channel: {
@@ -530,7 +564,7 @@ test('createTextCommandHandler creates native Codex fork from text command', asy
         },
       },
     },
-  }, 'channel-1', '!fork My fork thread');
+  }), 'channel-1', '!fork My fork thread');
 
   assert.equal(parentSession.runnerSessionId, 'parent-1');
   assert.equal(childSession.runnerSessionId, 'fork-session-1');
@@ -658,7 +692,7 @@ test('createTextCommandHandler refuses Codex side on exec runtime before creatin
     },
   });
 
-  await handleCommand({
+  await handleCommand(createMessage({
     id: 'message-1',
     author: { id: 'user-1' },
     channel: {
@@ -670,7 +704,7 @@ test('createTextCommandHandler refuses Codex side on exec runtime before creatin
         },
       },
     },
-  }, 'channel-1', '!side');
+  }), 'channel-1', '!side');
 
   assert.deepEqual(threadCreates, []);
   assert.match(replies[0], /需要 Codex long runtime/);
@@ -718,7 +752,7 @@ test('createTextCommandHandler creates native Claude fork from text command', as
     },
   });
 
-  await handleCommand({
+  await handleCommand(createMessage({
     id: 'message-1',
     author: { id: 'user-1' },
     channel: {
@@ -730,7 +764,7 @@ test('createTextCommandHandler creates native Claude fork from text command', as
         },
       },
     },
-  }, 'channel-1', '!fork Claude fork thread');
+  }), 'channel-1', '!fork Claude fork thread');
 
   assert.equal(parentSession.runnerSessionId, 'parent-claude-1');
   assert.match(childSession.runnerSessionId, /^[0-9a-f-]{36}$/i);
@@ -863,7 +897,14 @@ test('createTextCommandHandler includes goal message attachments in the objectiv
   assert.match(calls[0].objective, /use this image as the goal spec/);
   assert.match(calls[0].objective, /Attachments:/);
   assert.match(calls[0].objective, /brief\.png/);
-  assert.equal(queuedPrompts[0].message.attachments, attachments);
+  assert.deepEqual(queuedPrompts[0].message.attachments, [{
+    id: 'attachment-1',
+    name: 'brief.png',
+    mimeType: 'image/png',
+    sizeBytes: 1234,
+    url: 'https://cdn.example/brief.png',
+    raw: attachments.get('a1'),
+  }]);
   assert.match(replies[0], /brief\.png/);
 });
 

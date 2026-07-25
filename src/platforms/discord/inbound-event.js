@@ -78,6 +78,7 @@ export function createDiscordInboundEventNormalizer() {
         && doesMessageTargetBot(message, normalizedBotUserId)
       ),
       client: message?.client || channel?.client || null,
+      responseTarget: message,
       raw: message,
     });
   }

@@ -4,6 +4,50 @@ import assert from 'node:assert/strict';
 import { buildConversationBridgePromptLine, createPromptOrchestrator } from '../src/prompt-orchestrator.js';
 import { createDiscordMessageDelivery } from '../src/platforms/discord/message-delivery.js';
 
+function createMessage(rawMessage = {}) {
+  if (rawMessage?.actor && rawMessage?.conversation && Array.isArray(rawMessage?.attachments)) {
+    return rawMessage;
+  }
+  const rawActor = rawMessage.author || { id: 'user-1' };
+  const rawConversation = rawMessage.channel || { id: 'thread-1' };
+  const attachmentValues = Array.isArray(rawMessage.attachments)
+    ? rawMessage.attachments
+    : rawMessage.attachments && typeof rawMessage.attachments.values === 'function'
+      ? [...rawMessage.attachments.values()]
+      : [];
+  return {
+    id: String(rawMessage.id || 'message-1'),
+    platformId: 'test',
+    content: String(rawMessage.content || ''),
+    actor: {
+      id: String(rawActor.id || 'user-1'),
+      displayName: String(rawActor.displayName || rawActor.username || rawActor.id || 'user-1'),
+      isBot: Boolean(rawActor.bot),
+      raw: rawActor,
+    },
+    conversation: {
+      id: String(rawConversation.id || 'thread-1'),
+      parentId: rawConversation.parentId ? String(rawConversation.parentId) : null,
+      isThread: Boolean(rawConversation.parentId),
+      raw: rawConversation,
+    },
+    attachments: attachmentValues.map((attachment, index) => (
+      attachment?.mimeType
+        ? attachment
+        : {
+          id: String(attachment?.id || index + 1),
+          name: String(attachment?.name || 'attachment'),
+          mimeType: attachment?.contentType || null,
+          sizeBytes: Number.isFinite(attachment?.size) ? attachment.size : null,
+          url: attachment?.url || attachment?.proxyURL || null,
+          raw: attachment,
+        }
+    )),
+    replyToMessageId: rawMessage.reference?.messageId || null,
+    responseTarget: rawMessage.responseTarget || rawMessage,
+  };
+}
+
 function createOrchestrator(overrides = {}) {
   const replyLog = [];
   const progressCalls = [];
@@ -197,7 +241,7 @@ test('createPromptOrchestrator.handlePrompt runs task updates session and replie
   };
   const channelState = { queue: [], cancelRequested: false, activeRun: null };
 
-  const outcome = await orchestrator.handlePrompt(message, 'thread-1', 'do work', channelState);
+  const outcome = await orchestrator.handlePrompt(createMessage(message), 'thread-1', 'do work', channelState);
 
   assert.deepEqual(outcome, { ok: true, cancelled: false });
   assert.equal(session.runnerSessionId, 'sess-1');
@@ -246,7 +290,7 @@ test('createPromptOrchestrator.handlePrompt continues when Discord typing indica
   };
   const channelState = { queue: [], cancelRequested: false, activeRun: null };
 
-  const outcome = await orchestrator.handlePrompt(message, 'thread-1', 'do work', channelState);
+  const outcome = await orchestrator.handlePrompt(createMessage(message), 'thread-1', 'do work', channelState);
 
   assert.deepEqual(outcome, { ok: true, cancelled: false });
   assert.equal(replyLog.length, 1);
@@ -296,7 +340,7 @@ test('createPromptOrchestrator routes terminal delivery through the platform por
   };
 
   const outcome = await harness.orchestrator.handlePrompt(
-    message,
+    createMessage(message),
     'thread-port',
     'do work',
     { queue: [], cancelRequested: false, activeRun: null },
@@ -343,7 +387,7 @@ test('createPromptOrchestrator.handlePrompt clears pending Claude fork after fir
   };
   const channelState = { queue: [], cancelRequested: false, activeRun: null };
 
-  const outcome = await orchestrator.handlePrompt(message, 'thread-1', 'first fork turn', channelState);
+  const outcome = await orchestrator.handlePrompt(createMessage(message), 'thread-1', 'first fork turn', channelState);
 
   assert.deepEqual(outcome, { ok: true, cancelled: false });
   assert.equal(session.runnerSessionId, 'child-session');
@@ -384,7 +428,7 @@ test('createPromptOrchestrator.handlePrompt keeps pending Claude fork after fail
   };
   const channelState = { queue: [], cancelRequested: false, activeRun: null };
 
-  const outcome = await orchestrator.handlePrompt(message, 'thread-1', 'first fork turn', channelState);
+  const outcome = await orchestrator.handlePrompt(createMessage(message), 'thread-1', 'first fork turn', channelState);
 
   assert.deepEqual(outcome, { ok: false, cancelled: false });
   assert.equal(session.runnerSessionId, 'child-session');
@@ -394,13 +438,13 @@ test('createPromptOrchestrator.handlePrompt keeps pending Claude fork after fail
 test('buildConversationBridgePromptLine keeps normalized conversation context compact', () => {
   const line = buildConversationBridgePromptLine({
     key: 'fallback-channel',
-    message: {
+    message: createMessage({
       id: 'msg-1',
       channel: {
         id: 'thread-1',
         parentId: 'parent-1',
       },
-    },
+    }),
   });
 
   assert.equal(line, '[Via agents-in-discord; conversation=thread-1; parent=parent-1]');
@@ -441,7 +485,7 @@ test('createPromptOrchestrator.handlePrompt sends conversation bridge context as
   };
   const channelState = { queue: [], cancelRequested: false, activeRun: null };
 
-  const outcome = await orchestrator.handlePrompt(message, 'thread-bridge', 'do work', channelState);
+  const outcome = await orchestrator.handlePrompt(createMessage(message), 'thread-bridge', 'do work', channelState);
 
   assert.deepEqual(outcome, { ok: true, cancelled: false });
   assert.deepEqual(runTaskPrompts, ['do work']);
@@ -487,9 +531,9 @@ test('createPromptOrchestrator.handlePrompt can disable or customize stable extr
   const channelState = { queue: [], cancelRequested: false, activeRun: null };
 
   session.extraInfoSetting = { enabled: false, text: '[X {thread}]' };
-  await orchestrator.handlePrompt(message, 'thread-extra', 'plain', channelState);
+  await orchestrator.handlePrompt(createMessage(message), 'thread-extra', 'plain', channelState);
   session.extraInfoSetting = { enabled: true, text: '[X {thread}]' };
-  await orchestrator.handlePrompt(message, 'thread-extra', 'custom', channelState);
+  await orchestrator.handlePrompt(createMessage(message), 'thread-extra', 'custom', channelState);
 
   assert.deepEqual(prompts, [
     'plain',
@@ -535,7 +579,7 @@ test('createPromptOrchestrator.handlePrompt keeps per-message extra info out of 
   const channelState = { queue: [], cancelRequested: false, activeRun: null };
 
   session.extraInfoSetting = { enabled: true, text: '[X {thread} {msg}]' };
-  await orchestrator.handlePrompt(message, 'thread-extra', 'custom', channelState);
+  await orchestrator.handlePrompt(createMessage(message), 'thread-extra', 'custom', channelState);
 
   assert.deepEqual(calls, [{
     prompt: 'custom\n\n[X thread-extra msg-extra-dynamic]',
@@ -586,7 +630,7 @@ test('createPromptOrchestrator.handlePrompt stages native codex images and clean
   };
   const channelState = { queue: [], cancelRequested: false, activeRun: null };
 
-  const outcome = await orchestrator.handlePrompt(message, 'thread-1', 'describe image', channelState);
+  const outcome = await orchestrator.handlePrompt(createMessage(message), 'thread-1', 'describe image', channelState);
 
   assert.deepEqual(outcome, { ok: true, cancelled: false });
   assert.equal(runTaskCalls.length, 1);
@@ -612,7 +656,7 @@ test('createPromptOrchestrator.handlePrompt can mention the requester on termina
   };
   const channelState = { queue: [], cancelRequested: false, activeRun: null };
 
-  const outcome = await orchestrator.handlePrompt(message, 'thread-1', 'do work', channelState);
+  const outcome = await orchestrator.handlePrompt(createMessage(message), 'thread-1', 'do work', channelState);
 
   assert.deepEqual(outcome, { ok: true, cancelled: false });
   assert.match(replyLog[0], /^<@user-mention>\s+/);
@@ -653,7 +697,7 @@ test('createPromptOrchestrator.handlePrompt uses the latest reply delivery setti
   };
   const channelState = { queue: [], cancelRequested: false, activeRun: null };
 
-  const outcome = await orchestrator.handlePrompt(message, 'thread-1', 'do work', channelState);
+  const outcome = await orchestrator.handlePrompt(createMessage(message), 'thread-1', 'do work', channelState);
 
   assert.deepEqual(outcome, { ok: true, cancelled: false });
   assert.match(replyLog[0], /^<@user-dynamic>\s+/);
@@ -691,7 +735,7 @@ test('createPromptOrchestrator.handlePrompt uses the latest reply delivery setti
   };
   const channelState = { queue: [], cancelRequested: false, activeRun: null };
 
-  const outcome = await orchestrator.handlePrompt(message, 'thread-1', 'do work', channelState);
+  const outcome = await orchestrator.handlePrompt(createMessage(message), 'thread-1', 'do work', channelState);
 
   assert.deepEqual(outcome, { ok: true, cancelled: false });
   assert.deepEqual(streamLog, ['live event']);
@@ -736,7 +780,7 @@ test('createPromptOrchestrator.handlePrompt records a process message only after
     },
   };
 
-  const outcome = await orchestrator.handlePrompt(message, 'thread-1', 'do work', channelStateRef);
+  const outcome = await orchestrator.handlePrompt(createMessage(message), 'thread-1', 'do work', channelStateRef);
 
   assert.deepEqual(outcome, { ok: true, cancelled: false });
   assert.deepEqual(recordedAfterFailure, []);
@@ -840,7 +884,7 @@ test('createPromptOrchestrator.handlePrompt settles process delivery before the 
   };
   const channelState = { queue: [], cancelRequested: false, activeRun: null };
 
-  const outcome = await harness.orchestrator.handlePrompt(message, 'thread-1', 'do work', channelState);
+  const outcome = await harness.orchestrator.handlePrompt(createMessage(message), 'thread-1', 'do work', channelState);
 
   assert.deepEqual(outcome, { ok: true, cancelled: false });
   assert.equal(deliveryOrder[0], 'process:same paragraph');
@@ -893,7 +937,7 @@ test('createPromptOrchestrator.handlePrompt removes streamed process paragraphs 
   const channelState = { queue: [], cancelRequested: false, activeRun: null };
   channelStateRef = channelState;
 
-  const outcome = await orchestrator.handlePrompt(message, 'thread-1', 'do work', channelState);
+  const outcome = await orchestrator.handlePrompt(createMessage(message), 'thread-1', 'do work', channelState);
 
   assert.deepEqual(outcome, { ok: true, cancelled: false });
   assert.doesNotMatch(replyLog[0], /先停掉当前单队列后台进程/);
@@ -941,7 +985,7 @@ test('createPromptOrchestrator.handlePrompt does not send metadata-only final re
   const channelState = { queue: [], cancelRequested: false, activeRun: null };
   channelStateRef = channelState;
 
-  const outcome = await orchestrator.handlePrompt(message, 'thread-1', 'do work', channelState);
+  const outcome = await orchestrator.handlePrompt(createMessage(message), 'thread-1', 'do work', channelState);
 
   assert.deepEqual(outcome, { ok: true, cancelled: false });
   assert.doesNotMatch(replyLog[0], /30 天 guest 邀请生成并校验了/);
@@ -991,7 +1035,7 @@ test('createPromptOrchestrator.handlePrompt preserves real final answer when pro
   const channelState = { queue: [], cancelRequested: false, activeRun: null };
   channelStateRef = channelState;
 
-  const outcome = await orchestrator.handlePrompt(message, 'thread-1', 'do work', channelState);
+  const outcome = await orchestrator.handlePrompt(createMessage(message), 'thread-1', 'do work', channelState);
 
   assert.deepEqual(outcome, { ok: true, cancelled: false });
   assert.match(replyLog[0], /公开验收页在这里/);
@@ -1030,7 +1074,7 @@ test('createPromptOrchestrator.handlePrompt reports no visible final answer inst
   };
   const channelState = { queue: [], cancelRequested: false, activeRun: null };
 
-  const outcome = await orchestrator.handlePrompt(message, 'thread-1', 'do work', channelState);
+  const outcome = await orchestrator.handlePrompt(createMessage(message), 'thread-1', 'do work', channelState);
 
   assert.deepEqual(outcome, { ok: true, cancelled: false });
   assert.match(replyLog[0], /Codex 没有返回可见文本/);
@@ -1077,7 +1121,7 @@ test('createPromptOrchestrator.handlePrompt adds retry button after final failur
   };
   const channelState = { queue: [], cancelRequested: false, activeRun: null };
 
-  const outcome = await orchestrator.handlePrompt(message, 'thread-1', 'fail this', channelState);
+  const outcome = await orchestrator.handlePrompt(createMessage(message), 'thread-1', 'fail this', channelState);
 
   assert.deepEqual(outcome, { ok: false, cancelled: false });
   assert.equal(runCount, 3);
@@ -1137,7 +1181,7 @@ test('createPromptOrchestrator.handlePrompt sends workspace busy payload while w
   };
   const channelState = { queue: [], cancelRequested: false, activeRun: null };
 
-  await orchestrator.handlePrompt(message, 'thread-1', 'do work', channelState);
+  await orchestrator.handlePrompt(createMessage(message), 'thread-1', 'do work', channelState);
 
   assert.equal(busyPayloads.length, 1);
   assert.deepEqual(busyPayloads[0], {
@@ -1184,7 +1228,7 @@ test('createPromptOrchestrator.handlePrompt aborts when workspace changes while 
   };
   const channelState = { queue: [], cancelRequested: false, activeRun: null };
 
-  const outcome = await orchestrator.handlePrompt(message, 'thread-1', 'do work', channelState);
+  const outcome = await orchestrator.handlePrompt(createMessage(message), 'thread-1', 'do work', channelState);
 
   assert.equal(outcome.ok, false);
   assert.equal(ranTask, false);
@@ -1234,7 +1278,7 @@ test('createPromptOrchestrator.handlePrompt finishes progress before reporting a
   };
   const channelState = { queue: [], cancelRequested: false, activeRun: null };
 
-  const outcome = await harness.orchestrator.handlePrompt(message, 'thread-1', 'do work', channelState);
+  const outcome = await harness.orchestrator.handlePrompt(createMessage(message), 'thread-1', 'do work', channelState);
 
   assert.equal(outcome.ok, false);
   assert.deepEqual(deliveryOrder, ['progress-finished', 'terminal']);
@@ -1288,7 +1332,7 @@ test('createPromptOrchestrator.handlePrompt preserves the current session across
   };
   const channelState = { queue: [], cancelRequested: false, activeRun: null };
 
-  const outcome = await orchestrator.handlePrompt(message, 'thread-1', 'retry once', channelState);
+  const outcome = await orchestrator.handlePrompt(createMessage(message), 'thread-1', 'retry once', channelState);
 
   assert.deepEqual(outcome, { ok: true, cancelled: false });
   assert.equal(session.runnerSessionId, 'sess-1');
@@ -1331,7 +1375,7 @@ test('createPromptOrchestrator.handlePrompt does not retry a missing bound Claud
   };
   const channelState = { queue: [], cancelRequested: false, activeRun: null };
 
-  const outcome = await harness.orchestrator.handlePrompt(message, 'thread-1', 'continue old work', channelState);
+  const outcome = await harness.orchestrator.handlePrompt(createMessage(message), 'thread-1', 'continue old work', channelState);
 
   assert.deepEqual(outcome, { ok: false, cancelled: false });
   assert.equal(runCount, 1);
@@ -1375,7 +1419,7 @@ test('createPromptOrchestrator.handlePrompt exposes and rejects implicit session
   };
   const channelState = { queue: [], cancelRequested: false, activeRun: null };
 
-  const outcome = await orchestrator.handlePrompt(message, 'thread-1', 'work but drift', channelState);
+  const outcome = await orchestrator.handlePrompt(createMessage(message), 'thread-1', 'work but drift', channelState);
 
   assert.deepEqual(outcome, { ok: true, cancelled: false });
   assert.equal(session.runnerSessionId, 'sess-1');
@@ -1421,7 +1465,7 @@ test('createPromptOrchestrator.handlePrompt keeps the original session after a f
   };
   const channelState = { queue: [], cancelRequested: false, activeRun: null };
 
-  const outcome = await orchestrator.handlePrompt(message, 'thread-1', 'fail once', channelState);
+  const outcome = await orchestrator.handlePrompt(createMessage(message), 'thread-1', 'fail once', channelState);
 
   assert.deepEqual(outcome, { ok: false, cancelled: false });
   assert.equal(session.runnerSessionId, 'sess-1');
@@ -1468,7 +1512,7 @@ test('createPromptOrchestrator.handlePrompt keeps a failed session when there wa
   };
   const channelState = { queue: [], cancelRequested: false, activeRun: null };
 
-  const outcome = await orchestrator.handlePrompt(message, 'thread-1', 'fail fresh', channelState);
+  const outcome = await orchestrator.handlePrompt(createMessage(message), 'thread-1', 'fail fresh', channelState);
 
   assert.deepEqual(outcome, { ok: false, cancelled: false });
   assert.equal(session.runnerSessionId, 'sess-failed');
@@ -1515,7 +1559,7 @@ test('createPromptOrchestrator.handlePrompt hard-compacts into a fresh session b
   };
   const channelState = { queue: [], cancelRequested: false, activeRun: null };
 
-  const outcome = await orchestrator.handlePrompt(message, 'thread-1', 'keep same session', channelState);
+  const outcome = await orchestrator.handlePrompt(createMessage(message), 'thread-1', 'keep same session', channelState);
 
   assert.deepEqual(outcome, { ok: true, cancelled: false });
   assert.equal(prompts.length, 2);
@@ -1560,7 +1604,7 @@ test('createPromptOrchestrator.compactCurrentSession stores summary and clears t
   };
   const channelState = { queue: [], cancelRequested: false, activeRun: null };
 
-  const outcome = await orchestrator.compactCurrentSession(message, 'thread-1', channelState);
+  const outcome = await orchestrator.compactCurrentSession(createMessage(message), 'thread-1', channelState);
 
   assert.equal(outcome.ok, true);
   assert.equal(session.runnerSessionId, null);
@@ -1627,7 +1671,7 @@ test('createPromptOrchestrator.compactCurrentSession settles process delivery be
   };
   const channelState = { queue: [], cancelRequested: false, activeRun: null };
 
-  const outcome = await harness.orchestrator.compactCurrentSession(message, 'thread-1', channelState);
+  const outcome = await harness.orchestrator.compactCurrentSession(createMessage(message), 'thread-1', channelState);
 
   assert.equal(outcome.ok, true);
   assert.equal(deliveryOrder[0], 'process:compact progress');
@@ -1670,7 +1714,7 @@ test('createPromptOrchestrator.compactCurrentSession rescues Claude sessions tha
   };
   const channelState = { queue: [], cancelRequested: false, activeRun: null };
 
-  const outcome = await orchestrator.compactCurrentSession(message, 'thread-1', channelState);
+  const outcome = await orchestrator.compactCurrentSession(createMessage(message), 'thread-1', channelState);
 
   assert.equal(outcome.ok, true);
   assert.equal(session.runnerSessionId, null);
@@ -1720,7 +1764,7 @@ test('createPromptOrchestrator.handlePrompt consumes a pending manual compact su
   };
   const channelState = { queue: [], cancelRequested: false, activeRun: null };
 
-  const outcome = await orchestrator.handlePrompt(message, 'thread-1', 'continue work', channelState);
+  const outcome = await orchestrator.handlePrompt(createMessage(message), 'thread-1', 'continue work', channelState);
 
   assert.deepEqual(outcome, { ok: true, cancelled: false });
   assert.equal(prompts.length, 1);
@@ -1770,7 +1814,7 @@ test('createPromptOrchestrator.handlePrompt auto-continues a pinned native compa
   };
   const channelState = { queue: [], cancelRequested: false, activeRun: null };
 
-  const outcome = await orchestrator.handlePrompt(message, 'thread-1', 'keep native pinned', channelState);
+  const outcome = await orchestrator.handlePrompt(createMessage(message), 'thread-1', 'keep native pinned', channelState);
 
   assert.deepEqual(outcome, { ok: true, cancelled: false });
   assert.deepEqual(prompts, ['keep native pinned']);
@@ -1817,7 +1861,7 @@ test('createPromptOrchestrator.handlePrompt adopts the new session after native 
   };
   const channelState = { queue: [], cancelRequested: false, activeRun: null };
 
-  const outcome = await orchestrator.handlePrompt(message, 'thread-1', 'continue native compact', channelState);
+  const outcome = await orchestrator.handlePrompt(createMessage(message), 'thread-1', 'continue native compact', channelState);
 
   assert.deepEqual(outcome, { ok: true, cancelled: false });
   assert.deepEqual(prompts, ['continue native compact']);
@@ -1883,7 +1927,7 @@ test('createPromptOrchestrator.handlePrompt keeps the switched native compact se
   };
   const channelState = { queue: [], cancelRequested: false, activeRun: null };
 
-  const outcome = await orchestrator.handlePrompt(message, 'thread-1', 'retry native compact', channelState);
+  const outcome = await orchestrator.handlePrompt(createMessage(message), 'thread-1', 'retry native compact', channelState);
 
   assert.deepEqual(outcome, { ok: true, cancelled: false });
   assert.equal(runCount, 2);

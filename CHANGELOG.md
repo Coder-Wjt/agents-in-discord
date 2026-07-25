@@ -9,16 +9,30 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 ### Added
 
 - Added platform Adapter/Foundation contracts, capability policies, normalized inbound event models, platform-neutral command views, delivery ports, conversation services, and their Discord implementations.
+- Added a reusable platform Adapter conformance suite covering messages, commands, cancellation, attachments, capability degradation, child conversations, and error recovery.
+- Added a synthetic Foundation core smoke test that composes the real AppContext without Discord SDK objects.
 
 ### Changed
 
 - Routed command UI, message and interaction input, runtime delivery, project-upgrade notifications, fork/side conversation lifecycle, presentation, and conversation security through platform-neutral boundaries.
 - Composed the existing Discord runtime through one platform Foundation while preserving Discord command registration, session keys, persisted data, configuration, startup modes, and user-visible behavior.
 - Reorganized the multi-platform development plan into completed foundation, core decoupling, and Discord composition milestones, followed by a separate second-platform readiness stage before Slack or Lark implementation begins.
+- Made AppContext require an explicit Foundation, leaving Discord Foundation construction only in the startup composition root.
+- Made normalized inbound actor, conversation, attachments, reply references, and history metadata the only core message contract.
+- Recorded the Node.js 22 upgrade gate, qualified second-platform conversation keys, platform-and-instance data isolation, and delayed platform-selection configuration required before a second Adapter ships.
+
+### Removed
+
+- Removed the unused slash command surface facade and its tests.
+- Removed raw Discord message accessor fallback, the conversation history `author` alias, and legacy `childThread`, `discordCleanup`, and `discordArchive` result aliases.
+
+### Fixed
+
+- Kept Codex goal completion/blocker grace timers referenced until the runner settles, preventing pending executor tests or lightweight process wrappers from being cancelled while awaiting the scheduled stop.
 
 ### Verified
 
-- Added and ran focused contract, boundary, Discord Adapter, input, presentation, security, notification, and AppContext regressions for the platform abstraction work.
+- Added and ran focused contract, boundary, Discord Adapter, input, presentation, security, notification, conformance, synthetic smoke, and AppContext regressions for the platform abstraction work.
 
 ## [0.13.0] - 2026-07-21
 

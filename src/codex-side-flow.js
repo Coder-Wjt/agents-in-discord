@@ -203,7 +203,6 @@ export async function createCodexSideConversation({
       sideSessionId: openSide.sideSessionId,
       childConversation,
       childConversationReference: conversationPort.formatConversationReference(openSide.sideChannelId),
-      childThread: { id: openSide.sideChannelId },
       parentSessionId: normalizedParentSessionId,
     };
   }
@@ -233,7 +232,6 @@ export async function createCodexSideConversation({
     }),
     reason: `codex side from ${normalizedParentSessionId}`,
   }));
-  const childThread = childConversation.raw;
   if (!childConversation.id) {
     throw new Error(`${presentation.getTerm('childConversation', 'en')} creation did not return a ${presentation.getTerm('childConversationId', 'en')}`);
   }
@@ -309,7 +307,6 @@ export async function createCodexSideConversation({
       parentSessionId: normalizedParentSessionId,
       cleanup,
       conversationCleanup,
-      discordCleanup: conversationCleanup,
     };
   }
   let binding = null;
@@ -341,7 +338,6 @@ export async function createCodexSideConversation({
       parentSessionId: normalizedParentSessionId,
       cleanup,
       conversationCleanup,
-      discordCleanup: conversationCleanup,
     };
   }
   const promptQueue = runtime.running ? null : null;
@@ -354,7 +350,6 @@ export async function createCodexSideConversation({
     parentThreadId: sideResult.parentThreadId || normalizedParentSessionId,
     childConversation,
     childConversationReference: conversationPort.formatConversationReference(childConversation.id),
-    childThread,
     childSession,
     binding,
     notice,
@@ -407,7 +402,6 @@ export async function closeCodexSideConversationFlow({
     sideChannelId: meta.sideChannelId,
     cleanup,
     conversationArchive,
-    discordArchive: conversationArchive,
     cancelOutcome,
     error: cleanupError,
   };
@@ -504,7 +498,7 @@ export function formatCodexSideCloseResult(result, language = 'zh') {
     }
     return language === 'en' ? `❌ Codex side close failed: ${result?.error || 'unknown error'}` : `❌ Codex side 关闭失败：${result?.error || '未知错误'}`;
   }
-  const conversationArchive = result.conversationArchive || result.discordArchive;
+  const conversationArchive = result.conversationArchive;
   const archiveTarget = conversationArchive?.targetLabel || 'conversation';
   const archiveWarning = conversationArchive && conversationArchive.ok === false && !conversationArchive.skipped
     ? (language === 'en' ? `\n⚠️ ${archiveTarget} cleanup warning: ${conversationArchive.error || 'archive failed'}` : `\n⚠️ ${archiveTarget} 清理警告：${conversationArchive.error || 'archive failed'}`)

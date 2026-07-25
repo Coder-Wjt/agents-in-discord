@@ -64,6 +64,7 @@ function createHarness(overrides = {}) {
     restProxyAgent: { name: 'agent' },
     commandSpecs,
     commandRegistryRenderer,
+    normalizeMessageEvent: (message, options) => inboundEventNormalizer.normalizeMessage(message, options),
     normalizeInteractionEvent: (interaction) => {
       interaction.id ||= 'interaction-test';
       interaction.channelId ||= interaction.channel?.id || 'channel-test';
@@ -395,6 +396,10 @@ test('handleMessageCreate strips bot mention and enqueues prompt', async () => {
     content: '<@123>  hello world  ',
     system: false,
     author: { id: 'user-1', bot: false, tag: 'demo#0001' },
+    mentions: {
+      users: { has: (userId) => userId === '123' },
+      repliedUser: null,
+    },
     channel: {
       id: 'channel-1',
       isThread: () => false,
@@ -427,12 +432,13 @@ test('handleMessageCreate uses the normalized inbound envelope for routing', asy
     attachments: [],
     isSystem: false,
     targetsBot: true,
+    responseTarget: null,
   };
   const normalizedCalls = [];
   const { handlers, calls } = createHarness({
     normalizeMessageEvent: (message, options) => {
       normalizedCalls.push([message, options]);
-      return normalizedMessage;
+      return { ...normalizedMessage, responseTarget: message };
     },
     messageInput: {
       doesMessageTargetBot: () => false,
@@ -457,8 +463,8 @@ test('handleMessageCreate uses the normalized inbound envelope for routing', asy
   assert.deepEqual(normalizedCalls, [[message, { botUserId: 'bot-1' }]]);
   assert.notEqual(calls.enqueuePrompt[0][0], message);
   assert.equal(calls.enqueuePrompt[0][0].responseTarget, message);
-  assert.equal(calls.enqueuePrompt[0][0].channel, message.channel);
-  assert.equal(calls.enqueuePrompt[0][0].author.id, 'normalized-user');
+  assert.equal(calls.enqueuePrompt[0][0].conversation.id, 'normalized-channel');
+  assert.equal(calls.enqueuePrompt[0][0].actor.id, 'normalized-user');
   assert.deepEqual(calls.enqueuePrompt[0][0].attachments, []);
   assert.deepEqual(calls.getSession[0], [
     'normalized-channel',

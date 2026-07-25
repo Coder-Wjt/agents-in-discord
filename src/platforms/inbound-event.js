@@ -58,42 +58,19 @@ export function assertInboundMessageEvent(event) {
   return event;
 }
 
-export function createInboundMessageContext(event, { fallbackRaw = null } = {}) {
+export function createInboundMessageContext(event) {
   const resolvedEvent = assertInboundMessageEvent(event);
-  const raw = resolvedEvent.raw && typeof resolvedEvent.raw === 'object'
-    ? resolvedEvent.raw
-    : fallbackRaw && typeof fallbackRaw === 'object'
-      ? fallbackRaw
-      : null;
-  const channel = resolvedEvent.conversation.raw || raw?.channel || null;
-  const author = resolvedEvent.actor.raw || {
-    id: resolvedEvent.actor.id,
-    displayName: String(resolvedEvent.actor.displayName || ''),
-    bot: Boolean(resolvedEvent.actor.isBot),
-    raw: raw?.author || null,
-  };
 
   return {
     id: resolvedEvent.id,
     platformId: resolvedEvent.platformId,
     content: resolvedEvent.text,
-    channel,
-    channelId: resolvedEvent.conversation.id,
-    author,
     actor: resolvedEvent.actor,
     conversation: resolvedEvent.conversation,
-    client: resolvedEvent.client || raw?.client || channel?.client || null,
     attachments: resolvedEvent.attachments,
-    replyToMessageId: normalizeOptionalMessageId(
-      resolvedEvent.replyToMessageId
-      || raw?.reference?.messageId
-      || raw?.reference?.message_id
-      || raw?.reference?.message?.id,
-    ),
-    reference: raw?.reference || null,
-    responseTarget: raw?.responseTarget || raw,
+    replyToMessageId: normalizeOptionalMessageId(resolvedEvent.replyToMessageId),
+    responseTarget: resolvedEvent.responseTarget || resolvedEvent.raw || null,
     inboundEvent: resolvedEvent,
-    raw,
   };
 }
 
@@ -110,8 +87,6 @@ export function getInboundActorId(event) {
   return String(
     event?.actor?.id
     || event?.inboundEvent?.actor?.id
-    || event?.user?.id
-    || event?.author?.id
     || '',
   ).trim();
 }
@@ -127,19 +102,18 @@ export function getInboundMessageConversation(message) {
 
 export function getInboundMessageConversationId(message) {
   const conversation = getInboundMessageConversation(message);
-  return String(conversation?.id || message?.channelId || message?.channel?.id || '').trim();
+  return String(conversation?.id || '').trim();
 }
 
 export function getInboundMessageConversationTarget(message) {
   const conversation = getInboundMessageConversation(message);
-  return conversation?.raw || message?.channel || message?.raw?.channel || null;
+  return conversation?.raw || null;
 }
 
 export function getInboundMessageAttachments(message) {
   const event = getInboundMessageEnvelope(message);
   const attachments = message?.attachments ?? event?.attachments;
   if (Array.isArray(attachments)) return attachments;
-  if (attachments && typeof attachments.values === 'function') return [...attachments.values()];
   return [];
 }
 
@@ -147,13 +121,7 @@ export function getInboundMessageReplyToMessageId(message) {
   const event = getInboundMessageEnvelope(message);
   return normalizeOptionalMessageId(
     message?.replyToMessageId
-    || event?.replyToMessageId
-    || message?.reference?.messageId
-    || message?.reference?.message_id
-    || message?.reference?.message?.id
-    || message?.raw?.reference?.messageId
-    || message?.raw?.reference?.message_id
-    || message?.raw?.reference?.message?.id,
+    || event?.replyToMessageId,
   );
 }
 

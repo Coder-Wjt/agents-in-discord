@@ -129,6 +129,7 @@ import {
   normalizeExtraInfoTemplate,
 } from './extra-info.js';
 import { DISCORD_DEFAULT_EXTRA_INFO_TEMPLATE } from './platforms/discord/extra-info.js';
+import { createDiscordPlatformFoundation } from './platforms/discord/foundation.js';
 import {
   parseCommandActionButtonId,
 } from './slash-command-router.js';
@@ -496,7 +497,7 @@ const createClient = () => createDiscordClient({
   Partials,
   restProxyAgent,
 });
-const appContext = createAppContext({
+const platformFoundation = createDiscordPlatformFoundation({
   commandRegistryRendererOptions: {
     SlashCommandBuilder,
     slashPrefix: SLASH_PREFIX,
@@ -510,9 +511,24 @@ const appContext = createAppContext({
     TextInputBuilder,
     TextInputStyle,
   },
+  messageDeliveryOptions: {
+    reply: safeReplyWithLiveClient,
+    send: safeChannelSendWithLiveClient,
+    splitText: splitForDiscord,
+  },
   notificationDeliveryOptions: {
     getClient: getActiveDiscordClient,
   },
+  interactionResponseOptions: {
+    logger: console,
+    withDiscordNetworkRetry,
+  },
+  conversationSecurityOptions: {
+    permissionFlagsBits: PermissionFlagsBits,
+  },
+});
+const appContext = createAppContext({
+  platformFoundation,
   identityOptions: {
     defaultProvider: DEFAULT_PROVIDER,
   },

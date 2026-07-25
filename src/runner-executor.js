@@ -333,7 +333,6 @@ export function createRunnerExecutor({
             : 'Codex goal completion grace elapsed; stopping goal continuation runner.');
           stopChildProcess(child);
         }, graceMs);
-        goalCompletionStopTimer.unref?.();
       };
 
       const scheduleGoalCompletionStop = () => {

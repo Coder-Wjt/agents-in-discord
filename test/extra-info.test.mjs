@@ -50,17 +50,17 @@ test('extra info keeps legacy thread placeholders for configured templates', () 
   );
 });
 
-test('extra info keeps raw message compatibility through centralized accessors', () => {
+test('extra info reads normalized conversation context only', () => {
   assert.deepEqual(buildExtraInfoValues({
     message: {
-      id: 'raw-message-1',
-      channel: { id: 'raw-channel-1', parentId: 'raw-parent-1' },
+      id: 'message-1',
+      conversation: { id: 'conversation-1', parentId: 'parent-1' },
     },
   }), {
-    conversation: 'raw-channel-1',
-    thread: 'raw-channel-1',
-    parent: 'raw-parent-1',
-    msg: 'raw-message-1',
+    conversation: 'conversation-1',
+    thread: 'conversation-1',
+    parent: 'parent-1',
+    msg: 'message-1',
   });
 });
 

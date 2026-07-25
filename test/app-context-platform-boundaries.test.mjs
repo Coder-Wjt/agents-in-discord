@@ -7,6 +7,10 @@ test('app context consumes platform services through one foundation boundary', a
 
   assert.match(source, /assertPlatformFoundation/);
   assert.match(source, /resolvedPlatformFoundation\.createAdapter/);
+  assert.doesNotMatch(source, /discord/i);
+  assert.doesNotMatch(source, /SlashCommandBuilder|slashPrefix/);
+  assert.doesNotMatch(source, /platformFoundationOptions/);
+  assert.doesNotMatch(source, /createPlatformFoundationFn/);
   assert.doesNotMatch(source, /createMessageDeliveryFn\s*\(/);
   assert.doesNotMatch(source, /createCommandViewRendererFn\s*\(/);
   assert.doesNotMatch(source, /createConversationSpawnFn\s*\(/);

@@ -2,7 +2,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { bootApp, createAppContext } from '../src/app-context.js';
-import { createDiscordPlatformAdapter } from '../src/platforms/discord/adapter.js';
 import { createPlatformCapabilities } from '../src/platforms/capabilities.js';
 
 test('createAppContext wires factories and cross-links composition dependencies', () => {
@@ -111,7 +110,6 @@ test('createAppContext wires factories and cross-links composition dependencies'
   const notificationDelivery = {
     sendNotification() {},
   };
-  const getNotificationClient = () => ({ user: { id: 'bot-user-1' } });
   const commandViewRenderer = {
     renderActionRows() {},
     renderMessage() {},
@@ -163,25 +161,62 @@ test('createAppContext wires factories and cross-links composition dependencies'
     acquire: () => {},
     setupCleanupHandlers: () => {},
   };
+  const eventNormalizer = {
+    normalizeMessage() {},
+    normalizeInteraction() {},
+  };
+  const platformFoundation = {
+    id: 'example',
+    capabilities: platformCapabilities,
+    commandRegistryRenderer,
+    commandViewRenderer,
+    interactionResponse,
+    messageDelivery,
+    notificationDelivery,
+    conversationSpawn,
+    conversationPresentation,
+    conversationSecurity,
+    textPresentation,
+    createAdapter(options) {
+      calls.platformAdapter = options;
+      calls.accessPolicy = options.accessPolicyOptions;
+      calls.entryHandlers = {
+        ...options.entryHandlerOptions,
+        accessPolicy,
+        platformCapabilities,
+        commandRegistryRenderer,
+        interactionResponse,
+        messageDelivery,
+        conversationSpawn,
+        normalizeInteractionEvent: eventNormalizer.normalizeInteraction,
+        normalizeMessageEvent: eventNormalizer.normalizeMessage,
+      };
+      calls.lifecycle = {
+        ...options.lifecycleOptions,
+        bindClientHandlers: entryHandlers.bindClientHandlers,
+      };
+      return {
+        id: 'example',
+        capabilities: platformCapabilities,
+        commandRegistryRenderer,
+        commandViewRenderer,
+        interactionResponse,
+        eventNormalizer,
+        messageDelivery,
+        notificationDelivery,
+        conversationSpawn,
+        conversationPresentation,
+        conversationSecurity,
+        textPresentation,
+        accessPolicy,
+        entryHandlers,
+        lifecycle,
+      };
+    },
+  };
 
   const appContext = createAppContext({
-    platformCapabilities,
-    commandRegistryRendererOptions: {
-      SlashCommandBuilder: class {},
-      slashPrefix: 'bot',
-    },
-    commandViewRendererOptions: {
-      platformBuilders: 'discord-builders',
-    },
-    conversationSpawnOptions: {
-      autoArchiveDuration: 1440,
-    },
-    conversationPresentationOptions: {
-      vocabulary: 'discord',
-    },
-    notificationDeliveryOptions: {
-      getClient: getNotificationClient,
-    },
+    platformFoundation,
     identityOptions: { defaultProvider: 'codex' },
     sessionSettingsOptions: { codexTimeoutMs: 60000 },
     securityPolicyOptions: {
@@ -295,58 +330,6 @@ test('createAppContext wires factories and cross-links composition dependencies'
         calls.commandSurface = options;
         return commandSurface;
       },
-      createMessageDeliveryFn: (options) => {
-        calls.messageDelivery = options;
-        return messageDelivery;
-      },
-      createNotificationDeliveryFn: (options) => {
-        calls.notificationDelivery = options;
-        return notificationDelivery;
-      },
-      createCommandViewRendererFn: (options) => {
-        calls.commandViewRenderer = options;
-        return commandViewRenderer;
-      },
-      createCommandRegistryRendererFn: (options) => {
-        calls.commandRegistryRenderer = options;
-        return commandRegistryRenderer;
-      },
-      createInteractionResponseFn: (options) => {
-        calls.interactionResponse = options;
-        return interactionResponse;
-      },
-      createConversationSpawnFn: (options) => {
-        calls.conversationSpawn = options;
-        return conversationSpawn;
-      },
-      createConversationPresentationFn: (options) => {
-        calls.conversationPresentation = options;
-        return conversationPresentation;
-      },
-      createConversationSecurityFn: (options) => {
-        calls.conversationSecurity = options;
-        return conversationSecurity;
-      },
-      createTextPresentationFn: (options) => {
-        calls.textPresentation = options;
-        return textPresentation;
-      },
-      createPlatformAdapterFn: (options) => {
-        calls.platformAdapter = options;
-        return createDiscordPlatformAdapter(options);
-      },
-      createDiscordAccessPolicyFn: (options) => {
-        calls.accessPolicy = options;
-        return accessPolicy;
-      },
-      createDiscordEntryHandlersFn: (options) => {
-        calls.entryHandlers = options;
-        return entryHandlers;
-      },
-      createDiscordLifecycleFn: (options) => {
-        calls.lifecycle = options;
-        return lifecycle;
-      },
       createSingleInstanceLockFn: (options) => {
         calls.singleInstanceLock = options;
         return singleInstanceLock;
@@ -355,16 +338,6 @@ test('createAppContext wires factories and cross-links composition dependencies'
   });
 
   assert.equal(calls.identity.defaultProvider, 'codex');
-  assert.deepEqual(calls.commandViewRenderer, {
-    platformBuilders: 'discord-builders',
-  });
-  assert.equal(calls.commandRegistryRenderer.slashPrefix, 'bot');
-  assert.equal(calls.interactionResponse.commandViewRenderer, appContext.commandViewRenderer);
-  assert.deepEqual(calls.conversationSpawn, { autoArchiveDuration: 1440 });
-  assert.deepEqual(calls.conversationPresentation, { vocabulary: 'discord' });
-  assert.deepEqual(calls.conversationSecurity, { permissionFlagsBits: undefined });
-  assert.deepEqual(calls.textPresentation, {});
-  assert.equal(calls.notificationDelivery.getClient, getNotificationClient);
   assert.equal(calls.securityPolicy.getEffectiveSecurityProfile, sessionSettings.getEffectiveSecurityProfile);
   assert.equal(calls.securityPolicy.conversationSecurityResolver, conversationSecurity);
   assert.equal(calls.sessionStore.getSessionId, identity.getSessionId);
@@ -388,7 +361,6 @@ test('createAppContext wires factories and cross-links composition dependencies'
   assert.equal(calls.promptRuntime.messageDelivery, appContext.messageDelivery);
   assert.equal(calls.promptRuntime.promptOrchestratorOptions.progressUpdatesEnabled, false);
   assert.equal('commandViewRenderer' in calls.promptRuntime, false);
-  assert.equal(calls.messageDelivery.commandViewRenderer, appContext.commandViewRenderer);
   assert.equal(calls.promptRuntime.channelQueueOptions.slashRef('status'), '/bot_status');
   assert.match(
     calls.promptRuntime.promptOrchestratorOptions.formatWorkspaceBusyReport(
@@ -445,14 +417,14 @@ test('createAppContext wires factories and cross-links composition dependencies'
   assert.equal(appContext.core.sessionStore, sessionStore);
   assert.equal(appContext.promptRuntime, promptRuntime);
   assert.equal(appContext.commandSurface, commandSurface);
-  assert.notEqual(appContext.messageDelivery, messageDelivery);
+  assert.equal(appContext.messageDelivery, messageDelivery);
   assert.equal(appContext.notificationDelivery, notificationDelivery);
-  assert.notEqual(appContext.commandRegistryRenderer, commandRegistryRenderer);
-  assert.notEqual(appContext.commandViewRenderer, commandViewRenderer);
-  assert.notEqual(appContext.interactionResponse, interactionResponse);
+  assert.equal(appContext.commandRegistryRenderer, commandRegistryRenderer);
+  assert.equal(appContext.commandViewRenderer, commandViewRenderer);
+  assert.equal(appContext.interactionResponse, interactionResponse);
   assert.equal(appContext.eventNormalizer, appContext.platformAdapter.eventNormalizer);
-  assert.equal(appContext.platformAdapter.id, 'discord');
-  assert.equal(appContext.platformFoundation.id, 'discord');
+  assert.equal(appContext.platformAdapter.id, 'example');
+  assert.equal(appContext.platformFoundation.id, 'example');
   assert.equal(appContext.platformFoundation.createAdapter instanceof Function, true);
   assert.equal(appContext.platformAdapter.commandRegistryRenderer, appContext.commandRegistryRenderer);
   assert.equal(appContext.platformAdapter.commandViewRenderer, appContext.commandViewRenderer);

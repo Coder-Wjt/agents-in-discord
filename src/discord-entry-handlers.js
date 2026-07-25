@@ -1,6 +1,5 @@
 import { createCommandMessageView } from './platforms/command-view.js';
 import { registerDiscordCommands } from './platforms/discord/command-registration.js';
-import { createDiscordInboundEventNormalizer } from './platforms/discord/inbound-event.js';
 import { assertInteractionResponse } from './platforms/interaction-response.js';
 import { createInboundMessageContext } from './platforms/inbound-event.js';
 
@@ -58,43 +57,11 @@ export function createDiscordEntryHandlers({
     doesMessageTargetBot = () => false,
     buildPromptFromMessage = () => '',
   } = messageInput;
-  const toInboundMessageEvent = normalizeMessageEvent || ((message, { botUserId = null } = {}) => {
-    const rawText = String(message?.content || '');
-    const normalizedBotUserId = String(botUserId || '').trim();
-    return {
-      type: 'message',
-      platformId: 'discord',
-      id: String(message?.id || '').trim(),
-      actor: {
-        id: String(message?.author?.id || '').trim(),
-        displayName: String(message?.author?.tag || message?.author?.id || '').trim(),
-        isBot: Boolean(message?.author?.bot),
-      },
-      conversation: {
-        id: String(message?.channel?.id || '').trim(),
-        parentId: message?.channel?.isThread?.() ? String(message?.channel?.parentId || '').trim() || null : null,
-        isThread: Boolean(message?.channel?.isThread?.()),
-      },
-      rawText,
-      text: normalizedBotUserId
-        ? rawText.replace(new RegExp(`<@!?${normalizedBotUserId}>`, 'g'), '').trim()
-        : rawText.trim(),
-      attachments: message?.attachments && typeof message.attachments.values === 'function'
-        ? [...message.attachments.values()]
-        : [],
-      replyToMessageId: String(
-        message?.reference?.messageId
-        || message?.reference?.message_id
-        || message?.reference?.message?.id
-        || '',
-      ).trim() || null,
-      isSystem: Boolean(message?.system),
-      targetsBot: Boolean(normalizedBotUserId && doesMessageTargetBot(message, normalizedBotUserId)),
-      raw: message,
-    };
-  });
-  const toInboundInteractionEvent = normalizeInteractionEvent
-    || createDiscordInboundEventNormalizer().normalizeInteraction;
+  if (typeof normalizeMessageEvent !== 'function' || typeof normalizeInteractionEvent !== 'function') {
+    throw new TypeError('Discord entry handlers require normalized message and interaction event functions.');
+  }
+  const toInboundMessageEvent = normalizeMessageEvent;
+  const toInboundInteractionEvent = normalizeInteractionEvent;
 
   async function joinThreadWithRetry(thread, context = 'thread.join') {
     if (!supportsThreads) return;
@@ -154,7 +121,7 @@ export function createDiscordEntryHandlers({
   async function handleMessageCreate(message, bot) {
     try {
       const event = toInboundMessageEvent(message, { botUserId: bot?.user?.id || null });
-      const promptMessage = createInboundMessageContext(event, { fallbackRaw: message });
+      const promptMessage = createInboundMessageContext(event);
       if (event.actor.isBot) return;
       if (event.isSystem) return;
       if (!isAllowedUser(event.actor.id)) return;

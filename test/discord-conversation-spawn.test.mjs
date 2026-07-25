@@ -52,10 +52,10 @@ test('Discord conversation spawn owns mentions, sends, history normalization and
   const source = {
     id: 'source-2',
     actor: { id: 'user-1', raw: { id: 'user-1' } },
-    client: { user: { id: 'bot-1' } },
     conversation: {
       id: 'channel-1',
       raw: {
+        client: { user: { id: 'bot-1' } },
         messages: {
           async fetch(options) {
             fetched.push(options);
@@ -76,7 +76,7 @@ test('Discord conversation spawn owns mentions, sends, history normalization and
   await port.send(conversation, { content: 'hello', mentionUserIds: ['user-1', 'user-1'] });
   const messages = await port.listRecentMessages(source, { beforeId: 'source-2', limit: 10 });
   const promptMessage = port.createPromptMessage(source, conversation);
-  await promptMessage.reply({ content: 'reply' });
+  await promptMessage.responseTarget.reply({ content: 'reply' });
 
   assert.deepEqual(sent, [
     { content: 'hello', allowedMentions: { users: ['user-1'] } },
@@ -84,11 +84,9 @@ test('Discord conversation spawn owns mentions, sends, history normalization and
   ]);
   assert.deepEqual(fetched, [{ before: 'source-2', limit: 10 }]);
   assert.deepEqual(messages[0].actor, { id: 'bot-1', isBot: true, isCurrentBot: true });
-  assert.deepEqual(messages[0].author, { id: 'bot-1', isBot: true, isCurrentBot: true });
-  assert.equal(messages[0].author, messages[0].actor);
+  assert.equal('author' in messages[0], false);
   assert.equal(messages[0].text, 'answer');
-  assert.equal(promptMessage.channel, thread);
-  assert.equal(promptMessage.channelId, 'thread-1');
+  assert.equal(promptMessage.responseTarget.channel, thread);
   assert.deepEqual(promptMessage.actor, {
     id: 'user-1',
     displayName: 'user-1',
@@ -123,7 +121,7 @@ test('Discord conversation spawn can route synthetic prompt replies through deli
     },
   });
 
-  assert.deepEqual(await promptMessage.reply({ content: 'done' }), { id: 'delivered-1' });
+  assert.deepEqual(await promptMessage.responseTarget.reply({ content: 'done' }), { id: 'delivered-1' });
   assert.deepEqual(delivered, [{ replySource: source, payload: { content: 'done' } }]);
   assert.equal(promptMessage.conversation.isThread, false);
   assert.equal(promptMessage.conversation.parentId, null);
@@ -147,12 +145,17 @@ test('Discord conversation spawn owns rename, removal, lock and archive operatio
     },
   };
   const source = {
-    client: {
-      channels: {
-        cache: new Map([['thread-1', thread]]),
+    conversation: {
+      id: 'parent-1',
+      raw: {
+        id: 'parent-1',
+        client: {
+          channels: {
+            cache: new Map([['thread-1', thread]]),
+          },
+        },
       },
     },
-    conversation: { id: 'parent-1', raw: { id: 'parent-1' } },
   };
   const port = createDiscordConversationSpawn();
   const conversation = { id: 'thread-1', raw: thread };

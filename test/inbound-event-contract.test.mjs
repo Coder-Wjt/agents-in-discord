@@ -30,6 +30,8 @@ test('assertInboundMessageEvent accepts a normalized message envelope', () => {
     attachments: [],
     isSystem: false,
     targetsBot: true,
+    replyToMessageId: 'parent-message-1',
+    responseTarget: { id: 'delivery-target' },
     raw: {},
   };
 
@@ -39,27 +41,19 @@ test('assertInboundMessageEvent accepts a normalized message envelope', () => {
     true,
   );
 
-  const raw = {
-    channel: { id: 'raw-channel' },
-    author: { id: 'raw-user' },
-    reference: { messageId: 'raw-parent-message' },
-  };
-  const contextEvent = { ...event, raw: null };
-  const context = createInboundMessageContext(contextEvent, { fallbackRaw: raw });
-  assert.equal(context.responseTarget, raw);
-  assert.equal(context.channel, raw.channel);
-  assert.deepEqual(context.author, {
-    id: 'user-1',
-    displayName: 'User',
-    bot: false,
-    raw: raw.author,
-  });
+  const context = createInboundMessageContext(event);
+  assert.equal(context.responseTarget, event.responseTarget);
+  assert.equal(context.actor, event.actor);
+  assert.equal(context.conversation, event.conversation);
   assert.equal(context.attachments, event.attachments);
-  assert.equal(context.replyToMessageId, 'raw-parent-message');
-  assert.equal(context.inboundEvent, contextEvent);
+  assert.equal(context.replyToMessageId, 'parent-message-1');
+  assert.equal(context.inboundEvent, event);
+  assert.equal('channel' in context, false);
+  assert.equal('author' in context, false);
+  assert.equal('raw' in context, false);
 });
 
-test('inbound message accessors prefer normalized context and retain raw compatibility fallbacks', () => {
+test('inbound message accessors require normalized envelopes or contexts', () => {
   const conversationTarget = { id: 'normalized-target' };
   const attachments = [{
     id: 'attachment-1',
@@ -99,25 +93,23 @@ test('inbound message accessors prefer normalized context and retain raw compati
     assert.equal(getInboundMessageReplyToMessageId(message), 'parent-message-1');
   }
 
-  assert.equal(context.author.id, 'normalized-user');
-  assert.equal(context.channelId, 'normalized-conversation');
-  assert.equal(context.channel, conversationTarget);
+  assert.equal(context.actor.id, 'normalized-user');
+  assert.equal(context.conversation.id, 'normalized-conversation');
   assert.equal(context.replyToMessageId, 'parent-message-1');
 
-  const rawAttachments = new Map([['raw-1', { id: 'raw-1' }]]);
   const rawMessage = {
     author: { id: 'raw-user' },
     channel: { id: 'raw-channel' },
-    attachments: rawAttachments,
+    attachments: new Map([['raw-1', { id: 'raw-1' }]]),
     reference: { message_id: 'raw-parent-message' },
   };
-  assert.equal(getInboundMessageActorId(rawMessage), 'raw-user');
+  assert.equal(getInboundMessageActorId(rawMessage), '');
   assert.equal(getInboundMessageConversation(rawMessage), null);
-  assert.equal(getInboundMessageConversationId(rawMessage), 'raw-channel');
-  assert.equal(getInboundMessageConversationTarget(rawMessage), rawMessage.channel);
-  assert.deepEqual(getInboundMessageAttachments(rawMessage), [{ id: 'raw-1' }]);
-  assert.equal(getInboundMessageReplyToMessageId(rawMessage), 'raw-parent-message');
-  assert.equal(getInboundActorId({ user: { id: 'raw-interaction-user' } }), 'raw-interaction-user');
+  assert.equal(getInboundMessageConversationId(rawMessage), '');
+  assert.equal(getInboundMessageConversationTarget(rawMessage), null);
+  assert.deepEqual(getInboundMessageAttachments(rawMessage), []);
+  assert.equal(getInboundMessageReplyToMessageId(rawMessage), null);
+  assert.equal(getInboundActorId({ user: { id: 'raw-interaction-user' } }), '');
 });
 
 test('assertInboundInteractionEvent accepts normalized command and modal envelopes', () => {
