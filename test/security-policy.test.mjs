@@ -11,6 +11,18 @@ import {
   parseOptionalBool,
   resolveProjectUpgradeNotifyChannelIds,
 } from '../src/security-policy.js';
+import { createDiscordConversationSecurity } from '../src/platforms/discord/conversation-security.js';
+
+function createDiscordSecurityPolicy(options = {}) {
+  const {
+    permissionFlagsBits = { ViewChannel: 'VIEW' },
+    ...policyOptions
+  } = options;
+  return createSecurityPolicy({
+    ...policyOptions,
+    conversationSecurityResolver: createDiscordConversationSecurity({ permissionFlagsBits }),
+  });
+}
 
 function createGuildChannel({ canView = false, id = null } = {}) {
   const everyone = { id: 'everyone' };
@@ -48,7 +60,7 @@ test('security-policy parses csv booleans queue limit and security profile with 
 });
 
 test('security-policy tracks config allowlist helpers', () => {
-  const policy = createSecurityPolicy({
+  const policy = createDiscordSecurityPolicy({
     enableConfigCmd: true,
     configPolicy: parseConfigAllowlist('personality,model_reasoning_effort'),
   });
@@ -89,7 +101,7 @@ test('project upgrade notify channels fall back to an empty set when channel all
 });
 
 test('security-policy resolves auto and manual channel security contexts', () => {
-  const policy = createSecurityPolicy({
+  const policy = createDiscordSecurityPolicy({
     securityProfile: 'auto',
     securityProfileDefaults: {
       solo: { mentionOnly: false, maxQueuePerChannel: 0 },
@@ -130,7 +142,7 @@ test('security-policy resolves auto and manual channel security contexts', () =>
 });
 
 test('security-policy supports per-guild mention-only overrides', () => {
-  const policy = createSecurityPolicy({
+  const policy = createDiscordSecurityPolicy({
     securityProfile: 'auto',
     securityProfileDefaults: {
       solo: { mentionOnly: false, maxQueuePerChannel: 0 },
@@ -184,6 +196,45 @@ test('security-policy supports per-guild mention-only overrides', () => {
   assert.equal(channelSecurity.mentionOnly, true);
   assert.equal(threadSecurity.profile, 'team');
   assert.equal(threadSecurity.mentionOnly, true);
+});
+
+test('security-policy consumes platform-neutral conversation security descriptors', () => {
+  const policy = createSecurityPolicy({
+    securityProfileDefaults: {
+      solo: { mentionOnly: false, maxQueuePerChannel: 0 },
+      team: { mentionOnly: false, maxQueuePerChannel: 20 },
+      public: { mentionOnly: true, maxQueuePerChannel: 20 },
+    },
+    mentionOnlyEnabledGuildIds: new Set(['tenant-force-mention']),
+    mentionOnlyChannelIds: new Set(['parent-force-mention']),
+    conversationSecurityResolver: {
+      resolve: (descriptor) => descriptor,
+    },
+  });
+
+  const publicSecurity = policy.resolveSecurityContext({
+    conversationId: 'conversation-1',
+    parentConversationId: null,
+    tenantId: 'tenant-1',
+    available: true,
+    isDirect: false,
+    visibility: 'public',
+    reason: 'workspace is externally visible',
+  });
+  const parentOverride = policy.resolveSecurityContext({
+    conversationId: 'child-1',
+    parentConversationId: 'parent-force-mention',
+    tenantId: 'tenant-1',
+    available: true,
+    isDirect: false,
+    visibility: 'team',
+    reason: 'workspace membership required',
+  });
+
+  assert.equal(publicSecurity.profile, 'public');
+  assert.equal(publicSecurity.reason, 'workspace is externally visible');
+  assert.equal(parentOverride.profile, 'team');
+  assert.equal(parentOverride.mentionOnly, true);
 });
 
 test('security-policy formats security profile display for localized output', () => {

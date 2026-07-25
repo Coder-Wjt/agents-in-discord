@@ -1,3 +1,9 @@
+import {
+  DEFAULT_CONVERSATION_SECURITY_RESOLVER,
+  assertConversationSecurityDescriptor,
+  assertConversationSecurityResolver,
+} from './platforms/conversation-security.js';
+
 export function parseCsvSet(value) {
   if (!value || !value.trim()) return null;
   return new Set(value.split(',').map((item) => item.trim()).filter(Boolean));
@@ -76,8 +82,10 @@ export function createSecurityPolicy({
   enableConfigCmd = false,
   configPolicy = { allowAll: false, keys: new Set() },
   getEffectiveSecurityProfile = () => ({ profile: securityProfile, source: 'env default' }),
-  permissionFlagsBits = {},
+  conversationSecurityResolver = DEFAULT_CONVERSATION_SECURITY_RESOLVER,
 } = {}) {
+  const securityResolver = assertConversationSecurityResolver(conversationSecurityResolver);
+
   function isConfigKeyAllowed(key) {
     if (configPolicy.allowAll) return true;
     return configPolicy.keys.has(String(key || '').trim().toLowerCase());
@@ -100,34 +108,40 @@ export function createSecurityPolicy({
     return `${Math.floor(n)}`;
   }
 
-  function resolveGuildId(channel) {
-    const baseChannel = channel?.isThread?.() ? (channel.parent || null) : channel;
-    const guildId = baseChannel?.guild?.id || channel?.guild?.id || '';
-    const normalized = String(guildId || '').trim();
-    return normalized || null;
+  function resolveDescriptor(source) {
+    return assertConversationSecurityDescriptor(securityResolver.resolve(source));
   }
 
-  function isMentionOnlyChannel(channel) {
-    if (!mentionOnlyChannelIds?.size || !channel) return false;
+  function isMentionOnlyConversation(descriptor) {
+    if (!mentionOnlyChannelIds?.size || !descriptor?.available) return false;
 
-    const channelId = String(channel.id || '').trim();
-    if (channelId && mentionOnlyChannelIds.has(channelId)) return true;
+    if (
+      descriptor.conversationId
+      && mentionOnlyChannelIds.has(descriptor.conversationId)
+    ) return true;
 
-    const parentId = String(channel.parentId || channel.parent?.id || '').trim();
-    return Boolean(parentId && mentionOnlyChannelIds.has(parentId));
+    return Boolean(
+      descriptor.parentConversationId
+      && mentionOnlyChannelIds.has(descriptor.parentConversationId),
+    );
   }
 
-  function resolveMentionOnly(defaults, channel) {
-    if (isMentionOnlyChannel(channel)) return true;
-    const guildId = resolveGuildId(channel);
-    if (guildId && mentionOnlyEnabledGuildIds?.has(guildId)) return true;
-    if (guildId && mentionOnlyDisabledGuildIds?.has(guildId)) return false;
+  function resolveMentionOnly(defaults, descriptor) {
+    if (isMentionOnlyConversation(descriptor)) return true;
+    const tenantId = descriptor?.tenantId;
+    if (tenantId && mentionOnlyEnabledGuildIds?.has(tenantId)) return true;
+    if (tenantId && mentionOnlyDisabledGuildIds?.has(tenantId)) return false;
     return mentionOnlyOverride === null ? defaults.mentionOnly : mentionOnlyOverride;
   }
 
-  function resolveSecurityContext(channel, session = null) {
+  function resolveSecurityContext(source, session = null) {
+    const descriptor = resolveDescriptor(source);
     const configured = getEffectiveSecurityProfile(session);
-    const resolved = resolveSecurityProfileForChannel(channel, configured.profile, configured.source);
+    const resolved = resolveSecurityProfileFromDescriptor(
+      descriptor,
+      configured.profile,
+      configured.source,
+    );
     const defaults = securityProfileDefaults[resolved.profile] || securityProfileDefaults.team || {
       mentionOnly: false,
       maxQueuePerChannel: 20,
@@ -138,13 +152,13 @@ export function createSecurityPolicy({
       profile: resolved.profile,
       source: resolved.source,
       reason: resolved.reason,
-      mentionOnly: resolveMentionOnly(defaults, channel),
+      mentionOnly: resolveMentionOnly(defaults, descriptor),
       maxQueuePerChannel: maxQueuePerChannelOverride === null ? defaults.maxQueuePerChannel : maxQueuePerChannelOverride,
     };
   }
 
-  function resolveSecurityProfileForChannel(
-    channel,
+  function resolveSecurityProfileFromDescriptor(
+    descriptor,
     configuredProfile = securityProfile,
     configuredSource = 'env default',
   ) {
@@ -155,39 +169,40 @@ export function createSecurityPolicy({
         reason: `${configuredSource}: ${configuredProfile}`,
       };
     }
-    if (!channel) {
-      return { profile: 'team', source: 'auto', reason: 'channel unavailable (fallback team)' };
+    if (!descriptor.available) {
+      return { profile: 'team', source: 'auto', reason: `${descriptor.reason} (fallback team)` };
     }
-    if (channel.isDMBased?.()) {
+    if (descriptor.isDirect) {
       return { profile: 'solo', source: 'auto', reason: 'dm channel' };
     }
 
-    const visibility = resolveGuildChannelVisibility(channel);
-    if (visibility.visibility === 'public') {
-      return { profile: 'public', source: 'auto', reason: visibility.reason };
+    if (descriptor.visibility === 'public') {
+      return { profile: 'public', source: 'auto', reason: descriptor.reason };
     }
-    if (visibility.visibility === 'team') {
-      return { profile: 'team', source: 'auto', reason: visibility.reason };
+    if (descriptor.visibility === 'team') {
+      return { profile: 'team', source: 'auto', reason: descriptor.reason };
     }
-    return { profile: 'team', source: 'auto', reason: `${visibility.reason} (fallback team)` };
+    return { profile: 'team', source: 'auto', reason: `${descriptor.reason} (fallback team)` };
   }
 
-  function resolveGuildChannelVisibility(channel) {
-    const baseChannel = channel.isThread?.() ? (channel.parent || null) : channel;
-    const target = baseChannel || channel;
-    const guild = target?.guild || channel?.guild || null;
-    if (!guild) return { visibility: 'unknown', reason: 'missing guild context' };
+  function resolveSecurityProfileForConversation(
+    source,
+    configuredProfile = securityProfile,
+    configuredSource = 'env default',
+  ) {
+    return resolveSecurityProfileFromDescriptor(
+      resolveDescriptor(source),
+      configuredProfile,
+      configuredSource,
+    );
+  }
 
-    const everyoneRole = guild.roles?.everyone;
-    if (!everyoneRole) return { visibility: 'unknown', reason: 'missing @everyone role' };
-
-    const perms = target?.permissionsFor?.(everyoneRole);
-    if (!perms) return { visibility: 'unknown', reason: 'permissions unavailable' };
-
-    const canView = perms.has(permissionFlagsBits.ViewChannel, true);
-    return canView
-      ? { visibility: 'public', reason: '@everyone can view channel' }
-      : { visibility: 'team', reason: '@everyone cannot view channel' };
+  function resolveConversationVisibility(source) {
+    const descriptor = resolveDescriptor(source);
+    return {
+      visibility: descriptor.visibility,
+      reason: descriptor.reason,
+    };
   }
 
   function formatSecurityProfileDisplay(security, language = 'en') {
@@ -213,8 +228,10 @@ export function createSecurityPolicy({
     formatConfigCommandStatus,
     formatQueueLimit,
     resolveSecurityContext,
-    resolveSecurityProfileForChannel,
-    resolveGuildChannelVisibility,
+    resolveSecurityProfileForConversation,
+    resolveConversationVisibility,
+    resolveSecurityProfileForChannel: resolveSecurityProfileForConversation,
+    resolveGuildChannelVisibility: resolveConversationVisibility,
     formatSecurityProfileDisplay,
   };
 }
