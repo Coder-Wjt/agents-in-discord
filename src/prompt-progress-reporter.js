@@ -125,16 +125,34 @@ function isLowSignalLatestStep(value) {
   return false;
 }
 
-function shouldPromoteLatestStep(nextStep, currentStep) {
+function isAgentNarrationStep(value) {
+  return String(value || '').trim().startsWith('agent message');
+}
+
+function isUrgentLatestStep(value) {
+  const normalized = normalizeActivityKey(value);
+  return normalized.includes('api error')
+    || normalized.includes('rate limit')
+    || normalized.includes('429')
+    || normalized.includes('failed');
+}
+
+// How long a piece of agent narration keeps the "latest activity" line before a
+// mechanical tool label is allowed to take over. Long enough that a burst of tool
+// calls cannot bury what the agent just said, short enough that the line never
+// looks frozen while the run is still moving.
+const AGENT_NARRATION_STICKY_MS = 30_000;
+
+// Agent narration explains *why* the run is where it is, so it outranks the tool
+// label that happens to arrive next. Errors outrank everything.
+function shouldPromoteLatestStep(nextStep, currentStep, { currentStepAgeMs = Infinity } = {}) {
   const next = String(nextStep || '').trim();
   if (!next || isLowSignalLatestStep(next)) return false;
-  if (!next.startsWith('agent message')) return true;
-
-  const normalized = normalizeActivityKey(next);
-  if (normalized.includes('api error')) return true;
-  if (normalized.includes('rate limit')) return true;
-  if (normalized.includes('429')) return true;
-  return !currentStep || isLowSignalLatestStep(currentStep);
+  if (isUrgentLatestStep(next)) return true;
+  if (isAgentNarrationStep(next)) return true;
+  if (!currentStep || isLowSignalLatestStep(currentStep)) return true;
+  if (!isAgentNarrationStep(currentStep)) return true;
+  return currentStepAgeMs >= AGENT_NARRATION_STICKY_MS;
 }
 
 function parseProgressJsonMaybe(value) {
@@ -322,10 +340,10 @@ function formatClaudeToolUseLabel(block, truncateText, previewChars) {
   return detail ? `${toolName}: ${detail}` : `tool ${toolName}`;
 }
 
-function shouldSurfaceClaudeToolActivity(block) {
-  return normalizeProgressEventType(block?.name || '') !== 'todowrite';
-}
-
+// Claude tool_use labels lean on the model-authored `description` field, so every
+// call reads as a fresh sentence and dedupe can never collapse them. They feed the
+// "latest activity" line and completed milestones, but never rawActivities — that
+// lane is reserved for what the agent says about its own progress.
 function createClaudeProgressTracker({ truncateText, previewChars }) {
   const activeBlocks = new Map();
   const finalizedBlocks = [];
@@ -390,9 +408,7 @@ function createClaudeProgressTracker({ truncateText, previewChars }) {
 
     for (const block of finalizedBlocks.splice(0)) {
       if (block.kind === 'tool_use') {
-        const label = formatClaudeToolUseLabel(block, truncateText, previewChars);
-        summaryCandidates.push(label);
-        if (shouldSurfaceClaudeToolActivity(block)) rawActivities.push(label);
+        summaryCandidates.push(formatClaudeToolUseLabel(block, truncateText, previewChars));
         continue;
       }
 
@@ -468,7 +484,6 @@ function createClaudeProgressTracker({ truncateText, previewChars }) {
         const label = formatClaudeToolUseLabel(normalized, truncateText, previewChars);
         if (normalized.id) toolUseLabelsById.set(normalized.id, label);
         summaryCandidates.push(label);
-        if (shouldSurfaceClaudeToolActivity(normalized)) rawActivities.push(label);
         continue;
       }
 
@@ -648,7 +663,27 @@ function formatSettingSourceLabel(source, language = 'en') {
   if (source === 'env default') {
     return language === 'en' ? 'env default' : '环境默认';
   }
+  if (source === 'runtime observed') {
+    return language === 'en' ? 'runtime observed' : '实际运行';
+  }
   return language === 'en' ? 'provider default' : 'provider 默认';
+}
+
+function extractClaudeObservedModel(event) {
+  const directMessage = event?.message && typeof event.message === 'object' ? event.message : null;
+  const nestedMessage = event?.event?.message && typeof event.event.message === 'object'
+    ? event.event.message
+    : null;
+  const candidates = [
+    directMessage?.model,
+    nestedMessage?.model,
+    event?.model,
+  ];
+  for (const candidate of candidates) {
+    const model = String(candidate || '').trim();
+    if (model) return model;
+  }
+  return '';
 }
 
 function formatModelValue(modelSetting, language = 'en') {
@@ -699,6 +734,7 @@ export function createPromptProgressReporterFactory({
   const {
     summarizeCodexEvent = () => '',
     extractRawProgressTextFromEvent = () => '',
+    extractProcessNarrationFromEvent = extractRawProgressTextFromEvent,
     cloneProgressPlan = (plan) => plan,
     extractPlanStateFromEvent = () => null,
     extractCompletedStepFromEvent = () => null,
@@ -745,6 +781,7 @@ export function createPromptProgressReporterFactory({
     let lastRendered = '';
     let events = 0;
     let latestStep = seededLatestStep;
+    let latestStepAt = startedAt;
     let planState = cloneProgressPlan(channelState?.activeRun?.progressPlan);
     const completedSteps = Array.isArray(channelState?.activeRun?.completedSteps)
       ? [...channelState.activeRun.completedSteps]
@@ -759,6 +796,7 @@ export function createPromptProgressReporterFactory({
     let failedStreamActivity = null;
     let isEmitting = false;
     let rerunEmit = false;
+    let observedModel = '';
     const isDuplicateProgressEvent = createProgressEventDeduper({
       ttlMs: progressEventDedupeWindowMs,
       maxKeys: 700,
@@ -787,7 +825,12 @@ export function createPromptProgressReporterFactory({
       const phase = formatRuntimePhaseLabel(channelState?.activeRun?.phase || 'starting', lang);
       const effort = formatEffortValue(resolveReasoningEffortSetting(session), session?.provider, lang);
       const fastMode = formatFastModeValue(resolveFastModeSetting(session), lang);
-      const model = formatModelValue(resolveModelSetting(session), lang);
+      const model = formatModelValue(
+        observedModel
+          ? { value: observedModel, source: 'runtime observed' }
+          : resolveModelSetting(session),
+        lang,
+      );
       const hint = status === 'running'
         ? (lang === 'en'
           ? 'Use `!c` to interrupt.'
@@ -932,6 +975,7 @@ export function createPromptProgressReporterFactory({
       const next = String(value || '').trim();
       if (!next) return;
       latestStep = next;
+      latestStepAt = now();
       syncActiveRun();
       if (!stopped) {
         void emit(forceEmit);
@@ -973,6 +1017,15 @@ export function createPromptProgressReporterFactory({
 
     const onEvent = (event) => {
       if (stopped) return;
+      let observedModelChanged = false;
+      if (session?.provider === 'claude') {
+        const nextObservedModel = extractClaudeObservedModel(event);
+        if (nextObservedModel && nextObservedModel !== observedModel) {
+          observedModel = nextObservedModel;
+          session.lastObservedModel = nextObservedModel;
+          observedModelChanged = true;
+        }
+      }
       if (session?.provider === 'codex') {
         const unphasedAgentMessage = extractUnphasedCodexAgentMessage(event);
         if (unphasedAgentMessage) {
@@ -993,7 +1046,7 @@ export function createPromptProgressReporterFactory({
       let rawActivities = providerProgress?.rawActivities?.length
         ? providerProgress.rawActivities
         : (() => {
-          const raw = extractRawProgressTextFromEvent(event, codexProgressOptions);
+          const raw = extractProcessNarrationFromEvent(event, codexProgressOptions);
           return raw ? [raw] : [];
         })();
       if (session?.provider === 'codex') {
@@ -1024,13 +1077,22 @@ export function createPromptProgressReporterFactory({
         completedStep: safeCompletedStepsFromEvent.join(' || '),
         planSummary: formatProgressPlanSummary(nextPlan),
       });
-      if (isDuplicateProgressEvent(dedupeKey)) return;
+      if (isDuplicateProgressEvent(dedupeKey)) {
+        if (observedModelChanged) {
+          syncActiveRun();
+          void emit(false);
+        }
+        return;
+      }
 
       events += 1;
-      if (shouldPromoteLatestStep(safeSummaryStep, latestStep)) {
+      const promoteOptions = { currentStepAgeMs: Math.max(0, now() - latestStepAt) };
+      if (shouldPromoteLatestStep(safeSummaryStep, latestStep, promoteOptions)) {
         latestStep = safeSummaryStep;
+        latestStepAt = now();
       } else if (!latestStep && safeSummaryStep) {
         latestStep = safeSummaryStep;
+        latestStepAt = now();
       }
       for (const rawActivity of safeRawActivities) {
         if (!rawActivity) continue;
@@ -1070,6 +1132,7 @@ export function createPromptProgressReporterFactory({
       latestStep = sanitizeProgressDisplayText(
         `${sourceLabel}: ${truncate(String(line || '').replace(/\s+/g, ' ').trim(), progressTextPreviewChars)}`,
       );
+      latestStepAt = now();
       syncActiveRun();
       void emit(false);
     };
@@ -1114,7 +1177,12 @@ export function createPromptProgressReporterFactory({
         status,
         `${lang === 'en' ? '• elapsed' : '• 耗时'}: ${elapsed}`,
         `${lang === 'en' ? '• phase' : '• 阶段'}: ${formatRuntimePhaseLabel(channelState?.activeRun?.phase || 'done', lang)}`,
-        `${lang === 'en' ? '• model' : '• model'}: ${formatModelValue(resolveModelSetting(session), lang)}`,
+        `${lang === 'en' ? '• model' : '• model'}: ${formatModelValue(
+          observedModel
+            ? { value: observedModel, source: 'runtime observed' }
+            : resolveModelSetting(session),
+          lang,
+        )}`,
         `${lang === 'en' ? '• event count' : '• 事件数'}: ${events}`,
         `${lang === 'en' ? '• latest activity' : '• 最新活动'}: ${latestStep}`,
         ...renderProcessContentLines(recentActivities, lang, processLineLimit),

@@ -244,7 +244,7 @@ test('createPromptProgressReporterFactory can stream deduped process messages wh
   assert.match(harness.edits.at(-1).content, /process: 我先检查一下这个仓库的入口文件。/);
 });
 
-test('createPromptProgressReporterFactory streams current Codex CLI command executions', async () => {
+test('createPromptProgressReporterFactory keeps Codex command executions out of the process stream', async () => {
   const harness = createHarness({
     factoryOptions: {
       presentation: createRealPresentation(),
@@ -265,11 +265,58 @@ test('createPromptProgressReporterFactory streams current Codex CLI command exec
     },
   });
 
-  assert.deepEqual(harness.streamed, ['search Cohub context']);
-  assert.deepEqual(harness.channelState.activeRun.recentActivities, ['search Cohub context']);
-  assert.match(harness.edits.at(-1).content, /process content:/);
-  assert.match(harness.edits.at(-1).content, /search Cohub context/);
-  assert.doesNotMatch(harness.edits.at(-1).content, /command_execution completed/);
+  // Tool activity belongs on the latest-activity line and in completed
+  // milestones, not in the narration stream posted to the channel.
+  assert.deepEqual(harness.streamed, []);
+  assert.deepEqual(harness.channelState.activeRun.recentActivities, []);
+  assert.match(harness.edits.at(-1).content, /latest activity: command completed: search Cohub context/);
+  assert.doesNotMatch(harness.edits.at(-1).content, /process content:/);
+
+  // A later command pushes the earlier one down into completed milestones, so
+  // tool progress stays readable without ever entering the narration stream.
+  harness.reporter.onEvent({
+    type: 'item.completed',
+    item: {
+      id: 'item_44',
+      type: 'command_execution',
+      command: '/bin/zsh -lc "lark-cli auth status"',
+      aggregated_output: 'ok',
+      exit_code: 0,
+      status: 'completed',
+    },
+  });
+
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(harness.streamed, []);
+  assert.deepEqual(harness.channelState.activeRun.recentActivities, []);
+  assert.match(harness.edits.at(-1).content, /latest activity: command completed: check Lark connection/);
+  assert.doesNotMatch(harness.edits.at(-1).content, /process content:/);
+});
+
+test('createPromptProgressReporterFactory still streams failed Codex commands', async () => {
+  const harness = createHarness({
+    factoryOptions: {
+      presentation: createRealPresentation(),
+    },
+  });
+
+  await harness.reporter.start();
+  harness.channelState.activeRun.phase = 'exec';
+  harness.reporter.onEvent({
+    type: 'item.completed',
+    item: {
+      id: 'item_43',
+      type: 'command_execution',
+      command: '/bin/zsh -lc "npm test"',
+      aggregated_output: 'AssertionError: expected 1 to equal 2',
+      exit_code: 1,
+      status: 'completed',
+    },
+  });
+
+  assert.equal(harness.streamed.length, 1);
+  assert.match(harness.streamed[0], /command failed/);
 });
 
 test('createPromptProgressReporterFactory streams native Codex reasoning summaries', async () => {
@@ -512,6 +559,38 @@ test('createPromptProgressReporterFactory includes model line in running and fin
   assert.match(harness.edits[harness.edits.length - 1].content, /• model: `gpt-5\.3-codex` \(session override\)/);
 });
 
+test('createPromptProgressReporterFactory replaces requested Claude model with the observed runtime model', async () => {
+  const session = {
+    provider: 'claude',
+    model: 'opus',
+  };
+  const harness = createHarness({
+    session,
+    factoryOptions: {
+      resolveModelSetting: (currentSession) => ({
+        value: currentSession?.model,
+        source: currentSession?.model ? 'session override' : 'provider',
+      }),
+    },
+  });
+
+  await harness.reporter.start();
+  harness.reporter.onEvent({
+    type: 'assistant',
+    message: {
+      role: 'assistant',
+      model: 'claude-opus-5',
+      stop_reason: 'end_turn',
+      content: [{ type: 'text', text: 'done' }],
+    },
+  });
+  await harness.reporter.finish({ ok: true });
+
+  assert.equal(session.lastObservedModel, 'claude-opus-5');
+  assert.match(harness.edits[harness.edits.length - 1].content, /• model: `claude-opus-5` \(runtime observed\)/);
+  assert.doesNotMatch(harness.edits[harness.edits.length - 1].content, /• model: `opus`/);
+});
+
 test('createPromptProgressReporterFactory shows resolved default model instead of provider default text', async () => {
   const harness = createHarness({
     session: {
@@ -636,8 +715,10 @@ test('createPromptProgressReporterFactory derives Claude commentary and tool pro
   await harness.reporter.finish({ ok: true });
 
   const finalCard = harness.edits[harness.edits.length - 1].content;
+  // Commentary is narration and belongs in the process stream; the tool label is
+  // mechanical and only belongs in completed milestones.
   assert.match(finalCard, /process: 我来查看当前目录。/);
-  assert.match(finalCard, /process: Show current working directory/);
+  assert.doesNotMatch(finalCard, /process: Show current working directory/);
   assert.match(finalCard, /done: Show current working directory/);
 });
 
@@ -693,7 +774,7 @@ test('createPromptProgressReporterFactory derives Claude progress from assistant
 
   const finalCard = harness.edits[harness.edits.length - 1].content;
   assert.match(finalCard, /process: 我先用 ls 看一下当前目录。/);
-  assert.match(finalCard, /process: List current directory/);
+  assert.doesNotMatch(finalCard, /process: List current directory/);
   assert.match(finalCard, /done: List current directory/);
   assert.doesNotMatch(finalCard, /最终答案/);
 });
@@ -740,9 +821,72 @@ test('createPromptProgressReporterFactory does not duplicate Claude progress whe
 
   const finalCard = harness.edits[harness.edits.length - 1].content;
   const processMatches = finalCard.match(/process: Show working directory/g) || [];
-  assert.equal(processMatches.length, 1);
+  assert.equal(processMatches.length, 0);
   const doneMatches = finalCard.match(/done: Show working directory/g) || [];
   assert.equal(doneMatches.length, 1);
+});
+
+test('createPromptProgressReporterFactory keeps Claude narration on the latest activity line through a tool burst', async () => {
+  const harness = createHarness({
+    session: { provider: 'claude' },
+    factoryOptions: {
+      presentation: createRealPresentation(),
+    },
+  });
+
+  await harness.reporter.start();
+  harness.channelState.activeRun.phase = 'exec';
+
+  harness.reporter.onEvent({
+    type: 'assistant',
+    message: {
+      id: 'msg-a',
+      role: 'assistant',
+      stop_reason: 'tool_use',
+      content: [{ type: 'text', text: '先把三个来源并行拉一遍。' }],
+    },
+  });
+
+  for (let index = 0; index < 5; index += 1) {
+    harness.reporter.onEvent({
+      type: 'assistant',
+      message: {
+        id: `msg-tool-${index}`,
+        role: 'assistant',
+        stop_reason: 'tool_use',
+        content: [{
+          type: 'tool_use',
+          id: `toolu_${index}`,
+          name: 'Bash',
+          input: { command: `echo ${index}`, description: `Fetch source ${index}` },
+        }],
+      },
+    });
+  }
+
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.match(harness.edits.at(-1).content, /latest activity: agent message: 先把三个来源并行拉一遍。/);
+
+  // Once the narration is stale, mechanical tool labels may take the line again
+  // so it never looks frozen mid-run.
+  harness.advance(31_000);
+  harness.reporter.onEvent({
+    type: 'assistant',
+    message: {
+      id: 'msg-tool-late',
+      role: 'assistant',
+      stop_reason: 'tool_use',
+      content: [{
+        type: 'tool_use',
+        id: 'toolu_late',
+        name: 'Bash',
+        input: { command: 'echo late', description: 'Fetch final source' },
+      }],
+    },
+  });
+
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.match(harness.edits.at(-1).content, /latest activity: Fetch final source/);
 });
 
 test('createPromptProgressReporterFactory ignores Claude assistant snapshots once stream events are active', async () => {
@@ -791,6 +935,18 @@ test('createPromptProgressReporterFactory does not let Claude system noise hide 
     content: 'Conversation compacted',
   });
   assert.equal(harness.channelState.activeRun.lastProgressText, 'Waiting for workspace lock: /repo/demo');
+
+  // Fresh narration normally holds the line; an API error must still displace it.
+  harness.reporter.onEvent({
+    type: 'assistant',
+    message: {
+      id: 'msg-narration',
+      role: 'assistant',
+      stop_reason: 'tool_use',
+      content: [{ type: 'text', text: '继续拉取剩下的材料。' }],
+    },
+  });
+  assert.equal(harness.channelState.activeRun.lastProgressText, 'agent message: 继续拉取剩下的材料。');
 
   harness.reporter.onEvent({
     type: 'assistant',
