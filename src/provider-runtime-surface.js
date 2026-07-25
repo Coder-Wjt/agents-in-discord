@@ -142,6 +142,74 @@ const PROVIDER_RUNTIME_SURFACES = Object.freeze({
       zh: '配置由 `~/.zcode/cli/config.json` 管理',
     }),
   }),
+  pi: Object.freeze({
+    sessionTerm: Object.freeze({
+      en: Object.freeze({ singular: 'session', plural: 'sessions' }),
+      zh: Object.freeze({ singular: 'session', plural: 'sessions' }),
+    }),
+    recentSessionsTitle: Object.freeze({
+      en: 'Recent Pi Sessions',
+      zh: '最近 Pi Sessions',
+    }),
+    recentSessionsLookup: Object.freeze({
+      en: 'workspace session journals in `~/.pi/agent/sessions`',
+      zh: 'workspace session 记录，来源 `~/.pi/agent/sessions`',
+    }),
+    runtimeSummary: Object.freeze({
+      en: 'Pi JSON event stream, workspace sessions, native compaction',
+      zh: 'Pi JSON 事件流、workspace sessions、原生压缩',
+    }),
+    sessionStore: Object.freeze({
+      en: 'Pi session journals (`~/.pi/agent/sessions`)',
+      zh: 'Pi session 记录（`~/.pi/agent/sessions`）',
+    }),
+    resumeSurface: Object.freeze({
+      en: 'session-id resume via `--session`; workspace changes reset the binding',
+      zh: '通过 `--session` 按 session id 恢复；切换 workspace 时重置绑定',
+    }),
+    nativeCompactSurface: Object.freeze({
+      en: 'provider-native compaction; no exposed native limit override',
+      zh: 'provider 原生压缩；不暴露 native limit 覆盖',
+    }),
+    rawConfigSurface: Object.freeze({
+      en: 'configuration is managed by Pi settings and CLI flags',
+      zh: '配置由 Pi settings 和 CLI flags 管理',
+    }),
+  }),
+  omp: Object.freeze({
+    sessionTerm: Object.freeze({
+      en: Object.freeze({ singular: 'session', plural: 'sessions' }),
+      zh: Object.freeze({ singular: 'session', plural: 'sessions' }),
+    }),
+    recentSessionsTitle: Object.freeze({
+      en: 'Recent OMP Sessions',
+      zh: '最近 OMP Sessions',
+    }),
+    recentSessionsLookup: Object.freeze({
+      en: 'workspace session journals in `~/.omp/agent/sessions`',
+      zh: 'workspace session 记录，来源 `~/.omp/agent/sessions`',
+    }),
+    runtimeSummary: Object.freeze({
+      en: 'OMP JSON event stream, workspace sessions, approval modes, native compaction',
+      zh: 'OMP JSON 事件流、workspace sessions、审批模式、原生压缩',
+    }),
+    sessionStore: Object.freeze({
+      en: 'OMP session journals (`~/.omp/agent/sessions`)',
+      zh: 'OMP session 记录（`~/.omp/agent/sessions`）',
+    }),
+    resumeSurface: Object.freeze({
+      en: 'session-id resume via `--resume`; workspace changes reset the binding',
+      zh: '通过 `--resume` 按 session id 恢复；切换 workspace 时重置绑定',
+    }),
+    nativeCompactSurface: Object.freeze({
+      en: 'provider-native compaction; no exposed native limit override',
+      zh: 'provider 原生压缩；不暴露 native limit 覆盖',
+    }),
+    rawConfigSurface: Object.freeze({
+      en: 'configuration is managed by OMP settings and CLI flags',
+      zh: '配置由 OMP settings 和 CLI flags 管理',
+    }),
+  }),
 });
 
 function getSurface(provider) {
