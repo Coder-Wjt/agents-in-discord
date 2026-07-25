@@ -1,4 +1,5 @@
 import { getSupportedReasoningEffortLevels } from './provider-metadata.js';
+import { createCommandMessageView } from './platforms/command-view.js';
 import {
   extractUnphasedCodexAgentMessage,
   isCodexTurnTerminalEvent,
@@ -100,10 +101,6 @@ function normalizeProgressEventType(value) {
 
 function normalizeProgressText(value) {
   return String(value || '').replace(/\s+/g, ' ').trim();
-}
-
-function sanitizeDiscordDisplayText(value) {
-  return String(value || '').replace(/\|\|/g, '｜｜');
 }
 
 function isLowSignalLatestStep(value) {
@@ -437,7 +434,7 @@ function createClaudeProgressTracker({ truncateText, previewChars }) {
   // --include-partial-messages; intermediate progress only exists as plain
   // assistant snapshots (one event per content block, stop_reason set on the
   // message). Derive commentary and tool activity from those snapshots so the
-  // Discord progress surfaces keep streaming like Codex. Skipped entirely once
+  // Editable progress surfaces keep streaming like Codex. Skipped entirely once
   // any stream_event arrives, so older CLIs never double-report.
   function consumeAssistantSnapshot(event) {
     if (sawStreamEvents) return null;
@@ -667,6 +664,7 @@ function formatModelValue(modelSetting, language = 'en') {
 }
 
 export function createPromptProgressReporterFactory({
+  messageDelivery = null,
   defaultUiLanguage = 'zh',
   progressUpdatesEnabled = true,
   progressProcessLines = 2,
@@ -696,6 +694,11 @@ export function createPromptProgressReporterFactory({
   clearIntervalFn = clearInterval,
   onStreamProcessMessage = null,
 } = {}) {
+  const replyToMessage = messageDelivery?.reply || safeReply;
+  const editMessage = messageDelivery?.edit || (async () => null);
+  const progressDeliveryAvailable = Boolean(
+    messageDelivery?.reply && messageDelivery?.edit,
+  );
   const {
     summarizeCodexEvent = () => '',
     extractRawProgressTextFromEvent = () => '',
@@ -710,7 +713,7 @@ export function createPromptProgressReporterFactory({
     renderProgressPlanLines = () => [],
     renderCompletedStepsLines = () => [],
     formatRuntimePhaseLabel = (phase) => String(phase || ''),
-    sanitizeProgressDisplayText = sanitizeDiscordDisplayText,
+    sanitizeProgressDisplayText = (value) => String(value || ''),
   } = presentation;
 
   return function createProgressReporter({
@@ -728,7 +731,7 @@ export function createPromptProgressReporterFactory({
       String(initialLatestStep || '').trim() || getDefaultLatestStep(lang),
     );
 
-    if (!progressUpdatesEnabled) {
+    if (!progressUpdatesEnabled || !progressDeliveryAvailable) {
       return createNoopProgressReporter({
         channelState,
         initialLatestStep: seededLatestStep,
@@ -820,12 +823,7 @@ export function createPromptProgressReporterFactory({
       return joinLinesWithinLimit(lines, progressMessageMaxChars, truncate);
     };
 
-    const buildPayload = (body) => {
-      return {
-        content: body,
-        components: [],
-      };
-    };
+    const buildPayload = (body) => createCommandMessageView({ content: body });
 
     const emit = async (force = false) => {
       if (!progressMessage || stopped) return;
@@ -842,7 +840,7 @@ export function createPromptProgressReporterFactory({
 
       isEmitting = true;
       try {
-        await progressMessage.edit(payload);
+        await editMessage(progressMessage, payload);
         lastEmitAt = now();
         lastRendered = body;
         syncActiveRun();
@@ -949,7 +947,7 @@ export function createPromptProgressReporterFactory({
       syncActiveRun();
       try {
         const body = render('running');
-        progressMessage = await safeReply(message, buildPayload(body));
+        progressMessage = await replyToMessage(message, buildPayload(body));
         lastEmitAt = now();
         lastRendered = body;
         syncActiveRun();
@@ -1129,7 +1127,7 @@ export function createPromptProgressReporterFactory({
       const safeBody = joinLinesWithinLimit(lines, progressMessageMaxChars, truncate);
 
       try {
-        await progressMessage.edit(buildPayload(safeBody));
+        await editMessage(progressMessage, buildPayload(safeBody));
       } catch {
         // ignore
       }

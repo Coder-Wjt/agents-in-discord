@@ -27,12 +27,28 @@ import {
   formatProjectUpgradeReport,
   parseProjectUpgradeSlashInput,
 } from './project-upgrade.js';
+import {
+  getInboundInteractionField,
+  getInboundInteractionOption,
+} from './platforms/inbound-event.js';
+import { assertInteractionResponse } from './platforms/interaction-response.js';
+import {
+  DEFAULT_CONVERSATION_PRESENTATION,
+  assertConversationPresentation,
+} from './platforms/conversation-presentation.js';
+import { assertConversationSpawn } from './platforms/conversation-spawn.js';
 
 const ACTION_BUTTON_PREFIX = 'cmd';
 const ACTION_BUTTON_COMMANDS = new Set(getActionButtonCommandNames());
 const GOAL_MODAL_PREFIX = 'goalm';
 const GOAL_OBJECTIVE_INPUT_ID = 'goal_objective';
 const GOAL_TOKEN_BUDGET_INPUT_ID = 'goal_token_budget';
+
+function formatThreadsUnavailable(language = 'zh') {
+  return language === 'en'
+    ? '❌ This platform does not support thread-based conversations.'
+    : '❌ 当前平台不支持基于 thread 的会话功能。';
+}
 
 function isExistingDirectory(dir) {
   try {
@@ -50,25 +66,12 @@ function registerSlashHandlers(map, names, handler) {
   }
 }
 
-function createInteractionPromptMessage(interaction) {
-  return {
-    id: interaction.id,
-    channel: interaction.channel,
-    channelId: interaction.channelId || interaction.channel?.id,
-    author: interaction.user,
-    client: interaction.client || interaction.channel?.client,
-    reactions: { cache: new Map() },
-    react: async () => {},
-    reply: async (payload) => {
-      if (typeof interaction.channel?.send === 'function') {
-        return interaction.channel.send(payload);
-      }
-      if (typeof interaction.followUp === 'function') {
-        return interaction.followUp(payload);
-      }
-      throw new Error('Cannot send goal continuation reply');
-    },
-  };
+function getInteractionChannel(interaction) {
+  return interaction?.conversation?.raw || null;
+}
+
+function getInteractionUserId(interaction) {
+  return String(interaction?.actor?.id || '').trim();
 }
 
 export function buildCommandActionButtonId(command, userId) {
@@ -92,15 +95,12 @@ export function isCommandActionButtonId(customId) {
 }
 
 export function createSlashCommandRouter({
+  platformCapabilities = null,
   botProvider = null,
   defaultUiLanguage = 'zh',
   slashRef = (name) => `/${name}`,
-  ActionRowBuilder,
-  ButtonBuilder,
-  ButtonStyle,
-  ModalBuilder,
-  TextInputBuilder,
-  TextInputStyle,
+  messageDelivery = null,
+  conversationPresentation = DEFAULT_CONVERSATION_PRESENTATION,
   getSession,
   getSessionLanguage,
   getSessionProvider,
@@ -118,6 +118,8 @@ export function createSlashCommandRouter({
   commandActions = {},
   isOnboardingEnabled,
   buildOnboardingActionRows,
+  buildOnboardingView = null,
+  interactionResponse,
   formatOnboardingStepReport,
   formatOnboardingDisabledMessage,
   formatOnboardingConfigReport,
@@ -169,6 +171,7 @@ export function createSlashCommandRouter({
   forkCodexThread,
   startCodexSideConversation,
   closeCodexSideConversation,
+  conversationSpawn,
   resolveForkWorkspace,
   getCodexThreadGoal,
   setCodexThreadGoal,
@@ -182,11 +185,20 @@ export function createSlashCommandRouter({
   resolvePath,
   safeError,
 } = {}) {
+  const responsePort = assertInteractionResponse(interactionResponse);
+  const presentation = assertConversationPresentation(conversationPresentation);
+  const sendToConversation = typeof messageDelivery?.send === 'function'
+    ? messageDelivery.send
+    : null;
+  const supportsThreads = platformCapabilities?.threads !== false;
   const handlers = new Map();
   const formatError = (err) => (typeof safeError === 'function' ? safeError(err) : String(err?.message || err));
 
-  function buildGoalModalId(action, userId) {
-    return `${GOAL_MODAL_PREFIX}:${String(action || '').trim().toLowerCase()}:${String(userId || '').trim()}`;
+  function createPromptMessageFromInteraction(interaction) {
+    const port = assertConversationSpawn(conversationSpawn);
+    return port.createPromptMessage(interaction, interaction?.conversation, {
+      reply: sendToConversation,
+    });
   }
 
   function parseGoalModalId(customId) {
@@ -202,60 +214,8 @@ export function createSlashCommandRouter({
     return Boolean(parseGoalModalId(customId));
   }
 
-  function canShowGoalModal() {
-    return ModalBuilder && TextInputBuilder && TextInputStyle && ActionRowBuilder;
-  }
-
-  function buildGoalSetModal(userId) {
-    const objectiveInput = new TextInputBuilder()
-      .setCustomId(GOAL_OBJECTIVE_INPUT_ID)
-      .setLabel('目标')
-      .setStyle(TextInputStyle.Paragraph)
-      .setPlaceholder('写清楚要持续推进到什么交付结果')
-      .setRequired(true)
-      .setMaxLength(4000);
-    const budgetInput = new TextInputBuilder()
-      .setCustomId(GOAL_TOKEN_BUDGET_INPUT_ID)
-      .setLabel('token 预算，可留空')
-      .setStyle(TextInputStyle.Short)
-      .setPlaceholder('例如 120000；clear 表示清除预算')
-      .setRequired(false)
-      .setMaxLength(32);
-    return new ModalBuilder()
-      .setCustomId(buildGoalModalId('set', userId))
-      .setTitle('设置 Codex goal')
-      .addComponents(
-        new ActionRowBuilder().addComponents(objectiveInput),
-        new ActionRowBuilder().addComponents(budgetInput),
-      );
-  }
-
-  function buildGoalBudgetModal(userId) {
-    const budgetInput = new TextInputBuilder()
-      .setCustomId(GOAL_TOKEN_BUDGET_INPUT_ID)
-      .setLabel('token 预算')
-      .setStyle(TextInputStyle.Short)
-      .setPlaceholder('例如 120000；clear 表示清除预算')
-      .setRequired(true)
-      .setMaxLength(32);
-    return new ModalBuilder()
-      .setCustomId(buildGoalModalId('budget', userId))
-      .setTitle('设置 Codex goal 预算')
-      .addComponents(
-        new ActionRowBuilder().addComponents(budgetInput),
-      );
-  }
-
-  function getModalTextValue(fields, customId) {
-    try {
-      return String(fields?.getTextInputValue?.(customId) || '');
-    } catch {
-      return '';
-    }
-  }
-
   function shouldHandleBeforeDefer({ interaction, commandName } = {}) {
-    const normalizedCommand = normalizeCommandName(commandName || interaction?.commandName || '');
+    const normalizedCommand = normalizeCommandName(commandName || interaction?.command?.name || '');
     if (normalizedCommand !== 'goal') return false;
     return false;
   }
@@ -267,10 +227,10 @@ export function createSlashCommandRouter({
     }
     try {
       const security = typeof resolveSecurityContext === 'function'
-        ? resolveSecurityContext(interaction.channel, session)
+        ? resolveSecurityContext(getInteractionChannel(interaction), session)
         : null;
       const queued = await enqueuePrompt(
-        createInteractionPromptMessage(interaction),
+        createPromptMessageFromInteraction(interaction),
         key,
         CODEX_GOAL_CONTINUATION_PROMPT,
         security,
@@ -311,8 +271,8 @@ export function createSlashCommandRouter({
 
   registerSlashHandlers(handlers, ['status'], async ({ interaction, key, session, respond }) => {
     await respond({
-      content: await formatStatusReport(key, session, interaction.channel),
-      flags: 64,
+      content: await formatStatusReport(key, session, getInteractionChannel(interaction)),
+      visibility: 'ephemeral',
     });
   });
 
@@ -320,7 +280,7 @@ export function createSlashCommandRouter({
     if (typeof openSettingsPanel !== 'function') {
       await respond({
         content: '❌ 当前环境未启用 settings 面板。',
-        flags: 64,
+        visibility: 'ephemeral',
       });
       return;
     }
@@ -328,9 +288,9 @@ export function createSlashCommandRouter({
     await respond(openSettingsPanel({
       key,
       session,
-      userId: interaction.user.id,
+      userId: getInteractionUserId(interaction),
       activeSection: getSessionProvider(session) === 'codex' ? 'defaults' : 'overview',
-      flags: 64,
+      visibility: 'ephemeral',
     }));
   });
 
@@ -344,7 +304,7 @@ export function createSlashCommandRouter({
     lines.push('下一条普通消息会开启新的上下文。');
     await respond({
       content: lines.join('\n'),
-      flags: 64,
+      visibility: 'ephemeral',
     });
   });
 
@@ -353,7 +313,7 @@ export function createSlashCommandRouter({
     closeRuntimeForKey(key, 'reset session');
     await respond({
       content: '♻️ 会话与额外配置已清空，下条消息新开上下文。',
-      flags: 64,
+      visibility: 'ephemeral',
     });
   });
 
@@ -365,114 +325,114 @@ export function createSlashCommandRouter({
           session,
           resumeRef: slashRef('resume'),
         }),
-        flags: 64,
+        visibility: 'ephemeral',
       });
     } catch (err) {
       await respond({
         content: `❌ ${safeError(err)}`,
-        flags: 64,
+        visibility: 'ephemeral',
       });
     }
   });
 
   registerSlashHandlers(handlers, ['setdir'], async ({ interaction, key, session, respond }) => {
-    const action = parseWorkspaceCommandAction(interaction.options.getString('path'));
+    const action = parseWorkspaceCommandAction(getInboundInteractionOption(interaction, 'path'));
     if (!action || action.type === 'invalid') {
-      await respond({ content: formatWorkspaceSetHelp(getSessionLanguage(session)), flags: 64 });
+      await respond({ content: formatWorkspaceSetHelp(getSessionLanguage(session)), visibility: 'ephemeral' });
       return;
     }
     if (action.type === 'status') {
-      await respond({ content: formatWorkspaceReport(key, session), flags: 64 });
+      await respond({ content: formatWorkspaceReport(key, session), visibility: 'ephemeral' });
       return;
     }
     if (action.type === 'clear') {
       const result = commandActions.clearWorkspaceDir(session, key);
       closeRuntimeForKey(key);
-      await respond({ content: formatWorkspaceUpdateReport(key, session, result), flags: 64 });
+      await respond({ content: formatWorkspaceUpdateReport(key, session, result), visibility: 'ephemeral' });
       return;
     }
     if (action.type === 'browse') {
       if (typeof openWorkspaceBrowser !== 'function') {
-        await respond({ content: formatWorkspaceSetHelp(getSessionLanguage(session)), flags: 64 });
+        await respond({ content: formatWorkspaceSetHelp(getSessionLanguage(session)), visibility: 'ephemeral' });
         return;
       }
       await respond(openWorkspaceBrowser({
         key,
         session,
-        userId: interaction.user.id,
+        userId: getInteractionUserId(interaction),
         mode: 'thread',
-        flags: 64,
+        visibility: 'ephemeral',
       }));
       return;
     }
 
     const resolved = resolvePath(action.value);
     if (!isExistingDirectory(resolved)) {
-      await respond({ content: `❌ 目录不存在或不是目录：\`${resolved}\``, flags: 64 });
+      await respond({ content: `❌ 目录不存在或不是目录：\`${resolved}\``, visibility: 'ephemeral' });
       return;
     }
 
     const result = commandActions.setWorkspaceDir(session, key, resolved);
     closeRuntimeForKey(key);
-    await respond({ content: formatWorkspaceUpdateReport(key, session, result), flags: 64 });
+    await respond({ content: formatWorkspaceUpdateReport(key, session, result), visibility: 'ephemeral' });
   });
 
   registerSlashHandlers(handlers, ['setdefaultdir'], async ({ interaction, key, session, respond }) => {
-    const action = parseWorkspaceCommandAction(interaction.options.getString('path'));
+    const action = parseWorkspaceCommandAction(getInboundInteractionOption(interaction, 'path'));
     if (!action || action.type === 'invalid') {
-      await respond({ content: formatDefaultWorkspaceSetHelp(getSessionLanguage(session)), flags: 64 });
+      await respond({ content: formatDefaultWorkspaceSetHelp(getSessionLanguage(session)), visibility: 'ephemeral' });
       return;
     }
     if (action.type === 'status') {
-      await respond({ content: formatWorkspaceReport(key, session), flags: 64 });
+      await respond({ content: formatWorkspaceReport(key, session), visibility: 'ephemeral' });
       return;
     }
     if (action.type === 'clear') {
       const result = commandActions.setDefaultWorkspaceDir(session, null);
       closeRuntimeForKey(key);
-      await respond({ content: formatDefaultWorkspaceUpdateReport(key, session, result), flags: 64 });
+      await respond({ content: formatDefaultWorkspaceUpdateReport(key, session, result), visibility: 'ephemeral' });
       return;
     }
     if (action.type === 'browse') {
       if (typeof openWorkspaceBrowser !== 'function') {
-        await respond({ content: formatDefaultWorkspaceSetHelp(getSessionLanguage(session)), flags: 64 });
+        await respond({ content: formatDefaultWorkspaceSetHelp(getSessionLanguage(session)), visibility: 'ephemeral' });
         return;
       }
       await respond(openWorkspaceBrowser({
         key,
         session,
-        userId: interaction.user.id,
+        userId: getInteractionUserId(interaction),
         mode: 'default',
-        flags: 64,
+        visibility: 'ephemeral',
       }));
       return;
     }
 
     const resolved = resolvePath(action.value);
     if (!isExistingDirectory(resolved)) {
-      await respond({ content: `❌ 目录不存在或不是目录：\`${resolved}\``, flags: 64 });
+      await respond({ content: `❌ 目录不存在或不是目录：\`${resolved}\``, visibility: 'ephemeral' });
       return;
     }
 
     const result = commandActions.setDefaultWorkspaceDir(session, resolved);
     closeRuntimeForKey(key);
-    await respond({ content: formatDefaultWorkspaceUpdateReport(key, session, result), flags: 64 });
+    await respond({ content: formatDefaultWorkspaceUpdateReport(key, session, result), visibility: 'ephemeral' });
   });
 
   registerSlashHandlers(handlers, ['provider'], async ({ interaction, key, session, respond }) => {
     if (botProvider) {
       await respond({
         content: `🔒 当前 bot 已锁定 provider = \`${botProvider}\` (${getProviderDisplayName(botProvider)})，不能在频道内切换。`,
-        flags: 64,
+        visibility: 'ephemeral',
       });
       return;
     }
 
-    const rawRequested = interaction.options.getString('name');
+    const rawRequested = getInboundInteractionOption(interaction, 'name');
     if (rawRequested === 'status') {
       await respond({
         content: `ℹ️ 当前 provider = \`${getSessionProvider(session)}\` (${getProviderDisplayName(getSessionProvider(session))})`,
-        flags: 64,
+        visibility: 'ephemeral',
       });
       return;
     }
@@ -484,8 +444,8 @@ export function createSlashCommandRouter({
   });
 
   registerSlashHandlers(handlers, ['model'], async ({ interaction, key, session, respond }) => {
-    const name = interaction.options.getString('name');
-    const effort = interaction.options.getString('effort');
+    const name = getInboundInteractionOption(interaction, 'name');
+    const effort = getInboundInteractionOption(interaction, 'effort');
     const provider = getSessionProvider(session);
     const language = getSessionLanguage(session);
 
@@ -494,14 +454,14 @@ export function createSlashCommandRouter({
         await respond(openModelSettingsPanel({
           key,
           session,
-          userId: interaction.user.id,
-          flags: 64,
+          userId: getInteractionUserId(interaction),
+          visibility: 'ephemeral',
         }));
         return;
       }
       await respond({
         content: language === 'en' ? '❌ Model settings panel is unavailable.' : '❌ 当前环境没有可用的 model 设置面板。',
-        flags: 64,
+        visibility: 'ephemeral',
       });
       return;
     }
@@ -530,14 +490,14 @@ export function createSlashCommandRouter({
         content: language === 'en'
           ? `❌ Model \`${requestedModel}\` does not support effort \`${requestedEffort}\`.`
           : `❌ 模型 \`${requestedModel}\` 不支持 effort \`${requestedEffort}\`。`,
-        flags: 64,
+        visibility: 'ephemeral',
       });
       return;
     }
     if (effort && effort !== 'default' && !catalogLevels.includes(String(effort).toLowerCase()) && !isReasoningEffortSupported(provider, effort)) {
         await respond({
           content: formatReasoningEffortUnsupported(provider, language),
-          flags: 64,
+          visibility: 'ephemeral',
         });
         return;
     }
@@ -558,57 +518,57 @@ export function createSlashCommandRouter({
   registerSlashHandlers(handlers, ['fast'], async ({ interaction, session, respond }) => {
     const provider = getSessionProvider(session);
     const language = getSessionLanguage(session);
-    const action = parseFastModeAction(interaction.options.getString('action'));
+    const action = parseFastModeAction(getInboundInteractionOption(interaction, 'action'));
     if (provider !== 'codex') {
       await respond({
         content: formatFastModeConfigReport(language, provider, { enabled: false, supported: false, source: 'provider unsupported' }, false),
-        flags: 64,
+        visibility: 'ephemeral',
       });
       return;
     }
     if (!action || action.type === 'invalid') {
       await respond({
         content: formatFastModeConfigHelp(language, provider),
-        flags: 64,
+        visibility: 'ephemeral',
       });
       return;
     }
     if (action.type === 'status') {
       await respond({
         content: formatFastModeConfigReport(language, provider, resolveFastModeSetting(session), false),
-        flags: 64,
+        visibility: 'ephemeral',
       });
       return;
     }
     const { fastModeSetting } = commandActions.setFastMode(session, action.enabled);
     await respond({
       content: formatFastModeConfigReport(language, provider, fastModeSetting, true),
-      flags: 64,
+      visibility: 'ephemeral',
     });
   });
 
   registerSlashHandlers(handlers, ['runtime'], async ({ interaction, key, session, respond }) => {
     const provider = getSessionProvider(session);
     const language = getSessionLanguage(session);
-    const action = parseRuntimeModeAction(interaction.options.getString('mode'));
+    const action = parseRuntimeModeAction(getInboundInteractionOption(interaction, 'mode'));
     if (provider !== 'claude' && provider !== 'codex') {
       await respond({
         content: formatRuntimeModeConfigReport(language, provider, { mode: 'normal', supported: false, source: 'provider unsupported' }, false),
-        flags: 64,
+        visibility: 'ephemeral',
       });
       return;
     }
     if (!action || action.type === 'invalid') {
       await respond({
         content: formatRuntimeModeConfigHelp(language, provider),
-        flags: 64,
+        visibility: 'ephemeral',
       });
       return;
     }
     if (action.type === 'status') {
       await respond({
         content: formatRuntimeModeConfigReport(language, provider, resolveRuntimeModeSetting(session), false),
-        flags: 64,
+        visibility: 'ephemeral',
       });
       return;
     }
@@ -616,17 +576,17 @@ export function createSlashCommandRouter({
     closeRuntimeForKey(key);
     await respond({
       content: formatRuntimeModeConfigReport(language, provider, resolveRuntimeModeSetting(session), true),
-      flags: 64,
+      visibility: 'ephemeral',
     });
   });
 
   registerSlashHandlers(handlers, ['effort'], async ({ interaction, key, session, respond }) => {
-    const level = interaction.options.getString('level');
+    const level = getInboundInteractionOption(interaction, 'level');
     const provider = getSessionProvider(session);
     if (level !== 'default' && !isReasoningEffortSupported(provider, level)) {
       await respond({
         content: formatReasoningEffortUnsupported(provider, getSessionLanguage(session)),
-        flags: 64,
+        visibility: 'ephemeral',
       });
       return;
     }
@@ -640,27 +600,27 @@ export function createSlashCommandRouter({
     const provider = getSessionProvider(session);
     const language = getSessionLanguage(session);
     const parsed = parseCompactConfigAction(
-      interaction.options.getString('key'),
-      interaction.options.getString('value') || '',
+      getInboundInteractionOption(interaction, 'key'),
+      getInboundInteractionOption(interaction, 'value') || '',
     );
     if (!parsed || parsed.type === 'invalid') {
       await respond({
         content: formatCompactStrategyConfigHelp(language, provider),
-        flags: 64,
+        visibility: 'ephemeral',
       });
       return;
     }
     if (!providerSupportsCompactConfigAction(provider, parsed)) {
       await respond({
         content: formatCompactConfigUnsupported(provider, parsed, language),
-        flags: 64,
+        visibility: 'ephemeral',
       });
       return;
     }
     if (parsed.type === 'status') {
       await respond({
         content: formatCompactConfigReport(language, session, false),
-        flags: 64,
+        visibility: 'ephemeral',
       });
       return;
     }
@@ -668,41 +628,41 @@ export function createSlashCommandRouter({
       if (typeof compactSession !== 'function') {
         await respond({
           content: language === 'en' ? '❌ Manual compact is unavailable.' : '❌ 当前环境不能手动压缩。',
-          flags: 64,
+          visibility: 'ephemeral',
         });
         return;
       }
       await respond({
         content: language === 'en' ? 'Manual compact started.' : '已开始手动压缩。',
-        flags: 64,
+        visibility: 'ephemeral',
       });
-      await compactSession(createInteractionPromptMessage(interaction), key);
+      await compactSession(createPromptMessageFromInteraction(interaction), key);
       return;
     }
     commandActions.applyCompactConfig(session, parsed);
     await respond({
       content: formatCompactConfigReport(language, session, true),
-      flags: 64,
+      visibility: 'ephemeral',
     });
   });
 
   registerSlashHandlers(handlers, ['extra_info', 'extrainfo'], async ({ interaction, key, session, respond }) => {
     const language = getSessionLanguage(session);
     const parsed = parseExtraInfoConfigAction(
-      interaction.options.getString('key'),
-      interaction.options.getString('value') || '',
+      getInboundInteractionOption(interaction, 'key'),
+      getInboundInteractionOption(interaction, 'value') || '',
     );
     if (!parsed || parsed.type === 'invalid') {
       await respond({
         content: formatExtraInfoConfigHelp(language),
-        flags: 64,
+        visibility: 'ephemeral',
       });
       return;
     }
     if (parsed.type === 'status') {
       await respond({
-        content: formatExtraInfoConfigReport(language, session, key, interaction.channel, false),
-        flags: 64,
+        content: formatExtraInfoConfigReport(language, session, key, getInteractionChannel(interaction), false),
+        visibility: 'ephemeral',
       });
       return;
     }
@@ -714,21 +674,21 @@ export function createSlashCommandRouter({
       commandActions.resetExtraInfo(session);
     }
     await respond({
-      content: formatExtraInfoConfigReport(language, session, key, interaction.channel, true),
-      flags: 64,
+      content: formatExtraInfoConfigReport(language, session, key, getInteractionChannel(interaction), true),
+      visibility: 'ephemeral',
     });
   });
 
   registerSlashHandlers(handlers, ['mode'], async ({ interaction, key, session, respond }) => {
-    const type = interaction.options.getString('type');
+    const type = getInboundInteractionOption(interaction, 'type');
     const { mode } = commandActions.setMode(session, type);
     closeRuntimeForKey(key);
     await respond(`✅ mode = ${mode}`);
   });
 
   registerSlashHandlers(handlers, ['resume'], async ({ interaction, key, session, respond }) => {
-    const sid = interaction.options.getString('session_id');
-    const binding = commandActions.bindSession(session, interaction.channelId, sid);
+    const sid = getInboundInteractionOption(interaction, 'session_id');
+    const binding = commandActions.bindSession(session, interaction.conversation.id, sid);
     if (!binding.sessionId && binding.missingWorkspaceDir) {
       await respond(`❌ 这个 ${formatProviderSessionLabel(binding.provider, 'zh')} 对应的 workspace 不存在：\`${binding.missingWorkspaceDir}\``);
       return;
@@ -749,19 +709,26 @@ export function createSlashCommandRouter({
 
   registerSlashHandlers(handlers, ['fork'], async ({ interaction, key, session, respond }) => {
     const language = getSessionLanguage(session);
+    if (!supportsThreads) {
+      await respond({
+        content: formatThreadsUnavailable(language),
+        visibility: 'ephemeral',
+      });
+      return;
+    }
     const provider = getSessionProvider(session);
     if (!providerSupportsNativeFork(provider)) {
       await respond({
         content: language === 'en'
           ? `❌ Native fork is not available for ${getProviderDisplayName(provider)}.`
           : `❌ ${getProviderDisplayName(provider)} 不支持原生 fork。`,
-        flags: 64,
+        visibility: 'ephemeral',
       });
       return;
     }
 
     const parentSessionId = normalizeForkSessionId(getSessionId(session));
-    const threadName = interaction.options.getString('name') || '';
+    const threadName = getInboundInteractionOption(interaction, 'name') || '';
     try {
       const result = await createProviderForkThread({
         key,
@@ -774,30 +741,39 @@ export function createSlashCommandRouter({
         getSession,
         commandActions,
         forkCodexThread,
+        conversationSpawn,
+        conversationPresentation: presentation,
         resolveForkWorkspace,
         enqueuePrompt,
         resolveSecurityContext,
       });
       await respond({
-        content: formatProviderForkResult(result, language),
-        flags: 64,
+        content: formatProviderForkResult(result, language, presentation),
+        visibility: 'ephemeral',
       });
     } catch (err) {
       await respond({
         content: `❌ ${getProviderDisplayName(provider)} fork 失败：${safeError(err)}`,
-        flags: 64,
+        visibility: 'ephemeral',
       });
     }
   });
 
   registerSlashHandlers(handlers, ['side'], async ({ interaction, key, session, respond }) => {
     const language = getSessionLanguage(session);
+    if (!supportsThreads) {
+      await respond({
+        content: formatThreadsUnavailable(language),
+        visibility: 'ephemeral',
+      });
+      return;
+    }
     const provider = getSessionProvider(session);
-    const action = String(interaction.options.getString('action') || 'start').trim().toLowerCase();
+    const action = String(getInboundInteractionOption(interaction, 'action') || 'start').trim().toLowerCase();
     if (provider !== 'codex') {
       await respond({
-        content: formatCodexSideResult({ ok: false, reason: 'provider_unsupported', provider }, language),
-        flags: 64,
+        content: formatCodexSideResult({ ok: false, reason: 'provider_unsupported', provider }, language, presentation),
+        visibility: 'ephemeral',
       });
       return;
     }
@@ -808,7 +784,16 @@ export function createSlashCommandRouter({
           : session.sideConversation?.status === 'open'
             ? session.sideConversation
             : null;
-        await respond({ content: formatCodexSideStatus(session, language, meta ? getRuntimeSnapshot(meta.sideChannelId) : null), flags: 64 });
+        await respond({
+          content: formatCodexSideStatus(
+            session,
+            language,
+            meta ? getRuntimeSnapshot(meta.sideChannelId) : null,
+            conversationSpawn,
+            presentation,
+          ),
+          visibility: 'ephemeral',
+        });
         return;
       }
       if (action === 'close') {
@@ -820,14 +805,15 @@ export function createSlashCommandRouter({
           closeCodexSideConversation,
           cancelChannelWork,
           source: interaction,
+          conversationSpawn,
         });
-        await respond({ content: formatCodexSideCloseResult(result, language), flags: 64 });
+        await respond({ content: formatCodexSideCloseResult(result, language), visibility: 'ephemeral' });
         return;
       }
       if (resolveRuntimeModeSetting(session).mode !== 'long') {
         await respond({
-          content: formatCodexSideResult({ ok: false, reason: 'unsupported_runtime' }, language),
-          flags: 64,
+          content: formatCodexSideResult({ ok: false, reason: 'unsupported_runtime' }, language, presentation),
+          visibility: 'ephemeral',
         });
         return;
       }
@@ -836,7 +822,7 @@ export function createSlashCommandRouter({
         session,
         source: interaction,
         parentSessionId: normalizeForkSessionId(getSessionId(session)),
-        threadName: interaction.options.getString('name') || '',
+        threadName: getInboundInteractionOption(interaction, 'name') || '',
         provider,
         getRuntimeSnapshot,
         getSession,
@@ -845,15 +831,17 @@ export function createSlashCommandRouter({
         closeCodexSideConversation,
         ensureWorkspace,
         getSessionLanguage,
+        conversationSpawn,
+        conversationPresentation: presentation,
       });
       await respond({
-        content: formatCodexSideResult(result, language),
-        flags: 64,
+        content: formatCodexSideResult(result, language, presentation),
+        visibility: 'ephemeral',
       });
     } catch (err) {
       await respond({
         content: `❌ Codex side 失败：${safeError(err)}`,
-        flags: 64,
+        visibility: 'ephemeral',
       });
     }
   });
@@ -861,11 +849,11 @@ export function createSlashCommandRouter({
   registerSlashHandlers(handlers, ['goal'], async ({ interaction, key, session, respond }) => {
     const language = getSessionLanguage(session);
     const provider = getSessionProvider(session);
-    const rawAction = String(interaction.options.getString('action') || 'status').trim().toLowerCase();
+    const rawAction = String(getInboundInteractionOption(interaction, 'action') || 'status').trim().toLowerCase();
     const action = parseCodexGoalSlashInput({
       action: rawAction,
-      objective: interaction.options.getString('objective') || '',
-      tokenBudget: interaction.options.getString('token_budget') || '',
+      objective: getInboundInteractionOption(interaction, 'objective') || '',
+      tokenBudget: getInboundInteractionOption(interaction, 'token_budget') || '',
     });
     try {
       const result = await executeCodexGoalAction({
@@ -886,26 +874,27 @@ export function createSlashCommandRouter({
       });
       await respond({
         content: formatCodexGoalResult(withContinuation, language),
-        flags: 64,
+        visibility: 'ephemeral',
       });
     } catch (err) {
       await respond({
         content: `❌ Codex goal 失败：${safeError(err)}`,
-        flags: 64,
+        visibility: 'ephemeral',
       });
     }
   });
 
   async function handleGoalModalSubmit(interaction) {
-    const parsed = parseGoalModalId(interaction.customId);
+    const parsed = parseGoalModalId(interaction?.modal?.id);
     if (!parsed) return false;
-    const key = interaction.channelId || interaction.channel?.id;
-    const session = getSession(key, { channel: interaction.channel || null });
+    const key = interaction?.conversation?.id;
+    const channel = getInteractionChannel(interaction);
+    const session = getSession(key, { conversation: interaction?.conversation || null });
     const language = getSessionLanguage(session);
-    if (String(interaction.user?.id || '') !== parsed.userId) {
-      await interaction.reply({
+    if (getInteractionUserId(interaction) !== parsed.userId) {
+      await responsePort.respond(interaction, {
         content: '⛔ 这个 goal 输入框属于另一个用户。',
-        flags: 64,
+        visibility: 'ephemeral',
       });
       return true;
     }
@@ -913,12 +902,12 @@ export function createSlashCommandRouter({
     const action = parsed.action === 'set'
       ? parseCodexGoalSlashInput({
         action: 'set',
-        objective: getModalTextValue(interaction.fields, GOAL_OBJECTIVE_INPUT_ID),
-        tokenBudget: getModalTextValue(interaction.fields, GOAL_TOKEN_BUDGET_INPUT_ID),
+        objective: getInboundInteractionField(interaction, GOAL_OBJECTIVE_INPUT_ID),
+        tokenBudget: getInboundInteractionField(interaction, GOAL_TOKEN_BUDGET_INPUT_ID),
       })
       : parseCodexGoalSlashInput({
         action: 'budget',
-        tokenBudget: getModalTextValue(interaction.fields, GOAL_TOKEN_BUDGET_INPUT_ID),
+        tokenBudget: getInboundInteractionField(interaction, GOAL_TOKEN_BUDGET_INPUT_ID),
       });
 
     try {
@@ -938,66 +927,66 @@ export function createSlashCommandRouter({
         key,
         session,
       });
-      await interaction.reply({
+      await responsePort.respond(interaction, {
         content: formatCodexGoalResult(withContinuation, language),
-        flags: 64,
+        visibility: 'ephemeral',
       });
     } catch (err) {
-      await interaction.reply({
+      await responsePort.respond(interaction, {
         content: `❌ Codex goal 失败：${formatError(err)}`,
-        flags: 64,
+        visibility: 'ephemeral',
       });
     }
     return true;
   }
 
   registerSlashHandlers(handlers, ['name'], async ({ interaction, session, respond }) => {
-    const label = interaction.options.getString('label').trim();
+    const label = getInboundInteractionOption(interaction, 'label').trim();
     const renamed = commandActions.renameSession(session, label);
     await respond(`✅ session 命名为: **${renamed.label}**`);
   });
 
   registerSlashHandlers(handlers, ['queue'], async ({ interaction, key, session, respond }) => {
     await respond({
-      content: formatQueueReport(key, session, interaction.channel),
-      flags: 64,
+      content: formatQueueReport(key, session, getInteractionChannel(interaction)),
+      visibility: 'ephemeral',
     });
   });
 
   registerSlashHandlers(handlers, ['upgrade'], async ({ interaction, session, respond }) => {
     const language = getSessionLanguage(session);
     const action = parseProjectUpgradeSlashInput({
-      action: interaction.options.getString('action') || 'status',
-      mode: interaction.options.getString('mode') || '',
+      action: getInboundInteractionOption(interaction, 'action') || 'status',
+      mode: getInboundInteractionOption(interaction, 'mode') || '',
     });
     if (action.type === 'set_mode') {
-      if (!canManageProjectUpgrade(interaction.user?.id)) {
-        await respond({ content: '❌ 只有项目升级管理员可以修改升级模式。', flags: 64 });
+      if (!canManageProjectUpgrade(getInteractionUserId(interaction))) {
+        await respond({ content: '❌ 只有项目升级管理员可以修改升级模式。', visibility: 'ephemeral' });
         return;
       }
       if (typeof setProjectUpgradeMode !== 'function') {
-        await respond({ content: '❌ 当前环境未启用项目升级设置。', flags: 64 });
+        await respond({ content: '❌ 当前环境未启用项目升级设置。', visibility: 'ephemeral' });
         return;
       }
       await respond({
         content: formatProjectUpgradeReport(null, language, { changedMode: setProjectUpgradeMode(action.mode) }),
-        flags: 64,
+        visibility: 'ephemeral',
       });
       return;
     }
     if (action.type === 'apply') {
-      if (!canManageProjectUpgrade(interaction.user?.id)) {
-        await respond({ content: '❌ 只有项目升级管理员可以执行升级。', flags: 64 });
+      if (!canManageProjectUpgrade(getInteractionUserId(interaction))) {
+        await respond({ content: '❌ 只有项目升级管理员可以执行升级。', visibility: 'ephemeral' });
         return;
       }
       if (typeof applyProjectUpgrade !== 'function') {
-        await respond({ content: '❌ 当前环境未启用项目升级。', flags: 64 });
+        await respond({ content: '❌ 当前环境未启用项目升级。', visibility: 'ephemeral' });
         return;
       }
       const result = await applyProjectUpgrade();
       await respond({
         content: formatProjectUpgradeReport(null, language, { applyResult: result }),
-        flags: 64,
+        visibility: 'ephemeral',
       });
       if (result?.ok && result.changed && typeof requestProjectUpgradeRestart === 'function') {
         setTimeout(() => requestProjectUpgradeRestart(), 750);
@@ -1006,14 +995,14 @@ export function createSlashCommandRouter({
     }
     await respond({
       content: formatProjectUpgradeReport(await getProjectUpgradeStatus({ fetch: true }), language),
-      flags: 64,
+      visibility: 'ephemeral',
     });
   });
 
   registerSlashHandlers(handlers, ['doctor'], async ({ interaction, key, session, respond }) => {
     await respond({
-      content: formatDoctorReport(key, session, interaction.channel),
-      flags: 64,
+      content: formatDoctorReport(key, session, getInteractionChannel(interaction)),
+      visibility: 'ephemeral',
     });
   });
 
@@ -1022,52 +1011,64 @@ export function createSlashCommandRouter({
     if (!isOnboardingEnabled(session)) {
       await respond({
         content: formatOnboardingDisabledMessage(language),
-        flags: 64,
+        visibility: 'ephemeral',
       });
       return;
     }
 
     const step = 1;
-    await respond({
-      content: formatOnboardingStepReport(step, key, session, interaction.channel, language),
-      components: buildOnboardingActionRows(step, key, interaction.user.id, session, language),
-      flags: 64,
-    });
+    if (buildOnboardingView) {
+      await respond(buildOnboardingView(
+        step,
+        key,
+        getInteractionUserId(interaction),
+        session,
+        getInteractionChannel(interaction),
+        language,
+        'ephemeral',
+      ));
+    } else {
+      await respond({
+        content: formatOnboardingStepReport(step, key, session, getInteractionChannel(interaction), language),
+        rows: buildOnboardingActionRows(step, key, getInteractionUserId(interaction), session, language),
+        visibility: 'ephemeral',
+      });
+    }
   });
 
   registerSlashHandlers(handlers, ['onboarding_config'], async ({ interaction, session, respond }) => {
-    const action = String(interaction.options.getString('action') || '').trim().toLowerCase();
+    const action = String(getInboundInteractionOption(interaction, 'action') || '').trim().toLowerCase();
     const language = getSessionLanguage(session);
     if (action === 'on' || action === 'off') {
       const { enabled } = commandActions.setOnboardingEnabled(session, action === 'on');
       await respond({
         content: formatOnboardingConfigReport(language, enabled, true),
-        flags: 64,
+        visibility: 'ephemeral',
       });
       return;
     }
 
     await respond({
       content: formatOnboardingConfigReport(language, isOnboardingEnabled(session), false),
-      flags: 64,
+      visibility: 'ephemeral',
     });
   });
 
   registerSlashHandlers(handlers, ['language'], async ({ interaction, session, respond }) => {
-    const requested = interaction.options.getString('name');
+    const requested = getInboundInteractionOption(interaction, 'name');
     const { language } = commandActions.setLanguage(session, parseUiLanguageInput(requested) || defaultUiLanguage);
     await respond({
       content: formatLanguageConfigReport(language, true),
-      flags: 64,
+      visibility: 'ephemeral',
     });
   });
 
   registerSlashHandlers(handlers, ['profile'], async ({ interaction, session, respond }) => {
-    const requested = interaction.options.getString('name');
+    const requested = getInboundInteractionOption(interaction, 'name');
     if (String(requested || '').toLowerCase() === 'status') {
       await respond({
         content: formatProfileConfigReport(getSessionLanguage(session), getEffectiveSecurityProfile(session).profile, false),
-        flags: 64,
+        visibility: 'ephemeral',
       });
       return;
     }
@@ -1076,7 +1077,7 @@ export function createSlashCommandRouter({
     if (!profile) {
       await respond({
         content: formatProfileConfigHelp(getSessionLanguage(session)),
-        flags: 64,
+        visibility: 'ephemeral',
       });
       return;
     }
@@ -1084,24 +1085,24 @@ export function createSlashCommandRouter({
     const updated = commandActions.setSecurityProfile(session, profile);
     await respond({
       content: formatProfileConfigReport(getSessionLanguage(session), updated.profile, true),
-      flags: 64,
+      visibility: 'ephemeral',
     });
   });
 
   registerSlashHandlers(handlers, ['timeout'], async ({ interaction, session, respond }) => {
     const language = getSessionLanguage(session);
-    const parsedTimeout = parseTimeoutConfigAction(interaction.options.getString('value'));
+    const parsedTimeout = parseTimeoutConfigAction(getInboundInteractionOption(interaction, 'value'));
     if (!parsedTimeout || parsedTimeout.type === 'invalid') {
       await respond({
         content: formatTimeoutConfigHelp(language),
-        flags: 64,
+        visibility: 'ephemeral',
       });
       return;
     }
     if (parsedTimeout.type === 'status') {
       await respond({
         content: formatTimeoutConfigReport(language, resolveTimeoutSetting(session), false),
-        flags: 64,
+        visibility: 'ephemeral',
       });
       return;
     }
@@ -1109,14 +1110,14 @@ export function createSlashCommandRouter({
     const { timeoutSetting } = commandActions.setTimeoutMs(session, parsedTimeout.timeoutMs);
     await respond({
       content: formatTimeoutConfigReport(language, timeoutSetting, true),
-      flags: 64,
+      visibility: 'ephemeral',
     });
   });
 
   registerSlashHandlers(handlers, ['progress'], async ({ interaction, key, session, respond }) => {
     await respond({
-      content: formatProgressReport(key, session, interaction.channel),
-      flags: 64,
+      content: formatProgressReport(key, session, getInteractionChannel(interaction)),
+      visibility: 'ephemeral',
     });
   });
 
@@ -1124,7 +1125,7 @@ export function createSlashCommandRouter({
     const outcome = cancelChannelWork(key, `slash_${commandName}`);
     await respond({
       content: formatCancelReport(outcome),
-      flags: 64,
+      visibility: 'ephemeral',
     });
   });
 
@@ -1132,19 +1133,19 @@ export function createSlashCommandRouter({
     if (typeof retryLastPrompt !== 'function') {
       await respond({
         content: '❌ 当前环境未启用失败任务重试。',
-        flags: 64,
+        visibility: 'ephemeral',
       });
       return;
     }
 
-    const outcome = await retryLastPrompt(key, interaction.user.id);
+    const outcome = await retryLastPrompt(key, getInteractionUserId(interaction));
     if (!outcome?.enqueued) {
       const content = outcome?.reason === 'queue_full' && Number.isFinite(outcome?.maxQueue)
         ? `🚧 当前频道队列已满（上限 ${outcome.maxQueue}），请稍后再试。`
         : '❌ 没有可重试的失败任务。';
       await respond({
         content,
-        flags: 64,
+        visibility: 'ephemeral',
       });
       return;
     }
@@ -1154,14 +1155,14 @@ export function createSlashCommandRouter({
       : '🔁 已重新加入队列。';
     await respond({
       content,
-      flags: 64,
+      visibility: 'ephemeral',
     });
   });
 
   async function routeSlashCommand({ interaction, commandName, respond } = {}) {
-    const key = interaction?.channelId;
+    const key = interaction?.conversation?.id;
     if (!key) {
-      await respond({ content: '❌ 无法识别当前频道。', flags: 64 });
+      await respond({ content: '❌ 无法识别当前频道。', visibility: 'ephemeral' });
       return true;
     }
 
@@ -1169,7 +1170,7 @@ export function createSlashCommandRouter({
     const handler = handlers.get(normalizedCommand);
     if (!handler) return false;
 
-    const session = getSession(key, { channel: interaction.channel || null });
+    const session = getSession(key, { conversation: interaction?.conversation || null });
     await handler({
       interaction,
       commandName: normalizedCommand,

@@ -5,6 +5,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createWorkspaceBrowser } from '../src/workspace-browser.js';
+import { createDiscordCommandViewRenderer } from '../src/platforms/discord/command-view-renderer.js';
+import { createDiscordInteractionResponse } from '../src/platforms/discord/interaction-response.js';
 
 class FakeButtonBuilder {
   constructor() {
@@ -76,6 +78,14 @@ const ButtonStyle = {
   Success: 'success',
 };
 
+const commandViewRenderer = createDiscordCommandViewRenderer({
+  ActionRowBuilder: FakeActionRowBuilder,
+  ButtonBuilder: FakeButtonBuilder,
+  ButtonStyle,
+  StringSelectMenuBuilder: FakeStringSelectMenuBuilder,
+});
+const interactionResponse = createDiscordInteractionResponse({ commandViewRenderer });
+
 function createTempWorkspace() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'agents-in-discord-workspace-browser-'));
 }
@@ -91,11 +101,8 @@ function createBrowser({
   formatWorkspaceUpdateReport = () => '',
   formatDefaultWorkspaceUpdateReport = () => '',
 } = {}) {
-  return createWorkspaceBrowser({
-    ActionRowBuilder: FakeActionRowBuilder,
-    ButtonBuilder: FakeButtonBuilder,
-    ButtonStyle,
-    StringSelectMenuBuilder: FakeStringSelectMenuBuilder,
+  const browser = createWorkspaceBrowser({
+    interactionResponse,
     commandActions,
     workspaceRoot: rootDir,
     homeDir: rootDir,
@@ -118,10 +125,14 @@ function createBrowser({
     formatWorkspaceUpdateReport,
     formatDefaultWorkspaceUpdateReport,
   });
+  return {
+    ...browser,
+    openWorkspaceBrowser: (options) => commandViewRenderer.renderMessage(browser.openWorkspaceBrowser(options)),
+  };
 }
 
 function createComponentInteraction({ customId, values = [], updates, replies } = {}) {
-  return {
+  const responseTarget = {
     customId,
     values,
     channelId: 'thread-1',
@@ -133,6 +144,29 @@ function createComponentInteraction({ customId, values = [], updates, replies } 
     async reply(payload) {
       replies.push(payload);
     },
+  };
+  return {
+    type: 'interaction',
+    kind: values.length > 0 ? 'select' : 'button',
+    platformId: 'discord',
+    id: 'test-workspace-browser-interaction',
+    actor: {
+      id: responseTarget.user.id,
+      raw: responseTarget.user,
+    },
+    conversation: {
+      id: responseTarget.channelId,
+      tenantId: null,
+      parentId: null,
+      isThread: false,
+      raw: responseTarget.channel,
+    },
+    component: {
+      id: customId,
+      values: [...values],
+    },
+    responseTarget,
+    raw: responseTarget,
   };
 }
 

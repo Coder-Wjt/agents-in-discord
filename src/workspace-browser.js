@@ -5,6 +5,19 @@ import {
   getProviderShortName,
   providerBindsSessionsToWorkspace,
 } from './provider-metadata.js';
+import {
+  createCommandActionRow,
+  createCommandButton,
+  createCommandMessageView,
+  createCommandSelect,
+} from './platforms/command-view.js';
+import {
+  getInboundInteractionActorId,
+  getInboundInteractionChannel,
+  getInboundInteractionComponentId,
+  getInboundInteractionValues,
+} from './platforms/inbound-event.js';
+import { assertInteractionResponse } from './platforms/interaction-response.js';
 
 const WORKSPACE_BROWSER_PREFIX = 'wsp';
 const MAX_SELECT_OPTIONS = 25;
@@ -306,10 +319,7 @@ function formatNoChangeReport({ mode, language, currentDir }) {
 }
 
 export function createWorkspaceBrowser({
-  ActionRowBuilder,
-  ButtonBuilder,
-  ButtonStyle,
-  StringSelectMenuBuilder,
+  interactionResponse,
   commandActions = {},
   workspaceRoot = '',
   homeDir = process.env.HOME || process.env.USERPROFILE || '',
@@ -327,6 +337,7 @@ export function createWorkspaceBrowser({
   formatWorkspaceUpdateReport = () => '',
   formatDefaultWorkspaceUpdateReport = () => '',
 } = {}) {
+  const responsePort = assertInteractionResponse(interactionResponse);
   const browsers = new Map();
   const fallbackWorkspaceRoot = resolveNearestExistingDirectory(workspaceRoot);
   const fallbackHomeDir = resolveNearestExistingDirectory(homeDir);
@@ -349,12 +360,13 @@ export function createWorkspaceBrowser({
     ]);
   }
 
-  function buildRootJumpButton({ action, label, disabled, token, userId, version, page, style = ButtonStyle.Secondary }) {
-    return new ButtonBuilder()
-      .setCustomId(buildWorkspaceBrowserButtonId(action, token, userId, version, page))
-      .setLabel(label)
-      .setStyle(style)
-      .setDisabled(disabled);
+  function buildRootJumpButton({ action, label, disabled, token, userId, version, page, style = 'secondary' }) {
+    return createCommandButton({
+      id: buildWorkspaceBrowserButtonId(action, token, userId, version, page),
+      label,
+      style,
+      disabled,
+    });
   }
 
   function resolveStateCurrentTargetDir({ state, binding, defaultBinding }) {
@@ -445,7 +457,7 @@ export function createWorkspaceBrowser({
     return items;
   }
 
-  function buildBrowserPayload(state, session, key, { flags } = {}) {
+  function buildBrowserPayload(state, session, key, { visibility = 'public' } = {}) {
     const language = normalizeLanguage(getSessionLanguage(session));
     const provider = getSessionProvider(session);
     const binding = getWorkspaceBinding(session, key) || {};
@@ -475,8 +487,8 @@ export function createWorkspaceBrowser({
     state.favoriteDirectories = favoriteDirectories;
     state.recentDirectories = recentDirectories;
 
-    const components = [
-      new ActionRowBuilder().addComponents(
+    const rows = [
+      createCommandActionRow([
         buildRootJumpButton({
           action: 'up',
           label: language === 'en' ? 'Up' : '上一级',
@@ -494,7 +506,7 @@ export function createWorkspaceBrowser({
           userId: state.userId,
           version: state.version,
           page,
-          style: ButtonStyle.Primary,
+          style: 'primary',
         }),
         buildRootJumpButton({
           action: 'cancel',
@@ -504,7 +516,7 @@ export function createWorkspaceBrowser({
           userId: state.userId,
           version: state.version,
           page,
-          style: ButtonStyle.Danger,
+          style: 'danger',
         }),
         buildRootJumpButton({
           action: 'page_prev',
@@ -524,52 +536,49 @@ export function createWorkspaceBrowser({
           version: state.version,
           page,
         }),
-      ),
+      ]),
     ];
 
     if (pageEntries.length > 0) {
-      components.push(
-        new ActionRowBuilder().addComponents(
-          new StringSelectMenuBuilder()
-            .setCustomId(buildWorkspaceBrowserSelectId(state.token, state.userId, state.version, page))
-            .setPlaceholder(language === 'en' ? 'Choose a child directory' : '选择一个子目录')
-            .addOptions(pageEntries.map((dir, index) => ({
-              label: truncate(path.basename(dir) || dir, 100),
-              value: String(index),
-              description: truncate(dir, 100),
-            }))),
-        ),
-      );
+      rows.push(createCommandActionRow([
+        createCommandSelect({
+          id: buildWorkspaceBrowserSelectId(state.token, state.userId, state.version, page),
+          placeholder: language === 'en' ? 'Choose a child directory' : '选择一个子目录',
+          options: pageEntries.map((dir, index) => ({
+            label: truncate(path.basename(dir) || dir, 100),
+            value: String(index),
+            description: truncate(dir, 100),
+          })),
+        }),
+      ]));
     }
 
     if (favoriteDirectories.length > 0) {
-      components.push(
-        new ActionRowBuilder().addComponents(
-          new StringSelectMenuBuilder()
-            .setCustomId(buildWorkspaceBrowserFavoritesSelectId(state.token, state.userId, state.version))
-            .setPlaceholder(language === 'en' ? 'Jump to a favorite directory' : '跳到收藏目录')
-            .addOptions(favoriteDirectories.map((item, index) => ({
-              label: item.label,
-              value: String(index),
-              description: item.description,
-            }))),
-        ),
-      );
+      rows.push(createCommandActionRow([
+        createCommandSelect({
+          id: buildWorkspaceBrowserFavoritesSelectId(state.token, state.userId, state.version),
+          placeholder: language === 'en' ? 'Jump to a favorite directory' : '跳到收藏目录',
+          options: favoriteDirectories.map((item, index) => ({
+            label: item.label,
+            value: String(index),
+            description: item.description,
+          })),
+        }),
+      ]));
     }
 
     if (recentDirectories.length > 0) {
-      components.push(
-        new ActionRowBuilder().addComponents(
-          new StringSelectMenuBuilder()
-            .setCustomId(buildWorkspaceBrowserRecentSelectId(state.token, state.userId, state.version))
-            .setPlaceholder(language === 'en' ? 'Jump to a recent directory' : '跳到最近使用的目录')
-            .addOptions(recentDirectories.map((item, index) => ({
-              label: item.label,
-              value: String(index),
-              description: item.description,
-            }))),
-        ),
-      );
+      rows.push(createCommandActionRow([
+        createCommandSelect({
+          id: buildWorkspaceBrowserRecentSelectId(state.token, state.userId, state.version),
+          placeholder: language === 'en' ? 'Jump to a recent directory' : '跳到最近使用的目录',
+          options: recentDirectories.map((item, index) => ({
+            label: item.label,
+            value: String(index),
+            description: item.description,
+          })),
+        }),
+      ]));
     }
 
     const shortcutTargets = collectShortcutTargets({
@@ -599,14 +608,14 @@ export function createWorkspaceBrowser({
       userId: state.userId,
       version: state.version,
       page,
-      style: isFavorite ? ButtonStyle.Secondary : ButtonStyle.Success,
+      style: isFavorite ? 'secondary' : 'success',
     }));
 
     for (const rowItems of chunk(shortcutButtons, MAX_BUTTONS_PER_ROW)) {
-      components.push(new ActionRowBuilder().addComponents(...rowItems));
+      rows.push(createCommandActionRow(rowItems));
     }
 
-    const payload = {
+    return createCommandMessageView({
       content: formatWorkspaceBrowserReport({
         state,
         language,
@@ -620,14 +629,19 @@ export function createWorkspaceBrowser({
         isFavorite,
         favoriteCount: allFavoriteDirectories.length,
       }),
-      components,
-    };
-
-    if (flags !== undefined) payload.flags = flags;
-    return payload;
+      rows,
+      visibility,
+      fallbackText: state.mode === 'default'
+        ? (language === 'en'
+          ? `Interactive folder selection is unavailable. Set the provider default directly with \`!setdefaultdir ${currentDir}\` or another absolute path.`
+          : `当前平台没有可用的目录选择控件。请直接发送 \`!setdefaultdir ${currentDir}\`，或替换为其他绝对路径。`)
+        : (language === 'en'
+          ? `Interactive folder selection is unavailable. Set this channel directly with \`!setdir ${currentDir}\` or another absolute path.`
+          : `当前平台没有可用的目录选择控件。请直接发送 \`!setdir ${currentDir}\`，或替换为其他绝对路径。`),
+    });
   }
 
-  function openWorkspaceBrowser({ key, session, userId, mode = 'thread', flags } = {}) {
+  function openWorkspaceBrowser({ key, session, userId, mode = 'thread', visibility = 'public' } = {}) {
     cleanupExpiredBrowsers();
     const normalizedMode = normalizeMode(mode);
     const provider = getSessionProvider(session);
@@ -657,33 +671,45 @@ export function createWorkspaceBrowser({
       homeDir: fallbackHomeDir,
     };
     browsers.set(state.token, state);
-    return buildBrowserPayload(state, session, key, { flags });
+    return buildBrowserPayload(state, session, key, { visibility });
   }
 
   async function handleWorkspaceBrowserInteraction(interaction) {
     cleanupExpiredBrowsers();
 
-    const parsed = parseWorkspaceBrowserComponentId(interaction.customId);
+    const parsed = parseWorkspaceBrowserComponentId(getInboundInteractionComponentId(interaction));
     if (!parsed) return false;
 
     const state = browsers.get(parsed.token);
-    const key = String(interaction.channelId || '').trim();
-    const session = key ? getSession(key, { channel: interaction.channel || null }) : null;
+    const key = String(interaction?.conversation?.id || '').trim();
+    const channel = getInboundInteractionChannel(interaction);
+    const userId = getInboundInteractionActorId(interaction);
+    const values = getInboundInteractionValues(interaction);
+    const session = key ? getSession(key, { conversation: interaction?.conversation || null }) : null;
     const language = normalizeLanguage(getSessionLanguage(session));
 
     if (!state || !key || state.channelId !== key) {
       browsers.delete(parsed.token);
-      await interaction.reply({ content: formatBrowserExpired(language), flags: 64 });
+      await responsePort.respond(interaction, createCommandMessageView({
+        content: formatBrowserExpired(language),
+        visibility: 'ephemeral',
+      }));
       return true;
     }
 
-    if (state.userId !== interaction.user.id || parsed.userId !== interaction.user.id) {
-      await interaction.reply({ content: formatBrowserOwnedByOther(language), flags: 64 });
+    if (state.userId !== userId || parsed.userId !== userId) {
+      await responsePort.respond(interaction, createCommandMessageView({
+        content: formatBrowserOwnedByOther(language),
+        visibility: 'ephemeral',
+      }));
       return true;
     }
 
     if (parsed.version !== state.version) {
-      await interaction.reply({ content: formatBrowserStale(language), flags: 64 });
+      await responsePort.respond(interaction, createCommandMessageView({
+        content: formatBrowserStale(language),
+        visibility: 'ephemeral',
+      }));
       return true;
     }
 
@@ -693,7 +719,7 @@ export function createWorkspaceBrowser({
 
     if (parsed.kind === 'select') {
       if (parsed.action === 'favorite') {
-        const selectedIndex = Number.parseInt(interaction.values?.[0] || '', 10);
+        const selectedIndex = Number.parseInt(values[0] || '', 10);
         const selectedDir = Number.isInteger(selectedIndex)
           ? state.favoriteDirectories?.[selectedIndex]?.dir
           : null;
@@ -703,12 +729,12 @@ export function createWorkspaceBrowser({
           state.version += 1;
         }
 
-        await interaction.update(buildBrowserPayload(state, session, key));
+        await responsePort.update(interaction, buildBrowserPayload(state, session, key));
         return true;
       }
 
       if (parsed.action === 'recent') {
-        const selectedIndex = Number.parseInt(interaction.values?.[0] || '', 10);
+        const selectedIndex = Number.parseInt(values[0] || '', 10);
         const selectedDir = Number.isInteger(selectedIndex)
           ? state.recentDirectories?.[selectedIndex]?.dir
           : null;
@@ -718,7 +744,7 @@ export function createWorkspaceBrowser({
           state.version += 1;
         }
 
-        await interaction.update(buildBrowserPayload(state, session, key));
+        await responsePort.update(interaction, buildBrowserPayload(state, session, key));
         return true;
       }
 
@@ -726,7 +752,7 @@ export function createWorkspaceBrowser({
       const totalPages = Math.max(1, Math.ceil(directories.length / MAX_SELECT_OPTIONS));
       state.page = clamp(state.page, 0, totalPages - 1);
 
-      const selectedIndex = Number.parseInt(interaction.values?.[0] || '', 10);
+      const selectedIndex = Number.parseInt(values[0] || '', 10);
       const pageEntries = directories.slice(state.page * MAX_SELECT_OPTIONS, (state.page + 1) * MAX_SELECT_OPTIONS);
       const selectedDir = Number.isInteger(selectedIndex) ? pageEntries[selectedIndex] : null;
       if (selectedDir) {
@@ -735,17 +761,16 @@ export function createWorkspaceBrowser({
         state.version += 1;
       }
 
-      await interaction.update(buildBrowserPayload(state, session, key));
+      await responsePort.update(interaction, buildBrowserPayload(state, session, key));
       return true;
     }
 
     switch (parsed.action) {
       case 'cancel': {
         browsers.delete(state.token);
-        await interaction.update({
+        await responsePort.update(interaction, createCommandMessageView({
           content: formatBrowserClosed(language),
-          components: [],
-        });
+        }));
         return true;
       }
 
@@ -827,40 +852,40 @@ export function createWorkspaceBrowser({
 
         browsers.delete(state.token);
         if (unchanged) {
-          await interaction.update({
+          await responsePort.update(interaction, createCommandMessageView({
             content: formatNoChangeReport({
               mode: state.mode,
               language,
               currentDir,
             }),
-            components: [],
-          });
+          }));
           return true;
         }
 
         if (state.mode === 'default') {
           const result = commandActions.setDefaultWorkspaceDir(session, currentDir);
-          await interaction.update({
+          await responsePort.update(interaction, createCommandMessageView({
             content: formatDefaultWorkspaceUpdateReport(key, session, result),
-            components: [],
-          });
+          }));
           return true;
         }
 
         const result = commandActions.setWorkspaceDir(session, key, currentDir);
-        await interaction.update({
+        await responsePort.update(interaction, createCommandMessageView({
           content: formatWorkspaceUpdateReport(key, session, result),
-          components: [],
-        });
+        }));
         return true;
       }
 
       default:
-        await interaction.reply({ content: formatBrowserExpired(language), flags: 64 });
+        await responsePort.respond(interaction, createCommandMessageView({
+          content: formatBrowserExpired(language),
+          visibility: 'ephemeral',
+        }));
         return true;
     }
 
-    await interaction.update(buildBrowserPayload(state, session, key));
+    await responsePort.update(interaction, buildBrowserPayload(state, session, key));
     return true;
   }
 

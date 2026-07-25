@@ -1,3 +1,15 @@
+import {
+  createCommandActionRow,
+  createCommandButton,
+  createCommandMessageView,
+} from './platforms/command-view.js';
+import {
+  getInboundInteractionActorId,
+  getInboundInteractionChannel,
+  getInboundInteractionComponentId,
+} from './platforms/inbound-event.js';
+import { assertInteractionResponse } from './platforms/interaction-response.js';
+
 const PROVIDER_CHOICES = Object.freeze(['codex', 'claude', 'antigravity', 'zcode']);
 
 function formatWorkspaceSourceLabel(source, language) {
@@ -30,9 +42,7 @@ export function createOnboardingFlow({
   defaultUiLanguage = 'en',
   onboardingTotalSteps = 4,
   botProvider = null,
-  ActionRowBuilder,
-  ButtonBuilder,
-  ButtonStyle,
+  interactionResponse,
   getSession,
   saveDb,
   getSessionProvider,
@@ -49,6 +59,8 @@ export function createOnboardingFlow({
   commandActions = {},
   openWorkspaceBrowser,
 } = {}) {
+  const responsePort = assertInteractionResponse(interactionResponse);
+
   function isOnboardingEnabled(session) {
     if (!session) return onboardingEnabledByDefault;
     return session.onboardingEnabled !== false;
@@ -233,43 +245,46 @@ export function createOnboardingFlow({
 
     if (current === 1) {
       const activeLanguage = getSessionLanguage(session);
-      return new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-          .setCustomId(buildOnboardingButtonId('set_lang', current, userId, 'zh'))
-          .setLabel('中文')
-          .setStyle(activeLanguage === 'zh' ? ButtonStyle.Primary : ButtonStyle.Secondary),
-        new ButtonBuilder()
-          .setCustomId(buildOnboardingButtonId('set_lang', current, userId, 'en'))
-          .setLabel('English')
-          .setStyle(activeLanguage === 'en' ? ButtonStyle.Primary : ButtonStyle.Secondary),
-      );
+      return createCommandActionRow([
+        createCommandButton({
+          id: buildOnboardingButtonId('set_lang', current, userId, 'zh'),
+          label: '中文',
+          style: activeLanguage === 'zh' ? 'primary' : 'secondary',
+        }),
+        createCommandButton({
+          id: buildOnboardingButtonId('set_lang', current, userId, 'en'),
+          label: 'English',
+          style: activeLanguage === 'en' ? 'primary' : 'secondary',
+        }),
+      ]);
     }
 
     if (current === 2) {
       if (botProvider) return null;
       const activeProvider = getSessionProvider(session);
-      return new ActionRowBuilder().addComponents(
-        ...PROVIDER_CHOICES.map((provider) => new ButtonBuilder()
-          .setCustomId(buildOnboardingButtonId('set_provider', current, userId, provider))
-          .setLabel(provider)
-          .setStyle(activeProvider === provider ? ButtonStyle.Primary : ButtonStyle.Secondary)),
-      );
+      return createCommandActionRow(PROVIDER_CHOICES.map((provider) => createCommandButton({
+        id: buildOnboardingButtonId('set_provider', current, userId, provider),
+        label: provider,
+        style: activeProvider === provider ? 'primary' : 'secondary',
+      })));
     }
 
     if (current === 3) {
       const binding = getWorkspaceBinding(session, key) || {};
       const hasThreadOverride = binding.source === 'thread override';
-      return new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-          .setCustomId(buildOnboardingButtonId('workspace_default', current, userId))
-          .setLabel(lang === 'en' ? 'Use Default' : '使用默认')
-          .setStyle(hasThreadOverride ? ButtonStyle.Secondary : ButtonStyle.Primary)
-          .setDisabled(!hasThreadOverride),
-        new ButtonBuilder()
-          .setCustomId(buildOnboardingButtonId('workspace_browse', current, userId))
-          .setLabel(lang === 'en' ? 'Browse...' : '浏览...')
-          .setStyle(ButtonStyle.Primary),
-      );
+      return createCommandActionRow([
+        createCommandButton({
+          id: buildOnboardingButtonId('workspace_default', current, userId),
+          label: lang === 'en' ? 'Use Default' : '使用默认',
+          style: hasThreadOverride ? 'secondary' : 'primary',
+          disabled: !hasThreadOverride,
+        }),
+        createCommandButton({
+          id: buildOnboardingButtonId('workspace_browse', current, userId),
+          label: lang === 'en' ? 'Browse...' : '浏览...',
+          style: 'primary',
+        }),
+      ]);
     }
 
     return null;
@@ -281,31 +296,61 @@ export function createOnboardingFlow({
     const previous = normalizeOnboardingStep(current - 1);
     const next = normalizeOnboardingStep(current + 1);
     const rows = [
-      new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-          .setCustomId(buildOnboardingButtonId('goto', previous, userId))
-          .setLabel(lang === 'en' ? 'Previous' : '上一步')
-          .setStyle(ButtonStyle.Secondary)
-          .setDisabled(current <= 1),
-        new ButtonBuilder()
-          .setCustomId(buildOnboardingButtonId('refresh', current, userId))
-          .setLabel(lang === 'en' ? 'Refresh' : '刷新')
-          .setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder()
-          .setCustomId(buildOnboardingButtonId('goto', next, userId))
-          .setLabel(lang === 'en' ? 'Next' : '下一步')
-          .setStyle(ButtonStyle.Primary)
-          .setDisabled(current >= onboardingTotalSteps),
-        new ButtonBuilder()
-          .setCustomId(buildOnboardingButtonId('done', current, userId))
-          .setLabel(lang === 'en' ? 'Done' : '完成')
-          .setStyle(ButtonStyle.Success),
-      ),
+      createCommandActionRow([
+        createCommandButton({
+          id: buildOnboardingButtonId('goto', previous, userId),
+          label: lang === 'en' ? 'Previous' : '上一步',
+          disabled: current <= 1,
+        }),
+        createCommandButton({
+          id: buildOnboardingButtonId('refresh', current, userId),
+          label: lang === 'en' ? 'Refresh' : '刷新',
+        }),
+        createCommandButton({
+          id: buildOnboardingButtonId('goto', next, userId),
+          label: lang === 'en' ? 'Next' : '下一步',
+          style: 'primary',
+          disabled: current >= onboardingTotalSteps,
+        }),
+        createCommandButton({
+          id: buildOnboardingButtonId('done', current, userId),
+          label: lang === 'en' ? 'Done' : '完成',
+          style: 'success',
+        }),
+      ]),
     ];
 
     const configRow = buildOnboardingConfigRow(current, key, userId, session, lang);
     if (configRow) rows.push(configRow);
     return rows;
+  }
+
+  function buildOnboardingView(step, key, userId, session = null, channel = null, language = defaultUiLanguage, visibility = 'public') {
+    const lang = normalizeUiLanguage(language);
+    const current = normalizeOnboardingStep(step);
+    const fallbackText = lang === 'en'
+      ? [
+        'Interactive controls are unavailable. Continue with text commands:',
+        current === 1 ? '• `!language <zh|en>`' : null,
+        current === 2 && !botProvider ? '• `!provider <codex|claude|antigravity|zcode>`' : null,
+        current === 3 ? '• `!setdir <absolute-path|default>`' : null,
+        current === 4 ? '• `!status` and `!doctor`' : null,
+        '• `!onboarding` shows the current guide again.',
+      ].filter(Boolean).join('\n')
+      : [
+        '当前平台没有可用的交互控件，请改用文本命令继续：',
+        current === 1 ? '• `!language <zh|en>`' : null,
+        current === 2 && !botProvider ? '• `!provider <codex|claude|antigravity|zcode>`' : null,
+        current === 3 ? '• `!setdir <绝对路径|default>`' : null,
+        current === 4 ? '• `!status` 与 `!doctor`' : null,
+        '• `!onboarding` 可重新查看当前引导。',
+      ].filter(Boolean).join('\n');
+    return createCommandMessageView({
+      content: formatOnboardingStepReport(step, key, session, channel, language),
+      rows: buildOnboardingActionRows(step, key, userId, session, language),
+      visibility,
+      fallbackText,
+    });
   }
 
   function formatOnboardingStepReport(step, key, session = null, channel = null, language = defaultUiLanguage) {
@@ -440,33 +485,37 @@ export function createOnboardingFlow({
   }
 
   async function handleOnboardingButtonInteraction(interaction) {
-    const parsed = parseOnboardingButtonId(interaction.customId);
+    const parsed = parseOnboardingButtonId(getInboundInteractionComponentId(interaction));
     if (!parsed) return;
 
-    const key = interaction.channelId;
-    const session = key ? getSession(key, { channel: interaction.channel || null }) : null;
+    const key = interaction?.conversation?.id;
+    const channel = getInboundInteractionChannel(interaction);
+    const userId = getInboundInteractionActorId(interaction);
+    const session = key ? getSession(key, { conversation: interaction?.conversation || null }) : null;
     const language = getSessionLanguage(session);
 
-    if (parsed.userId !== interaction.user.id) {
-      await interaction.reply({
+    if (parsed.userId !== userId) {
+      await responsePort.respond(interaction, createCommandMessageView({
         content: language === 'en'
           ? `This guided setup panel is only controllable by its creator. Run \`${slashRef('onboarding')}\` to create your own panel.`
           : `这个引导面板只对发起者可操作。请执行 \`${slashRef('onboarding')}\` 创建你自己的面板。`,
-        flags: 64,
-      });
+        visibility: 'ephemeral',
+      }));
       return;
     }
 
     if (!key) {
-      await interaction.reply({ content: '❌ 无法识别当前频道。', flags: 64 });
+      await responsePort.respond(interaction, createCommandMessageView({
+        content: '❌ 无法识别当前频道。',
+        visibility: 'ephemeral',
+      }));
       return;
     }
 
     if (!isOnboardingEnabled(session)) {
-      await interaction.update({
+      await responsePort.update(interaction, createCommandMessageView({
         content: formatOnboardingDisabledMessage(language),
-        components: [],
-      });
+      }));
       return;
     }
 
@@ -508,39 +557,42 @@ export function createOnboardingFlow({
     if (parsed.action === 'workspace_browse') {
       const currentLanguage = getSessionLanguage(session);
       if (typeof openWorkspaceBrowser === 'function') {
-        await interaction.reply(openWorkspaceBrowser({
+        await responsePort.respond(interaction, openWorkspaceBrowser({
           key,
           session,
-          userId: interaction.user.id,
+          userId,
           mode: 'thread',
-          flags: 64,
+          visibility: 'ephemeral',
         }));
         return;
       }
 
-      await interaction.reply({
+      await responsePort.respond(interaction, createCommandMessageView({
         content: currentLanguage === 'en'
           ? `Use \`${slashRef('setdir')} path:browse\` or \`!setdir browse\` to open the workspace picker.`
           : `请使用 \`${slashRef('setdir')} path:browse\` 或 \`!setdir browse\` 打开路径选择器。`,
-        flags: 64,
-      });
+        visibility: 'ephemeral',
+      }));
       return;
     }
 
     const currentLanguage = getSessionLanguage(session);
 
     if (parsed.action === 'done') {
-      await interaction.update({
-        content: formatOnboardingDoneReport(key, session, interaction.channel, currentLanguage),
-        components: [],
-      });
+      await responsePort.update(interaction, createCommandMessageView({
+        content: formatOnboardingDoneReport(key, session, channel, currentLanguage),
+      }));
       return;
     }
 
-    await interaction.update({
-      content: formatOnboardingStepReport(parsed.step, key, session, interaction.channel, currentLanguage),
-      components: buildOnboardingActionRows(parsed.step, key, interaction.user.id, session, currentLanguage),
-    });
+    await responsePort.update(interaction, buildOnboardingView(
+      parsed.step,
+      key,
+      userId,
+      session,
+      channel,
+      currentLanguage,
+    ));
   }
 
   return {
@@ -552,6 +604,7 @@ export function createOnboardingFlow({
     formatOnboardingReport,
     isOnboardingButtonId,
     buildOnboardingActionRows,
+    buildOnboardingView,
     formatOnboardingStepReport,
     formatOnboardingDoneReport,
     handleOnboardingButtonInteraction,

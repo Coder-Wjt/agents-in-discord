@@ -5,6 +5,10 @@ import {
   createSlashCommandRouter,
   parseCommandActionButtonId,
 } from '../src/slash-command-router.js';
+import { createDiscordConversationSpawn } from '../src/platforms/discord/conversation-spawn.js';
+import { createDiscordConversationPresentation } from '../src/platforms/discord/conversation-presentation.js';
+
+const conversationPresentation = createDiscordConversationPresentation();
 
 class FakeActionRowBuilder {
   constructor() {
@@ -80,19 +84,49 @@ const FakeTextInputStyle = {
 };
 
 function createInteraction(commandName, optionValues = {}) {
+  const channel = { id: 'channel-1' };
+  const user = { id: 'user-1' };
+  const responseTarget = {};
   return {
-    commandName,
-    channelId: 'channel-1',
-    channel: { id: 'channel-1' },
-    user: { id: 'user-1' },
-    options: {
-      getSubcommand() {
-        return optionValues.subcommand ?? null;
-      },
-      getString(name) {
+    type: 'interaction',
+    kind: 'command',
+    platformId: 'test',
+    id: 'interaction-1',
+    actor: { id: user.id, displayName: user.id, raw: user },
+    conversation: { id: channel.id, raw: channel },
+    command: {
+      name: commandName,
+      getOption(name) {
         return optionValues[name] ?? null;
       },
     },
+    component: null,
+    modal: null,
+    responseTarget,
+    raw: responseTarget,
+  };
+}
+
+function createModalInteraction(customId, fieldValues = {}, responseTarget = {}) {
+  const channel = responseTarget.channel || { id: 'channel-1' };
+  const user = responseTarget.user || { id: 'user-1' };
+  return {
+    type: 'interaction',
+    kind: 'modal',
+    platformId: 'test',
+    id: 'modal-1',
+    actor: { id: user.id, displayName: user.id, raw: user },
+    conversation: { id: responseTarget.channelId || channel.id, raw: channel },
+    command: null,
+    component: null,
+    modal: {
+      id: customId,
+      getField(name) {
+        return fieldValues[name] ?? '';
+      },
+    },
+    responseTarget,
+    raw: responseTarget,
   };
 }
 
@@ -110,8 +144,20 @@ function createRouterState(overrides = {}) {
   let runtimeModeSetting = { mode: 'normal', supported: true, source: 'env default' };
   let retryOutcome = { ok: true, enqueued: true, queuedAhead: 0 };
   const closeRuntimeCalls = [];
+  const interactionResponse = {
+    respond: (interaction, view) => (interaction.responseTarget || interaction).reply(view),
+    update: (interaction, view) => (interaction.responseTarget || interaction).update(view),
+    showModal: (interaction, view) => (interaction.responseTarget || interaction).showModal(view),
+    defer: (interaction, options) => (interaction.responseTarget || interaction).deferReply(options),
+  };
 
   const router = createSlashCommandRouter({
+    interactionResponse,
+    messageDelivery: {
+      send: async (interaction, payload) => interaction?.conversation?.raw?.send?.(payload),
+    },
+    conversationSpawn: createDiscordConversationSpawn(),
+    conversationPresentation,
     slashRef: (name) => `/cx_${name}`,
     getSession: () => session,
     getSessionLanguage: (currentSession) => currentSession.language,
@@ -255,21 +301,36 @@ function createRouterState(overrides = {}) {
       return retryOutcome;
     },
     compactSession: async (message, key) => {
-      compactCalls.push({ key, channelId: message.channel?.id || null });
+      compactCalls.push({ key, channelId: message.conversation?.id || null });
       return { ok: true };
     },
-    openWorkspaceBrowser: ({ key, mode, userId }) => {
-      const payload = { content: `browse:${mode}:${key}:${userId}`, components: [] };
+    openWorkspaceBrowser: ({ key, mode, userId, visibility = 'public' }) => {
+      const payload = {
+        type: 'message',
+        content: `browse:${mode}:${key}:${userId}`,
+        rows: [],
+        visibility,
+      };
       browseCalls.push(payload);
       return payload;
     },
-    openSettingsPanel: ({ key, userId, activeSection, flags }) => {
-      const payload = { content: `settings:${key}:${userId}:${activeSection}`, components: [], flags };
+    openSettingsPanel: ({ key, userId, activeSection, visibility = 'public' }) => {
+      const payload = {
+        type: 'message',
+        content: `settings:${key}:${userId}:${activeSection}`,
+        rows: [],
+        visibility,
+      };
       settingsCalls.push(payload);
       return payload;
     },
-    openModelSettingsPanel: ({ key, userId, flags }) => {
-      const payload = { content: `model-settings:${key}:${userId}`, components: [], flags };
+    openModelSettingsPanel: ({ key, userId, visibility = 'public' }) => {
+      const payload = {
+        type: 'message',
+        content: `model-settings:${key}:${userId}`,
+        rows: [],
+        visibility,
+      };
       modelSettingsCalls.push(payload);
       return payload;
     },
@@ -313,7 +374,7 @@ test('createSlashCommandRouter routes new command through new-session handler', 
   assert.equal(state.getResetCalls(), 1);
   assert.deepEqual(state.replies, [{
     content: '🆕 已切换到新会话。\n下一条普通消息会开启新的上下文。',
-    flags: 64,
+    visibility: 'ephemeral',
   }]);
 });
 
@@ -330,14 +391,16 @@ test('createSlashCommandRouter opens compact model panel when model command has 
 
   assert.equal(handled, true);
   assert.deepEqual(state.getModelSettingsCalls(), [{
+    type: 'message',
     content: 'model-settings:channel-1:user-1',
-    components: [],
-    flags: 64,
+    rows: [],
+    visibility: 'ephemeral',
   }]);
   assert.deepEqual(state.replies, [{
+    type: 'message',
     content: 'model-settings:channel-1:user-1',
-    components: [],
-    flags: 64,
+    rows: [],
+    visibility: 'ephemeral',
   }]);
 });
 
@@ -383,7 +446,7 @@ test('createSlashCommandRouter rejects a catalog model and effort combination th
   assert.equal(state.session.effort, undefined);
   assert.deepEqual(state.replies, [{
     content: '❌ 模型 `o3` 不支持 effort `xhigh`。',
-    flags: 64,
+    visibility: 'ephemeral',
   }]);
   assert.deepEqual(state.getCloseRuntimeCalls(), []);
 });
@@ -412,7 +475,7 @@ test('createSlashCommandRouter validates legacy model switches against inherited
   assert.equal(state.session.model, undefined);
   assert.deepEqual(state.replies, [{
     content: '❌ 模型 `o3` 不支持 effort `xhigh`。',
-    flags: 64,
+    visibility: 'ephemeral',
   }]);
 });
 
@@ -443,7 +506,7 @@ test('createSlashCommandRouter validates the inherited effort after legacy effor
   assert.equal(state.session.effort, 'high');
   assert.deepEqual(state.replies, [{
     content: '❌ 模型 `o3` 不支持 effort `xhigh`。',
-    flags: 64,
+    visibility: 'ephemeral',
   }]);
 });
 
@@ -491,7 +554,7 @@ test('createSlashCommandRouter creates native Codex fork in a new thread and pre
     resolveSecurityContext: () => ({ profile: 'team' }),
   });
   const interaction = createInteraction('cx_fork', { name: 'design branch' });
-  interaction.channel = {
+  interaction.conversation.raw = {
     id: 'channel-1',
     threads: {
       async create(options) {
@@ -579,7 +642,7 @@ test('createSlashCommandRouter opens Codex side conversation without changing pa
     },
   });
   const interaction = createInteraction('cx_side', { action: 'start', name: 'ask aside' });
-  interaction.channel = {
+  interaction.conversation.raw = {
     id: 'channel-1',
     threads: {
       async create(options) {
@@ -654,7 +717,7 @@ test('createSlashCommandRouter cleans provider side thread when origin notice ca
     },
   });
   const interaction = createInteraction('cx_side', { action: 'start' });
-  interaction.channel = {
+  interaction.conversation.raw = {
     id: 'channel-1',
     threads: {
       async create() {
@@ -717,7 +780,7 @@ test('createSlashCommandRouter cleans provider side thread when side binding fai
     },
   });
   const interaction = createInteraction('cx_side', { action: 'start' });
-  interaction.channel = {
+  interaction.conversation.raw = {
     id: 'channel-1',
     threads: {
       async create() {
@@ -895,9 +958,9 @@ test('createSlashCommandRouter closes Codex side conversation from the side thre
     },
   });
   const interaction = createInteraction('cx_side', { action: 'close' });
-  interaction.channelId = 'side-channel-1';
+  interaction.conversation.id = 'side-channel-1';
   const archiveCalls = [];
-  interaction.channel = {
+  interaction.conversation.raw = {
     id: 'side-channel-1',
     async setLocked(value, reason) {
       archiveCalls.push({ method: 'setLocked', value, reason });
@@ -933,7 +996,7 @@ test('createSlashCommandRouter refuses Codex side before creating Discord thread
     },
   });
   const interaction = createInteraction('cx_side', { action: 'start' });
-  interaction.channel = {
+  interaction.conversation.raw = {
     id: 'channel-1',
     threads: {
       async create(options) {
@@ -996,7 +1059,7 @@ test('createSlashCommandRouter creates native Claude fork in a new thread and re
     },
   });
   const interaction = createInteraction('cx_fork', { name: 'claude branch' });
-  interaction.channel = {
+  interaction.conversation.raw = {
     id: 'channel-1',
     threads: {
       async create(options) {
@@ -1070,11 +1133,46 @@ test('createSlashCommandRouter rejects fork for providers without native fork', 
   assert.match(state.replies[0].content, /不支持原生 fork/);
 });
 
+test('createSlashCommandRouter blocks thread commands when the platform has no threads', async () => {
+  let forkCalls = 0;
+  let sideCalls = 0;
+  const state = createRouterState({
+    platformCapabilities: { threads: false },
+    forkCodexThread: async () => {
+      forkCalls += 1;
+    },
+    startCodexSideConversation: async () => {
+      sideCalls += 1;
+    },
+  });
+
+  for (const commandName of ['fork', 'side']) {
+    await state.router({
+      interaction: createInteraction(`cx_${commandName}`),
+      commandName,
+      respond: async (payload) => state.replies.push(payload),
+    });
+  }
+
+  assert.equal(forkCalls, 0);
+  assert.equal(sideCalls, 0);
+  assert.deepEqual(state.replies, [
+    {
+      content: '❌ 当前平台不支持基于 thread 的会话功能。',
+      visibility: 'ephemeral',
+    },
+    {
+      content: '❌ 当前平台不支持基于 thread 的会话功能。',
+      visibility: 'ephemeral',
+    },
+  ]);
+});
+
 test('createSlashCommandRouter rejects slash goal set without an objective instead of opening a modal', async () => {
   const modals = [];
   const state = createRouterState();
   const interaction = createInteraction('cx_goal', { action: 'set' });
-  interaction.showModal = async (modal) => {
+  interaction.responseTarget.showModal = async (modal) => {
     modals.push(modal);
   };
 
@@ -1141,6 +1239,9 @@ test('createSlashCommandRouter sets a Codex goal from slash objective fields', a
   assert.match(state.replies[0].content, /已触发自动续跑/);
   assert.equal(queuedPrompts.length, 1);
   assert.equal(queuedPrompts[0].key, 'channel-1');
+  assert.equal(queuedPrompts[0].message.actor.id, 'user-1');
+  assert.equal(queuedPrompts[0].message.conversation.id, 'channel-1');
+  assert.deepEqual(queuedPrompts[0].message.attachments, []);
   assert.match(queuedPrompts[0].content, /Continue working toward the active Codex goal/);
 });
 
@@ -1173,8 +1274,7 @@ test('createSlashCommandRouter sets a Codex goal from modal submit', async () =>
     },
   });
 
-  const handled = await state.router.handleGoalModalSubmit({
-    customId: 'goalm:set:user-1',
+  const responseTarget = {
     channelId: 'channel-1',
     channel: {
       id: 'channel-1',
@@ -1184,13 +1284,6 @@ test('createSlashCommandRouter sets a Codex goal from modal submit', async () =>
       },
     },
     user: { id: 'user-1' },
-    fields: {
-      getTextInputValue(name) {
-        if (name === 'goal_objective') return 'ship Discord goal command';
-        if (name === 'goal_token_budget') return '90000';
-        return '';
-      },
-    },
     async reply(payload) {
       replies.push(payload);
     },
@@ -1198,7 +1291,15 @@ test('createSlashCommandRouter sets a Codex goal from modal submit', async () =>
       interactionFollowUps.push(payload);
       return { id: 'interaction-followup-1' };
     },
-  });
+  };
+  const handled = await state.router.handleGoalModalSubmit(createModalInteraction(
+    'goalm:set:user-1',
+    {
+      goal_objective: 'ship Discord goal command',
+      goal_token_budget: '90000',
+    },
+    responseTarget,
+  ));
 
   assert.equal(handled, true);
   assert.deepEqual(goalCalls, [{
@@ -1230,20 +1331,18 @@ test('createSlashCommandRouter rejects empty Codex goal modal submit', async () 
     },
   });
 
-  const handled = await state.router.handleGoalModalSubmit({
-    customId: 'goalm:set:user-1',
-    channelId: 'channel-1',
-    channel: { id: 'channel-1' },
-    user: { id: 'user-1' },
-    fields: {
-      getTextInputValue() {
-        return '';
+  const handled = await state.router.handleGoalModalSubmit(createModalInteraction(
+    'goalm:set:user-1',
+    {},
+    {
+      channelId: 'channel-1',
+      channel: { id: 'channel-1' },
+      user: { id: 'user-1' },
+      async reply(payload) {
+        replies.push(payload);
       },
     },
-    async reply(payload) {
-      replies.push(payload);
-    },
-  });
+  ));
 
   assert.equal(handled, true);
   assert.equal(goalCalls.length, 0);
@@ -1307,7 +1406,7 @@ test('createSlashCommandRouter routes abort alias to cancel handler', async () =
   assert.deepEqual(state.getCancelCalls(), [{ key: 'channel-1', reason: 'slash_cancel' }]);
   assert.deepEqual(state.replies, [{
     content: JSON.stringify({ key: 'channel-1', reason: 'slash_cancel' }),
-    flags: 64,
+    visibility: 'ephemeral',
   }]);
 });
 
@@ -1327,7 +1426,7 @@ test('createSlashCommandRouter awaits async status reports', async () => {
   assert.equal(handled, true);
   assert.deepEqual(state.replies, [{
     content: 'status-with-live-quota',
-    flags: 64,
+    visibility: 'ephemeral',
   }]);
 });
 
@@ -1353,14 +1452,14 @@ test('createSlashCommandRouter blocks project upgrade mode changes for non-admin
   assert.equal(modeCalls, 0);
   assert.deepEqual(state.replies, [{
     content: '❌ 只有项目升级管理员可以修改升级模式。',
-    flags: 64,
+    visibility: 'ephemeral',
   }]);
 });
 
 test('createSlashCommandRouter opens workspace browser for setdir browse', async () => {
   const state = createRouterState();
   const interaction = createInteraction('cx_setdir');
-  interaction.options.getString = () => 'browse';
+  interaction.command.getOption = () => 'browse';
 
   const handled = await state.router({
     interaction,
@@ -1372,12 +1471,16 @@ test('createSlashCommandRouter opens workspace browser for setdir browse', async
 
   assert.equal(handled, true);
   assert.deepEqual(state.getBrowseCalls(), [{
+    type: 'message',
     content: 'browse:thread:channel-1:user-1',
-    components: [],
+    rows: [],
+    visibility: 'ephemeral',
   }]);
   assert.deepEqual(state.replies, [{
+    type: 'message',
     content: 'browse:thread:channel-1:user-1',
-    components: [],
+    rows: [],
+    visibility: 'ephemeral',
   }]);
 });
 
@@ -1394,14 +1497,16 @@ test('createSlashCommandRouter opens the interactive settings panel', async () =
 
   assert.equal(handled, true);
   assert.deepEqual(state.getSettingsCalls(), [{
+    type: 'message',
     content: 'settings:channel-1:user-1:defaults',
-    components: [],
-    flags: 64,
+    rows: [],
+    visibility: 'ephemeral',
   }]);
   assert.deepEqual(state.replies, [{
+    type: 'message',
     content: 'settings:channel-1:user-1:defaults',
-    components: [],
-    flags: 64,
+    rows: [],
+    visibility: 'ephemeral',
   }]);
 });
 
@@ -1432,7 +1537,7 @@ test('createSlashCommandRouter routes retry command through retry handler', asyn
   assert.deepEqual(state.getRetryCalls(), [{ key: 'channel-1', userId: 'user-1' }]);
   assert.deepEqual(state.replies, [{
     content: '🔁 已重新加入队列。',
-    flags: 64,
+    visibility: 'ephemeral',
   }]);
 });
 
@@ -1444,7 +1549,7 @@ test('createSlashCommandRouter rejects only unsupported compact actions for non-
   });
   state.session.provider = 'antigravity';
   const interaction = createInteraction('cx_compact');
-  interaction.options.getString = (name) => (name === 'key' ? 'strategy' : 'native');
+  interaction.command.getOption = (name) => (name === 'key' ? 'strategy' : 'native');
 
   const handled = await state.router({
     interaction,
@@ -1457,7 +1562,7 @@ test('createSlashCommandRouter rejects only unsupported compact actions for non-
   assert.equal(handled, true);
   assert.deepEqual(state.replies, [{
     content: '⚠️ 当前 provider Antigravity CLI 不支持 `native` 压缩。',
-    flags: 64,
+    visibility: 'ephemeral',
   }]);
 });
 
@@ -1478,7 +1583,7 @@ test('createSlashCommandRouter runs manual compact from slash compact', async ()
   assert.equal(handled, true);
   assert.deepEqual(state.replies, [{
     content: '已开始手动压缩。',
-    flags: 64,
+    visibility: 'ephemeral',
   }]);
   assert.deepEqual(state.getCompactCalls(), [{ key: 'channel-1', channelId: 'channel-1' }]);
 });
@@ -1509,7 +1614,7 @@ test('createSlashCommandRouter shows compact help for removed manual continue su
     formatCompactStrategyConfigHelp: () => 'compact-help',
   });
   const interaction = createInteraction('cx_compact');
-  interaction.options.getString = (name) => (name === 'key' ? 'continue' : '');
+  interaction.command.getOption = (name) => (name === 'key' ? 'continue' : '');
 
   const handled = await state.router({
     interaction,
@@ -1522,14 +1627,14 @@ test('createSlashCommandRouter shows compact help for removed manual continue su
   assert.equal(handled, true);
   assert.deepEqual(state.replies, [{
     content: 'compact-help',
-    flags: 64,
+    visibility: 'ephemeral',
   }]);
 });
 
 test('createSlashCommandRouter updates fast mode for codex provider', async () => {
   const state = createRouterState();
   const interaction = createInteraction('cx_fast');
-  interaction.options.getString = () => 'on';
+  interaction.command.getOption = () => 'on';
 
   const handled = await state.router({
     interaction,
@@ -1543,7 +1648,7 @@ test('createSlashCommandRouter updates fast mode for codex provider', async () =
   assert.deepEqual(state.getFastModeSetting(), { enabled: true, supported: true, source: 'session override' });
   assert.deepEqual(state.replies, [{
     content: 'codex:true:true:session override:true',
-    flags: 64,
+    visibility: 'ephemeral',
   }]);
 });
 
@@ -1552,7 +1657,7 @@ test('createSlashCommandRouter updates Claude runtime mode and closes current ho
   state.session.provider = 'claude';
   state.session.runnerSessionId = 'sess-stays';
   const interaction = createInteraction('cx_runtime');
-  interaction.options.getString = () => 'long';
+  interaction.command.getOption = () => 'long';
 
   const handled = await state.router({
     interaction,
@@ -1569,7 +1674,7 @@ test('createSlashCommandRouter updates Claude runtime mode and closes current ho
   assert.deepEqual(state.getCloseRuntimeCalls(), [{ key: 'channel-1', reason: 'runtime config changed' }]);
   assert.deepEqual(state.replies, [{
     content: 'claude:true:long:session override:true',
-    flags: 64,
+    visibility: 'ephemeral',
   }]);
 });
 
@@ -1577,7 +1682,7 @@ test('createSlashCommandRouter reports fast mode unsupported for non-codex provi
   const state = createRouterState();
   state.session.provider = 'claude';
   const interaction = createInteraction('cx_fast');
-  interaction.options.getString = () => 'status';
+  interaction.command.getOption = () => 'status';
 
   const handled = await state.router({
     interaction,
@@ -1590,6 +1695,6 @@ test('createSlashCommandRouter reports fast mode unsupported for non-codex provi
   assert.equal(handled, true);
   assert.deepEqual(state.replies, [{
     content: 'claude:false:false:provider unsupported:false',
-    flags: 64,
+    visibility: 'ephemeral',
   }]);
 });

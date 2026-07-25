@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createSettingsPanel } from '../src/settings-panel.js';
+import { createDiscordCommandViewRenderer } from '../src/platforms/discord/command-view-renderer.js';
+import { createDiscordInteractionResponse } from '../src/platforms/discord/interaction-response.js';
 
 class FakeButtonBuilder {
   constructor() {
@@ -134,6 +136,61 @@ const TextInputStyle = {
   Short: 'short',
 };
 
+const commandViewRenderer = createDiscordCommandViewRenderer({
+  ActionRowBuilder: FakeActionRowBuilder,
+  ButtonBuilder: FakeButtonBuilder,
+  ButtonStyle,
+  StringSelectMenuBuilder: FakeStringSelectMenuBuilder,
+  ModalBuilder: FakeModalBuilder,
+  TextInputBuilder: FakeTextInputBuilder,
+  TextInputStyle,
+});
+const interactionResponse = createDiscordInteractionResponse({ commandViewRenderer });
+
+function normalizeSettingsInteraction(interaction) {
+  const channel = interaction.channel || { id: interaction.channelId };
+  const isModal = Boolean(interaction.fields);
+  return {
+    type: 'interaction',
+    kind: isModal ? 'modal' : (Array.isArray(interaction.values) ? 'select' : 'button'),
+    platformId: 'discord',
+    id: interaction.id || 'test-settings-interaction',
+    actor: {
+      id: interaction.user?.id || '',
+      raw: interaction.user || null,
+    },
+    conversation: {
+      id: interaction.channelId || channel?.id || '',
+      tenantId: null,
+      parentId: null,
+      isThread: false,
+      raw: channel,
+    },
+    component: isModal ? null : {
+      id: interaction.customId || '',
+      values: Array.isArray(interaction.values) ? [...interaction.values] : [],
+    },
+    modal: isModal ? {
+      id: interaction.customId || '',
+      getField: (name) => interaction.fields?.getTextInputValue?.(name) ?? '',
+    } : null,
+    responseTarget: interaction,
+    raw: interaction,
+  };
+}
+
+function withNormalizedSettingsHandlers(panel) {
+  return {
+    ...panel,
+    handleSettingsPanelInteraction: (interaction) => (
+      panel.handleSettingsPanelInteraction(normalizeSettingsInteraction(interaction))
+    ),
+    handleSettingsPanelModalSubmit: (interaction) => (
+      panel.handleSettingsPanelModalSubmit(normalizeSettingsInteraction(interaction))
+    ),
+  };
+}
+
 function createPanel({
   session,
   botProvider = null,
@@ -143,16 +200,10 @@ function createPanel({
   getChannelState,
   safeChannelSend,
 } = {}) {
-  return createSettingsPanel({
+  const panel = createSettingsPanel({
     botProvider,
     defaultUiLanguage: 'zh',
-    ActionRowBuilder: FakeActionRowBuilder,
-    ButtonBuilder: FakeButtonBuilder,
-    ButtonStyle,
-    StringSelectMenuBuilder: FakeStringSelectMenuBuilder,
-    ModalBuilder: FakeModalBuilder,
-    TextInputBuilder: FakeTextInputBuilder,
-    TextInputStyle,
+    interactionResponse,
     getSession: () => session,
     getSessionLanguage: (currentSession) => currentSession?.language || 'zh',
     getSessionProvider: (currentSession) => currentSession?.provider || 'codex',
@@ -268,10 +319,17 @@ function createPanel({
       source: session?.globalReplyDeliverySource || 'env default',
     }),
     getChannelState,
-    safeChannelSend,
+    messageDelivery: {
+      send: safeChannelSend || (async () => undefined),
+    },
     commandActions,
     openWorkspaceBrowser,
     slashRef: (base) => `/cx_${base}`,
+  });
+  return withNormalizedSettingsHandlers({
+    ...panel,
+    openSettingsPanel: (options) => commandViewRenderer.renderMessage(panel.openSettingsPanel(options)),
+    openModelSettingsPanel: (options) => commandViewRenderer.renderMessage(panel.openModelSettingsPanel(options)),
   });
 }
 
@@ -292,7 +350,7 @@ test('createSettingsPanel opens an overview payload with key channel settings', 
     session,
     userId: '12345',
     activeSection: 'overview',
-    flags: 64,
+    visibility: 'ephemeral',
   });
 
   assert.equal(payload.flags, 64);
@@ -624,16 +682,10 @@ test('createSettingsPanel updates Claude runtime mode and closes the hot process
   const updates = [];
   const closed = [];
 
-  const actualPanel = createSettingsPanel({
+  const actualPanel = withNormalizedSettingsHandlers(createSettingsPanel({
     botProvider: null,
     defaultUiLanguage: 'zh',
-    ActionRowBuilder: FakeActionRowBuilder,
-    ButtonBuilder: FakeButtonBuilder,
-    ButtonStyle,
-    StringSelectMenuBuilder: FakeStringSelectMenuBuilder,
-    ModalBuilder: FakeModalBuilder,
-    TextInputBuilder: FakeTextInputBuilder,
-    TextInputStyle,
+    interactionResponse,
     getSession: () => session,
     getSessionLanguage: () => 'zh',
     getSessionProvider: () => 'claude',
@@ -674,7 +726,7 @@ test('createSettingsPanel updates Claude runtime mode and closes the hot process
       closed.push({ key, reason });
     },
     slashRef: (base) => `/cx_${base}`,
-  });
+  }));
 
   await actualPanel.handleSettingsPanelInteraction({
     customId: 'stg:set:runtime:long:12345',
@@ -857,7 +909,7 @@ test('createSettingsPanel exposes a compact model-only panel', () => {
     key: 'thread-1',
     session,
     userId: '12345',
-    flags: 64,
+    visibility: 'ephemeral',
   });
 
   assert.equal(payload.flags, 64);
@@ -2124,6 +2176,7 @@ test('createSettingsPanel rejects invalid compact threshold input', async () => 
   assert.equal(session.compactThresholdTokens, 320000);
   assert.deepEqual(replies, [{
     content: '❌ Invalid compact token limit. Use a positive integer or `default`.',
+    components: [],
     flags: 64,
   }]);
 });
@@ -2181,10 +2234,11 @@ test('createSettingsPanel opens the existing workspace browser in a separate rep
   const replies = [];
   const panel = createPanel({
     session,
-    openWorkspaceBrowser: ({ mode, key, userId, flags }) => ({
+    openWorkspaceBrowser: ({ mode, key, userId, visibility }) => ({
+      type: 'message',
       content: `browse:${mode}:${key}:${userId}`,
-      components: [],
-      flags,
+      rows: [],
+      visibility,
     }),
   });
 

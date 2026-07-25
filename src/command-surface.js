@@ -1,22 +1,26 @@
 import { createOnboardingFlow } from './onboarding-flow.js';
+import { buildCommandSpecs } from './command-spec.js';
 import { createReportFormatters } from './report-formatters.js';
-import {
-  buildSlashCommands,
-  normalizeSlashCommandName as normalizeSlashCommandNameBase,
-  slashRef as slashRefBase,
-} from './slash-command-surface.js';
+import { assertCommandRegistryRenderer } from './platforms/command-registry.js';
 import { createSlashCommandRouter } from './slash-command-router.js';
 import { createSettingsPanel } from './settings-panel.js';
 import { createTextCommandHandler } from './text-command-handler.js';
 import { createWorkspaceBusyActions } from './workspace-busy-actions.js';
 import { createWorkspaceBrowser } from './workspace-browser.js';
+import {
+  DEFAULT_CONVERSATION_PRESENTATION,
+  assertConversationPresentation,
+} from './platforms/conversation-presentation.js';
 
 export function createCommandSurface({
-  slashPrefix = '',
+  interactionResponse,
+  messageDelivery = null,
+  platformCapabilities = null,
   botProvider = null,
   defaultUiLanguage = 'en',
   enableConfigCmd = false,
-  SlashCommandBuilder,
+  commandRegistryRenderer,
+  conversationPresentation = DEFAULT_CONVERSATION_PRESENTATION,
   onboardingOptions = {},
   settingsPanelOptions = {},
   reportOptions = {},
@@ -24,27 +28,33 @@ export function createCommandSurface({
   slashRouterOptions = {},
   textCommandOptions = {},
 } = {}) {
-  const slashCommands = buildSlashCommands({
-    SlashCommandBuilder,
-    slashPrefix,
+  const registryRenderer = assertCommandRegistryRenderer(commandRegistryRenderer);
+  const resolvedConversationPresentation = assertConversationPresentation(conversationPresentation);
+  const commandSpecs = buildCommandSpecs({
     botProvider,
+    conversationPresentation: resolvedConversationPresentation,
   });
-  const normalizeSlashCommandName = (name) => normalizeSlashCommandNameBase(name, slashPrefix);
-  const slashRef = (base) => slashRefBase(base, slashPrefix);
+  const normalizeSlashCommandName = (name) => registryRenderer.normalizeCommandName(name);
+  const slashRef = (base) => registryRenderer.formatCommandReference(base);
 
   const reports = createReportFormatters({
     ...reportOptions,
+    supportsThreads: platformCapabilities?.threads !== false,
+    formatUserMention: messageDelivery?.formatUserMention,
+    conversationPresentation: resolvedConversationPresentation,
     slashRef,
   });
 
   const workspaceBrowser = createWorkspaceBrowser({
     ...workspaceBrowserOptions,
+    interactionResponse,
     formatWorkspaceUpdateReport: reports.formatWorkspaceUpdateReport,
     formatDefaultWorkspaceUpdateReport: reports.formatDefaultWorkspaceUpdateReport,
   });
 
   const workspaceBusyActions = createWorkspaceBusyActions({
     ...workspaceBrowserOptions,
+    interactionResponse,
     commandActions: workspaceBrowserOptions.commandActions,
     getSessionLanguage: reportOptions.getSessionLanguage,
     getSessionProvider: reportOptions.getSessionProvider,
@@ -59,6 +69,7 @@ export function createCommandSurface({
 
   const onboarding = createOnboardingFlow({
     ...onboardingOptions,
+    interactionResponse,
     botProvider,
     openWorkspaceBrowser: workspaceBrowser.openWorkspaceBrowser,
     slashRef,
@@ -66,6 +77,8 @@ export function createCommandSurface({
 
   const settingsPanel = createSettingsPanel({
     ...settingsPanelOptions,
+    interactionResponse,
+    messageDelivery,
     botProvider,
     defaultUiLanguage,
     openWorkspaceBrowser: workspaceBrowser.openWorkspaceBrowser,
@@ -76,14 +89,15 @@ export function createCommandSurface({
     botProvider,
     defaultUiLanguage,
     slashRef,
-    ActionRowBuilder: settingsPanelOptions.ActionRowBuilder,
-    ModalBuilder: settingsPanelOptions.ModalBuilder,
-    TextInputBuilder: settingsPanelOptions.TextInputBuilder,
-    TextInputStyle: settingsPanelOptions.TextInputStyle,
+    interactionResponse,
+    messageDelivery,
+    conversationPresentation: resolvedConversationPresentation,
     getModelCatalog: settingsPanelOptions.getModelCatalog,
     ...slashRouterOptions,
+    platformCapabilities,
     isOnboardingEnabled: onboarding.isOnboardingEnabled,
     buildOnboardingActionRows: onboarding.buildOnboardingActionRows,
+    buildOnboardingView: onboarding.buildOnboardingView,
     formatOnboardingStepReport: onboarding.formatOnboardingStepReport,
     formatOnboardingDisabledMessage: onboarding.formatOnboardingDisabledMessage,
     formatOnboardingConfigReport: onboarding.formatOnboardingConfigReport,
@@ -119,6 +133,9 @@ export function createCommandSurface({
     botProvider,
     enableConfigCmd,
     ...textCommandOptions,
+    platformCapabilities,
+    messageDelivery,
+    conversationPresentation: resolvedConversationPresentation,
     isOnboardingEnabled: onboarding.isOnboardingEnabled,
     formatHelpReport: reports.formatHelpReport,
     formatStatusReport: reports.formatStatusReportWithLiveData,
@@ -173,7 +190,7 @@ export function createCommandSurface({
     normalizeSlashCommandName,
     routeSlashCommand,
     shouldHandleSlashCommandBeforeDefer: routeSlashCommand.shouldHandleBeforeDefer,
-    slashCommands,
+    commandSpecs,
     slashRef,
   };
 }

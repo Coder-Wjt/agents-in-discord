@@ -6,6 +6,22 @@ import {
   formatReplyDeliveryModeLabel,
   parseCompactConfigAction,
 } from './session-settings.js';
+import {
+  createCommandActionRow,
+  createCommandButton,
+  createCommandMessageView,
+  createCommandModalView,
+  createCommandSelect,
+  createCommandTextInput,
+} from './platforms/command-view.js';
+import { assertInteractionResponse } from './platforms/interaction-response.js';
+import {
+  getInboundInteractionActorId,
+  getInboundInteractionChannel,
+  getInboundInteractionComponentId,
+  getInboundInteractionField,
+  getInboundInteractionValues,
+} from './platforms/inbound-event.js';
 
 const SETTINGS_COMPONENT_PREFIX = 'stg';
 const SETTINGS_MODAL_PREFIX = 'stgm';
@@ -352,13 +368,8 @@ function normalizeResolvedEffort(value) {
 export function createSettingsPanel({
   botProvider = null,
   defaultUiLanguage = 'zh',
-  ActionRowBuilder,
-  ButtonBuilder,
-  ButtonStyle,
-  StringSelectMenuBuilder,
-  ModalBuilder,
-  TextInputBuilder,
-  TextInputStyle,
+  interactionResponse,
+  messageDelivery = null,
   getSession = () => null,
   getSessionLanguage = () => defaultUiLanguage,
   getSessionProvider = () => 'codex',
@@ -381,12 +392,16 @@ export function createSettingsPanel({
   resolveReplyDeliverySetting = () => ({ mode: 'card_mention', source: 'env default' }),
   getReplyDeliveryDefault = () => ({ mode: 'card_mention', source: 'env default' }),
   getChannelState = () => null,
-  safeChannelSend = async (target, payload) => target?.channel?.send?.(payload),
   commandActions = {},
   closeRuntimeSession = () => false,
   openWorkspaceBrowser,
   slashRef = (name) => `/${name}`,
 } = {}) {
+  const responsePort = assertInteractionResponse(interactionResponse);
+  const sendToConversation = typeof messageDelivery?.send === 'function'
+    ? messageDelivery.send
+    : async () => undefined;
+
   const closeRuntimeForKey = (key, reason = 'runtime config changed') => {
     try {
       closeRuntimeSession(key, reason);
@@ -479,7 +494,7 @@ export function createSettingsPanel({
       if (!keyName || sentKeys.has(keyName)) continue;
       sentKeys.add(keyName);
       activeRun.streamedProcessActivityKeys.push(activity);
-      await safeChannelSend(interaction, activity);
+      await sendToConversation(interaction, activity);
     }
   }
 
@@ -559,29 +574,29 @@ export function createSettingsPanel({
     const language = normalizeUiLanguage(getSessionLanguage(session) || defaultUiLanguage);
     const available = getAvailableSections(session);
     return [
-      new ActionRowBuilder().addComponents(
-        new StringSelectMenuBuilder()
-          .setCustomId(buildSettingsComponentId('nav', 'section', 'picker', userId))
-          .setPlaceholder(language === 'en' ? 'Choose a settings section' : '选择设置分区')
-          .addOptions(
-            available.map((section) => ({
-              label: formatSectionTitleLabel(section, language),
-              value: section,
-              default: activeSection === section,
-            })),
-          ),
-      ),
+      createCommandActionRow([
+        createCommandSelect({
+          id: buildSettingsComponentId('nav', 'section', 'picker', userId),
+          placeholder: language === 'en' ? 'Choose a settings section' : '选择设置分区',
+          options: available.map((section) => ({
+            label: formatSectionTitleLabel(section, language),
+            value: section,
+            default: activeSection === section,
+          })),
+        }),
+      ]),
     ];
   }
 
   function buildCloseRow(session, userId) {
     const language = normalizeUiLanguage(getSessionLanguage(session) || defaultUiLanguage);
-    return new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
-        .setCustomId(buildSettingsComponentId('act', 'panel', 'close', userId))
-        .setLabel(formatSectionButtonLabel('close', language))
-        .setStyle(ButtonStyle.Danger),
-    );
+    return createCommandActionRow([
+      createCommandButton({
+        id: buildSettingsComponentId('act', 'panel', 'close', userId),
+        label: formatSectionButtonLabel('close', language),
+        style: 'danger',
+      }),
+    ]);
   }
 
   function buildModelControlRows(session, userId, snapshot, { quick = false, generation = '' } = {}) {
@@ -589,47 +604,51 @@ export function createSettingsPanel({
     const effortTarget = quick ? 'quick_model_effort' : 'model_effort';
     const modelOptions = buildModelSelectOptions(snapshot, session);
     const rows = [
-      new ActionRowBuilder().addComponents(
-        new StringSelectMenuBuilder()
-          .setCustomId(buildSettingsComponentId('set', modelTarget, 'preset', userId, generation))
-          .setPlaceholder(snapshot.language === 'en'
+      createCommandActionRow([
+        createCommandSelect({
+          id: buildSettingsComponentId('set', modelTarget, 'preset', userId, generation),
+          placeholder: snapshot.language === 'en'
             ? `Current model: ${snapshot.modelValue || '(provider default)'}`
-            : `当前模型：${snapshot.modelValue || 'provider 默认'}`)
-          .addOptions(modelOptions),
-      ),
+            : `当前模型：${snapshot.modelValue || 'provider 默认'}`,
+          options: modelOptions,
+        }),
+      ]),
     ];
     const modelActionButtons = [
-      new ButtonBuilder()
-        .setCustomId(buildSettingsComponentId('act', modelTarget, 'custom', userId, generation))
-        .setLabel(snapshot.language === 'en' ? 'Type custom model' : '手写模型名')
-        .setStyle(ButtonStyle.Success),
-      new ButtonBuilder()
-        .setCustomId(buildSettingsComponentId('act', modelTarget, 'default', userId, generation))
-        .setLabel(snapshot.language === 'en' ? 'Use provider default' : '使用 provider 默认')
-        .setStyle(!session?.model ? ButtonStyle.Primary : ButtonStyle.Secondary),
+      createCommandButton({
+        id: buildSettingsComponentId('act', modelTarget, 'custom', userId, generation),
+        label: snapshot.language === 'en' ? 'Type custom model' : '手写模型名',
+        style: 'success',
+      }),
+      createCommandButton({
+        id: buildSettingsComponentId('act', modelTarget, 'default', userId, generation),
+        label: snapshot.language === 'en' ? 'Use provider default' : '使用 provider 默认',
+        style: !session?.model ? 'primary' : 'secondary',
+      }),
     ];
     if (snapshot.modelEffortLevels.length) {
-      const effortRows = chunk([...snapshot.modelEffortLevels, 'default'], 5).map((rowValues) => new ActionRowBuilder().addComponents(
-        ...rowValues.map((value) => {
+      const effortRows = chunk([...snapshot.modelEffortLevels, 'default'], 5).map((rowValues) => createCommandActionRow(
+        rowValues.map((value) => {
           const selected = value === 'default'
             ? !session?.effort
             : session?.effort === value;
-          return new ButtonBuilder()
-            .setCustomId(buildSettingsComponentId('set', effortTarget, value, userId, generation))
-            .setLabel(value)
-            .setStyle(selected ? ButtonStyle.Primary : ButtonStyle.Secondary);
+          return createCommandButton({
+            id: buildSettingsComponentId('set', effortTarget, value, userId, generation),
+            label: value,
+            style: selected ? 'primary' : 'secondary',
+          });
         }),
       ));
       const lastEffortRow = effortRows.at(-1);
       const lastEffortRowSize = [...snapshot.modelEffortLevels, 'default'].length % 5 || 5;
       if (lastEffortRowSize <= 3) {
-        lastEffortRow.addComponents(...modelActionButtons);
+        lastEffortRow.components.push(...modelActionButtons);
       } else {
-        effortRows.push(new ActionRowBuilder().addComponents(...modelActionButtons));
+        effortRows.push(createCommandActionRow(modelActionButtons));
       }
       rows.push(...effortRows);
     } else {
-      rows.push(new ActionRowBuilder().addComponents(...modelActionButtons));
+      rows.push(createCommandActionRow(modelActionButtons));
     }
     return rows;
   }
@@ -639,12 +658,11 @@ export function createSettingsPanel({
       case 'provider': {
         if (botProvider) return [];
         return [
-          new ActionRowBuilder().addComponents(
-            ...['codex', 'claude', 'antigravity', 'zcode'].map((provider) => new ButtonBuilder()
-              .setCustomId(buildSettingsComponentId('set', 'provider', provider, userId))
-              .setLabel(provider)
-              .setStyle(snapshot.provider === provider ? ButtonStyle.Primary : ButtonStyle.Secondary)),
-          ),
+          createCommandActionRow(['codex', 'claude', 'antigravity', 'zcode'].map((provider) => createCommandButton({
+            id: buildSettingsComponentId('set', 'provider', provider, userId),
+            label: provider,
+            style: snapshot.provider === provider ? 'primary' : 'secondary',
+          }))),
         ];
       }
 
@@ -670,44 +688,47 @@ export function createSettingsPanel({
             : snapshot.codexDefaults.effortConfigured && snapshot.codexDefaults.effort === value,
         }));
         return [
-          new ActionRowBuilder().addComponents(
-            new StringSelectMenuBuilder()
-              .setCustomId(buildSettingsComponentId('set', 'default_model', 'preset', userId, modelPanelGeneration))
-              .setPlaceholder(snapshot.language === 'en'
-                ? `Global model: ${configuredModel || '(provider default)'}`
-                : `全局模型：${configuredModel || 'provider 默认'}`)
-              .addOptions(modelOptions),
-          ),
-          new ActionRowBuilder().addComponents(
-            new StringSelectMenuBuilder()
-              .setCustomId(buildSettingsComponentId('set', 'default_effort', 'preset', userId, modelPanelGeneration))
-              .setPlaceholder(snapshot.language === 'en'
-                ? `Global effort: ${snapshot.codexDefaults.effortConfigured ? snapshot.codexDefaults.effort : '(provider default)'}`
-                : `全局 effort：${snapshot.codexDefaults.effortConfigured ? snapshot.codexDefaults.effort : 'provider 默认'}`)
-              .addOptions(effortOptions),
-          ),
-          new ActionRowBuilder().addComponents(
-            new ButtonBuilder()
-              .setCustomId(buildSettingsComponentId('act', 'default_profile', 'custom', userId))
-              .setLabel(snapshot.language === 'en' ? 'Set profile' : '设置 profile')
-              .setStyle(ButtonStyle.Success),
-            new ButtonBuilder()
-              .setCustomId(buildSettingsComponentId('act', 'default_model', 'custom', userId, modelPanelGeneration))
-              .setLabel(snapshot.language === 'en' ? 'Custom model' : '手写 model')
-              .setStyle(ButtonStyle.Success),
-            new ButtonBuilder()
-              .setCustomId(buildSettingsComponentId('set', 'default_fast', 'default', userId))
-              .setLabel(snapshot.language === 'en' ? 'Use built-in default' : '使用内建默认')
-              .setStyle(defaultFastSelected === 'default' ? ButtonStyle.Primary : ButtonStyle.Secondary),
-            new ButtonBuilder()
-              .setCustomId(buildSettingsComponentId('set', 'default_fast', 'on', userId))
-              .setLabel(snapshot.language === 'en' ? 'On' : '开启')
-              .setStyle(defaultFastSelected === 'on' ? ButtonStyle.Primary : ButtonStyle.Secondary),
-            new ButtonBuilder()
-              .setCustomId(buildSettingsComponentId('set', 'default_fast', 'off', userId))
-              .setLabel(snapshot.language === 'en' ? 'Off' : '关闭')
-              .setStyle(defaultFastSelected === 'off' ? ButtonStyle.Primary : ButtonStyle.Secondary),
-          ),
+          createCommandActionRow([createCommandSelect({
+            id: buildSettingsComponentId('set', 'default_model', 'preset', userId, modelPanelGeneration),
+            placeholder: snapshot.language === 'en'
+              ? `Global model: ${configuredModel || '(provider default)'}`
+              : `全局模型：${configuredModel || 'provider 默认'}`,
+            options: modelOptions,
+          })]),
+          createCommandActionRow([createCommandSelect({
+            id: buildSettingsComponentId('set', 'default_effort', 'preset', userId, modelPanelGeneration),
+            placeholder: snapshot.language === 'en'
+              ? `Global effort: ${snapshot.codexDefaults.effortConfigured ? snapshot.codexDefaults.effort : '(provider default)'}`
+              : `全局 effort：${snapshot.codexDefaults.effortConfigured ? snapshot.codexDefaults.effort : 'provider 默认'}`,
+            options: effortOptions,
+          })]),
+          createCommandActionRow([
+            createCommandButton({
+              id: buildSettingsComponentId('act', 'default_profile', 'custom', userId),
+              label: snapshot.language === 'en' ? 'Set profile' : '设置 profile',
+              style: 'success',
+            }),
+            createCommandButton({
+              id: buildSettingsComponentId('act', 'default_model', 'custom', userId, modelPanelGeneration),
+              label: snapshot.language === 'en' ? 'Custom model' : '手写 model',
+              style: 'success',
+            }),
+            createCommandButton({
+              id: buildSettingsComponentId('set', 'default_fast', 'default', userId),
+              label: snapshot.language === 'en' ? 'Use built-in default' : '使用内建默认',
+              style: defaultFastSelected === 'default' ? 'primary' : 'secondary',
+            }),
+            createCommandButton({
+              id: buildSettingsComponentId('set', 'default_fast', 'on', userId),
+              label: snapshot.language === 'en' ? 'On' : '开启',
+              style: defaultFastSelected === 'on' ? 'primary' : 'secondary',
+            }),
+            createCommandButton({
+              id: buildSettingsComponentId('set', 'default_fast', 'off', userId),
+              label: snapshot.language === 'en' ? 'Off' : '关闭',
+              style: defaultFastSelected === 'off' ? 'primary' : 'secondary',
+            }),
+          ]),
         ];
       }
 
@@ -719,49 +740,28 @@ export function createSettingsPanel({
           ? (snapshot.language === 'en' ? 'Follow parent/global' : '跟随父频道/全局')
           : (snapshot.language === 'en' ? 'Follow global' : '跟随全局');
         return [
-          new ActionRowBuilder().addComponents(
-            new ButtonBuilder()
-              .setCustomId(buildSettingsComponentId('set', 'profile', 'follow', userId))
-              .setLabel(followLabel)
-              .setStyle(selected === 'follow' ? ButtonStyle.Primary : ButtonStyle.Secondary),
-            new ButtonBuilder()
-              .setCustomId(buildSettingsComponentId('act', 'profile', 'custom', userId))
-              .setLabel(snapshot.language === 'en' ? 'Set custom profile' : '设置自定义 profile')
-              .setStyle(ButtonStyle.Success),
-            new ButtonBuilder()
-              .setCustomId(buildSettingsComponentId('act', 'profile', 'clear', userId))
-              .setLabel(snapshot.language === 'en' ? 'Use provider default' : '使用 provider 默认')
-              .setStyle(!snapshot.codexProfile.isExplicit ? ButtonStyle.Primary : ButtonStyle.Secondary),
-          ),
+          createCommandActionRow([
+            createCommandButton({ id: buildSettingsComponentId('set', 'profile', 'follow', userId), label: followLabel, style: selected === 'follow' ? 'primary' : 'secondary' }),
+            createCommandButton({ id: buildSettingsComponentId('act', 'profile', 'custom', userId), label: snapshot.language === 'en' ? 'Set custom profile' : '设置自定义 profile', style: 'success' }),
+            createCommandButton({ id: buildSettingsComponentId('act', 'profile', 'clear', userId), label: snapshot.language === 'en' ? 'Use provider default' : '使用 provider 默认', style: !snapshot.codexProfile.isExplicit ? 'primary' : 'secondary' }),
+          ]),
         ];
       }
 
       case 'language':
         return [
-          new ActionRowBuilder().addComponents(
-            new ButtonBuilder()
-              .setCustomId(buildSettingsComponentId('set', 'language', 'zh', userId))
-              .setLabel('中文')
-              .setStyle(snapshot.language === 'zh' ? ButtonStyle.Primary : ButtonStyle.Secondary),
-            new ButtonBuilder()
-              .setCustomId(buildSettingsComponentId('set', 'language', 'en', userId))
-              .setLabel('English')
-              .setStyle(snapshot.language === 'en' ? ButtonStyle.Primary : ButtonStyle.Secondary),
-          ),
+          createCommandActionRow([
+            createCommandButton({ id: buildSettingsComponentId('set', 'language', 'zh', userId), label: '中文', style: snapshot.language === 'zh' ? 'primary' : 'secondary' }),
+            createCommandButton({ id: buildSettingsComponentId('set', 'language', 'en', userId), label: 'English', style: snapshot.language === 'en' ? 'primary' : 'secondary' }),
+          ]),
         ];
 
       case 'mode':
         return [
-          new ActionRowBuilder().addComponents(
-            new ButtonBuilder()
-              .setCustomId(buildSettingsComponentId('set', 'mode', 'safe', userId))
-              .setLabel('safe')
-              .setStyle(session?.mode === 'safe' ? ButtonStyle.Primary : ButtonStyle.Secondary),
-            new ButtonBuilder()
-              .setCustomId(buildSettingsComponentId('set', 'mode', 'dangerous', userId))
-              .setLabel('dangerous')
-              .setStyle(session?.mode === 'dangerous' ? ButtonStyle.Primary : ButtonStyle.Secondary),
-          ),
+          createCommandActionRow([
+            createCommandButton({ id: buildSettingsComponentId('set', 'mode', 'safe', userId), label: 'safe', style: session?.mode === 'safe' ? 'primary' : 'secondary' }),
+            createCommandButton({ id: buildSettingsComponentId('set', 'mode', 'dangerous', userId), label: 'dangerous', style: session?.mode === 'dangerous' ? 'primary' : 'secondary' }),
+          ]),
         ];
 
       case 'fast': {
@@ -772,20 +772,11 @@ export function createSettingsPanel({
           ? (snapshot.language === 'en' ? 'Follow parent/global' : '跟随父频道/全局')
           : (snapshot.language === 'en' ? 'Follow global' : '跟随全局');
         return [
-          new ActionRowBuilder().addComponents(
-            new ButtonBuilder()
-              .setCustomId(buildSettingsComponentId('set', 'fast', 'follow', userId))
-              .setLabel(followLabel)
-              .setStyle(selected === 'follow' ? ButtonStyle.Primary : ButtonStyle.Secondary),
-            new ButtonBuilder()
-              .setCustomId(buildSettingsComponentId('set', 'fast', 'on', userId))
-              .setLabel(snapshot.language === 'en' ? 'On' : '开启')
-              .setStyle(selected === 'on' ? ButtonStyle.Primary : ButtonStyle.Secondary),
-            new ButtonBuilder()
-              .setCustomId(buildSettingsComponentId('set', 'fast', 'off', userId))
-              .setLabel(snapshot.language === 'en' ? 'Off' : '关闭')
-              .setStyle(selected === 'off' ? ButtonStyle.Primary : ButtonStyle.Secondary),
-          ),
+          createCommandActionRow([
+            createCommandButton({ id: buildSettingsComponentId('set', 'fast', 'follow', userId), label: followLabel, style: selected === 'follow' ? 'primary' : 'secondary' }),
+            createCommandButton({ id: buildSettingsComponentId('set', 'fast', 'on', userId), label: snapshot.language === 'en' ? 'On' : '开启', style: selected === 'on' ? 'primary' : 'secondary' }),
+            createCommandButton({ id: buildSettingsComponentId('set', 'fast', 'off', userId), label: snapshot.language === 'en' ? 'Off' : '关闭', style: selected === 'off' ? 'primary' : 'secondary' }),
+          ]),
         ];
       }
 
@@ -801,50 +792,31 @@ export function createSettingsPanel({
           : (snapshot.language === 'en' ? 'Follow default' : '跟随默认');
         const steerDisabled = !snapshot.busyPromptMode.canSteer;
         return [
-          new ActionRowBuilder().addComponents(
-            new ButtonBuilder()
-              .setCustomId(buildSettingsComponentId('set', 'runtime', 'follow', userId))
-              .setLabel(followLabel)
-              .setStyle(selected === 'follow' ? ButtonStyle.Primary : ButtonStyle.Secondary),
-            new ButtonBuilder()
-              .setCustomId(buildSettingsComponentId('set', 'runtime', 'normal', userId))
-              .setLabel('exec')
-              .setStyle(selected === 'normal' ? ButtonStyle.Primary : ButtonStyle.Secondary),
-            new ButtonBuilder()
-              .setCustomId(buildSettingsComponentId('set', 'runtime', 'long', userId))
-              .setLabel('long')
-              .setStyle(selected === 'long' ? ButtonStyle.Primary : ButtonStyle.Secondary)
-              .setDisabled(!snapshot.runtimeMode.supported),
-          ),
-          new ActionRowBuilder().addComponents(
-            new ButtonBuilder()
-              .setCustomId(buildSettingsComponentId('set', 'busy_prompt', 'follow', userId))
-              .setLabel(followLabel)
-              .setStyle(busySelected === 'follow' ? ButtonStyle.Primary : ButtonStyle.Secondary),
-            new ButtonBuilder()
-              .setCustomId(buildSettingsComponentId('set', 'busy_prompt', 'queue', userId))
-              .setLabel(snapshot.language === 'en' ? 'queue' : '排队')
-              .setStyle(busySelected === 'queue' ? ButtonStyle.Primary : ButtonStyle.Secondary),
-            new ButtonBuilder()
-              .setCustomId(buildSettingsComponentId('set', 'busy_prompt', 'steer', userId))
-              .setLabel(snapshot.language === 'en' ? 'steer' : 'steer')
-              .setStyle(busySelected === 'steer_if_possible' ? ButtonStyle.Primary : ButtonStyle.Secondary)
-              .setDisabled(steerDisabled),
-          ),
+          createCommandActionRow([
+            createCommandButton({ id: buildSettingsComponentId('set', 'runtime', 'follow', userId), label: followLabel, style: selected === 'follow' ? 'primary' : 'secondary' }),
+            createCommandButton({ id: buildSettingsComponentId('set', 'runtime', 'normal', userId), label: 'exec', style: selected === 'normal' ? 'primary' : 'secondary' }),
+            createCommandButton({ id: buildSettingsComponentId('set', 'runtime', 'long', userId), label: 'long', style: selected === 'long' ? 'primary' : 'secondary', disabled: !snapshot.runtimeMode.supported }),
+          ]),
+          createCommandActionRow([
+            createCommandButton({ id: buildSettingsComponentId('set', 'busy_prompt', 'follow', userId), label: followLabel, style: busySelected === 'follow' ? 'primary' : 'secondary' }),
+            createCommandButton({ id: buildSettingsComponentId('set', 'busy_prompt', 'queue', userId), label: snapshot.language === 'en' ? 'queue' : '排队', style: busySelected === 'queue' ? 'primary' : 'secondary' }),
+            createCommandButton({ id: buildSettingsComponentId('set', 'busy_prompt', 'steer', userId), label: 'steer', style: busySelected === 'steer_if_possible' ? 'primary' : 'secondary', disabled: steerDisabled }),
+          ]),
         ];
       }
 
       case 'effort': {
         const values = [...snapshot.effortLevels, 'default'];
-        return chunk(values, 5).map((rowValues) => new ActionRowBuilder().addComponents(
-          ...rowValues.map((value) => {
+        return chunk(values, 5).map((rowValues) => createCommandActionRow(
+          rowValues.map((value) => {
             const selected = value === 'default'
               ? !session?.effort
               : session?.effort === value;
-            return new ButtonBuilder()
-              .setCustomId(buildSettingsComponentId('set', 'effort', value, userId))
-              .setLabel(value)
-              .setStyle(selected ? ButtonStyle.Primary : ButtonStyle.Secondary);
+            return createCommandButton({
+              id: buildSettingsComponentId('set', 'effort', value, userId),
+              label: value,
+              style: selected ? 'primary' : 'secondary',
+            });
           }),
         ));
       }
@@ -854,30 +826,23 @@ export function createSettingsPanel({
         const values = ['follow', ...compactCapabilities.strategies];
         const thresholdUsesDefault = session?.compactThresholdTokens === null || session?.compactThresholdTokens === undefined;
         return [
-          new ActionRowBuilder().addComponents(
-            ...values.map((value) => {
+          createCommandActionRow(values.map((value) => {
               const selected = value === 'follow'
                 ? !session?.compactStrategy
                 : session?.compactStrategy === value;
               const label = value === 'follow'
                 ? (snapshot.language === 'en' ? 'Follow default' : '跟随默认')
                 : value;
-              return new ButtonBuilder()
-                .setCustomId(buildSettingsComponentId('set', 'compact', value, userId))
-                .setLabel(label)
-                .setStyle(selected ? ButtonStyle.Primary : ButtonStyle.Secondary);
-            }),
-          ),
-          new ActionRowBuilder().addComponents(
-            new ButtonBuilder()
-              .setCustomId(buildSettingsComponentId('act', 'compact_threshold', 'custom', userId))
-              .setLabel(snapshot.language === 'en' ? 'Set token limit' : '设置阈值')
-              .setStyle(ButtonStyle.Success),
-            new ButtonBuilder()
-              .setCustomId(buildSettingsComponentId('act', 'compact_threshold', 'default', userId))
-              .setLabel(snapshot.language === 'en' ? 'Follow default limit' : '跟随默认阈值')
-              .setStyle(thresholdUsesDefault ? ButtonStyle.Primary : ButtonStyle.Secondary),
-          ),
+              return createCommandButton({
+                id: buildSettingsComponentId('set', 'compact', value, userId),
+                label,
+                style: selected ? 'primary' : 'secondary',
+              });
+            })),
+          createCommandActionRow([
+            createCommandButton({ id: buildSettingsComponentId('act', 'compact_threshold', 'custom', userId), label: snapshot.language === 'en' ? 'Set token limit' : '设置阈值', style: 'success' }),
+            createCommandButton({ id: buildSettingsComponentId('act', 'compact_threshold', 'default', userId), label: snapshot.language === 'en' ? 'Follow default limit' : '跟随默认阈值', style: thresholdUsesDefault ? 'primary' : 'secondary' }),
+          ]),
         ];
       }
 
@@ -890,22 +855,19 @@ export function createSettingsPanel({
           : (snapshot.language === 'en' ? 'Follow global' : '跟随全局');
         const replyModes = ['card_mention', 'stream_mention', 'card_only', 'stream_only'];
         return [
-          new ActionRowBuilder().addComponents(
-            new ButtonBuilder()
-              .setCustomId(buildSettingsComponentId('set', 'reply', 'follow', userId))
-              .setLabel(followLabel)
-              .setStyle(currentSelected === 'follow' ? ButtonStyle.Primary : ButtonStyle.Secondary),
-            ...replyModes.map((mode) => new ButtonBuilder()
-              .setCustomId(buildSettingsComponentId('set', 'reply', mode, userId))
-              .setLabel(formatReplyDeliveryButtonLabel(mode, snapshot.language))
-              .setStyle(currentSelected === mode ? ButtonStyle.Primary : ButtonStyle.Secondary)),
-          ),
-          new ActionRowBuilder().addComponents(
-            ...replyModes.map((mode) => new ButtonBuilder()
-              .setCustomId(buildSettingsComponentId('set', 'default_reply', mode, userId))
-              .setLabel(formatReplyDeliveryButtonLabel(mode, snapshot.language))
-              .setStyle(snapshot.replyDefault.mode === mode ? ButtonStyle.Primary : ButtonStyle.Secondary)),
-          ),
+          createCommandActionRow([
+            createCommandButton({ id: buildSettingsComponentId('set', 'reply', 'follow', userId), label: followLabel, style: currentSelected === 'follow' ? 'primary' : 'secondary' }),
+            ...replyModes.map((mode) => createCommandButton({
+              id: buildSettingsComponentId('set', 'reply', mode, userId),
+              label: formatReplyDeliveryButtonLabel(mode, snapshot.language),
+              style: currentSelected === mode ? 'primary' : 'secondary',
+            })),
+          ]),
+          createCommandActionRow(replyModes.map((mode) => createCommandButton({
+            id: buildSettingsComponentId('set', 'default_reply', mode, userId),
+            label: formatReplyDeliveryButtonLabel(mode, snapshot.language),
+            style: snapshot.replyDefault.mode === mode ? 'primary' : 'secondary',
+          }))),
         ];
       }
 
@@ -914,17 +876,10 @@ export function createSettingsPanel({
 
       case 'workspace':
         return [
-          new ActionRowBuilder().addComponents(
-            new ButtonBuilder()
-              .setCustomId(buildSettingsComponentId('act', 'workspace', 'browse', userId))
-              .setLabel(snapshot.language === 'en' ? 'Browse workspace' : '浏览 workspace')
-              .setStyle(ButtonStyle.Secondary),
-            new ButtonBuilder()
-              .setCustomId(buildSettingsComponentId('act', 'workspace', 'clear', userId))
-              .setLabel(snapshot.language === 'en' ? 'Follow provider default' : '跟随 provider 默认')
-              .setStyle(!session?.workspaceDir ? ButtonStyle.Primary : ButtonStyle.Secondary)
-              .setDisabled(!session?.workspaceDir),
-          ),
+          createCommandActionRow([
+            createCommandButton({ id: buildSettingsComponentId('act', 'workspace', 'browse', userId), label: snapshot.language === 'en' ? 'Browse workspace' : '浏览 workspace' }),
+            createCommandButton({ id: buildSettingsComponentId('act', 'workspace', 'clear', userId), label: snapshot.language === 'en' ? 'Follow provider default' : '跟随 provider 默认', style: !session?.workspaceDir ? 'primary' : 'secondary', disabled: !session?.workspaceDir }),
+          ]),
         ];
 
       default:
@@ -1115,24 +1070,26 @@ function formatOverviewSection(snapshot) {
     return lines.filter(Boolean).join('\n');
   }
 
-  function buildSettingsPayload({ key, session, userId, flags = undefined, activeSection = '', activeDefaultsGroup = 'model', notice = '' } = {}) {
+  function buildSettingsPayload({ key, session, userId, visibility = 'public', activeSection = '', activeDefaultsGroup = 'model', notice = '' } = {}) {
     const section = resolveActiveSection(session, activeSection || resolveDefaultSection(session));
     const snapshot = buildSnapshot(key, session);
     const issuedGeneration = issueModelPanelGeneration(key, userId);
     const modelPanelGeneration = (section === 'model' || section === 'defaults')
       ? issuedGeneration
       : '';
-    const components = [
+    const rows = [
       ...buildSectionNavigation(session, userId, section),
       ...buildSectionControls(key, session, userId, section, snapshot, modelPanelGeneration),
       buildCloseRow(session, userId),
     ];
-    const payload = {
+    return createCommandMessageView({
       content: formatSettingsContent(key, session, section, notice),
-      components,
-    };
-    if (flags !== undefined) payload.flags = flags;
-    return payload;
+      rows,
+      visibility,
+      fallbackText: snapshot.language === 'en'
+        ? 'Interactive settings are unavailable. Use text commands such as `!model`, `!effort`, `!fast`, `!runtime`, `!compact`, `!language`, `!profile`, `!provider`, and `!setdir`.'
+        : '当前平台没有可用的交互式设置控件。请改用 `!model`、`!effort`、`!fast`、`!runtime`、`!compact`、`!language`、`!profile`、`!provider` 和 `!setdir` 等文本命令。',
+    });
   }
 
   function formatModelSettingsContent(key, session, notice = '') {
@@ -1163,153 +1120,178 @@ function formatOverviewSection(snapshot) {
     return lines.filter(Boolean).join('\n');
   }
 
-  function buildModelSettingsPayload({ key, session, userId, flags = undefined, notice = '' } = {}) {
+  function buildModelSettingsPayload({ key, session, userId, visibility = 'public', notice = '' } = {}) {
     const snapshot = buildSnapshot(key, session);
     const generation = issueModelPanelGeneration(key, userId);
     const closeLabel = snapshot.language === 'en' ? 'close' : '关闭';
-    const components = [
+    const rows = [
       ...buildModelControlRows(session, userId, snapshot, { quick: true, generation }),
-      new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-          .setCustomId(buildSettingsComponentId('act', 'quick_model', 'close', userId, generation))
-          .setLabel(closeLabel)
-          .setStyle(ButtonStyle.Danger),
-      ),
+      createCommandActionRow([
+        createCommandButton({
+          id: buildSettingsComponentId('act', 'quick_model', 'close', userId, generation),
+          label: closeLabel,
+          style: 'danger',
+        }),
+      ]),
     ];
-    const payload = {
+    return createCommandMessageView({
       content: formatModelSettingsContent(key, session, notice),
-      components,
-    };
-    if (flags !== undefined) payload.flags = flags;
-    return payload;
+      rows,
+      visibility,
+      fallbackText: snapshot.language === 'en'
+        ? 'Interactive model controls are unavailable. Use `!model <name|default>` and `!effort <level|default>`.'
+        : '当前平台没有可用的模型交互控件。请使用 `!model <名称|default>` 和 `!effort <级别|default>`。',
+    });
   }
 
   function buildModelModal(session, userId, { useGlobalDefault = false, target = '', generation = '' } = {}) {
     const language = normalizeUiLanguage(getSessionLanguage(session) || defaultUiLanguage);
     const defaults = useGlobalDefault ? (getProviderDefaults('codex') || {}) : null;
-    const input = new TextInputBuilder()
-      .setCustomId(MODEL_INPUT_ID)
-      .setLabel(useGlobalDefault
+    const value = useGlobalDefault
+      ? (hasConfiguredCodexDefault(defaults?.model, defaults?.modelConfigured) ? defaults.model : '')
+      : (session?.model || '');
+    const input = createCommandTextInput({
+      id: MODEL_INPUT_ID,
+      label: useGlobalDefault
         ? (language === 'en' ? 'Global model name or default' : '全局模型名或 default')
-        : (language === 'en' ? 'Model name or default' : '模型名或 default'))
-      .setStyle(TextInputStyle.Short)
-      .setPlaceholder(useGlobalDefault
+        : (language === 'en' ? 'Model name or default' : '模型名或 default'),
+      style: 'short',
+      placeholder: useGlobalDefault
         ? formatModelPlaceholder('codex', language)
-        : formatModelPlaceholder(getSessionProvider(session), language))
-      .setRequired(true)
-      .setMaxLength(120);
-    if (useGlobalDefault) {
-      if (hasConfiguredCodexDefault(defaults?.model, defaults?.modelConfigured)) {
-        input.setValue(defaults.model);
-      }
-    } else if (session?.model) {
-      input.setValue(session.model);
-    }
+        : formatModelPlaceholder(getSessionProvider(session), language),
+      value,
+      required: true,
+      maxLength: 120,
+    });
 
-    return new ModalBuilder()
-      .setCustomId(buildSettingsModalId(target || (useGlobalDefault ? 'default_model' : 'model'), userId, generation))
-      .setTitle(useGlobalDefault
+    return createCommandModalView({
+      id: buildSettingsModalId(target || (useGlobalDefault ? 'default_model' : 'model'), userId, generation),
+      title: useGlobalDefault
         ? (language === 'en' ? 'Set global default model' : '设置全局默认 model')
-        : (language === 'en' ? 'Set custom model' : '设置自定义模型'))
-      .addComponents(
-        new ActionRowBuilder().addComponents(input),
-      );
+        : (language === 'en' ? 'Set custom model' : '设置自定义模型'),
+      rows: [createCommandActionRow([input])],
+      fallback: {
+        content: useGlobalDefault
+          ? (language === 'en'
+            ? 'Interactive forms are unavailable. Update the global Codex model in `~/.codex/config.toml`.'
+            : '当前平台不支持交互式表单。请在 `~/.codex/config.toml` 中修改全局 Codex model。')
+          : (language === 'en'
+            ? 'Interactive forms are unavailable. Use `!model <name|default>`.'
+            : '当前平台不支持交互式表单。请使用 `!model <名称|default>`。'),
+        visibility: 'ephemeral',
+      },
+    });
   }
 
   function buildCodexProfileModal(session, userId, { useGlobalDefault = false } = {}) {
     const language = normalizeUiLanguage(getSessionLanguage(session) || defaultUiLanguage);
     const defaults = useGlobalDefault ? getDefaultCodexProfile(session) : null;
-    const input = new TextInputBuilder()
-      .setCustomId(CODEX_PROFILE_INPUT_ID)
-      .setLabel(useGlobalDefault
+    const input = createCommandTextInput({
+      id: CODEX_PROFILE_INPUT_ID,
+      label: useGlobalDefault
         ? (language === 'en' ? 'Global Codex profile or default' : '全局 Codex profile 或 default')
-        : (language === 'en' ? 'Codex profile or default' : 'Codex profile 或 default'))
-      .setStyle(TextInputStyle.Short)
-      .setPlaceholder(useGlobalDefault
+        : (language === 'en' ? 'Codex profile or default' : 'Codex profile 或 default'),
+      style: 'short',
+      placeholder: useGlobalDefault
         ? (language === 'en' ? 'e.g. work, review, default' : '例如 work、review、default')
-        : (language === 'en' ? 'e.g. work, review, default' : '例如 work、review、default'))
-      .setRequired(true)
-      .setMaxLength(120);
-    if (useGlobalDefault) {
-      if (defaults?.profile) input.setValue(defaults.profile);
-    } else if (session?.codexProfile) {
-      input.setValue(session.codexProfile);
-    }
+        : (language === 'en' ? 'e.g. work, review, default' : '例如 work、review、default'),
+      value: useGlobalDefault ? (defaults?.profile || '') : (session?.codexProfile || ''),
+      required: true,
+      maxLength: 120,
+    });
 
-    return new ModalBuilder()
-      .setCustomId(buildSettingsModalId(useGlobalDefault ? 'default_profile' : 'profile', userId))
-      .setTitle(useGlobalDefault
+    return createCommandModalView({
+      id: buildSettingsModalId(useGlobalDefault ? 'default_profile' : 'profile', userId),
+      title: useGlobalDefault
         ? (language === 'en' ? 'Set global Codex profile' : '设置全局 Codex profile')
-        : (language === 'en' ? 'Set Codex profile' : '设置 Codex profile'))
-      .addComponents(
-        new ActionRowBuilder().addComponents(input),
-      );
+        : (language === 'en' ? 'Set Codex profile' : '设置 Codex profile'),
+      rows: [createCommandActionRow([input])],
+      fallback: {
+        content: useGlobalDefault
+          ? (language === 'en'
+            ? 'Interactive forms are unavailable. Update the global Codex profile in `~/.codex/config.toml`.'
+            : '当前平台不支持交互式表单。请在 `~/.codex/config.toml` 中修改全局 Codex profile。')
+          : (language === 'en'
+            ? 'Interactive forms are unavailable. Choose a preset profile from the settings panel or update the channel configuration from a platform with form support.'
+            : '当前平台不支持交互式表单。请在设置面板中选择预设 profile，或从支持表单的平台修改当前频道配置。'),
+        visibility: 'ephemeral',
+      },
+    });
   }
 
   function buildCompactThresholdModal(session, userId) {
     const language = normalizeUiLanguage(getSessionLanguage(session) || defaultUiLanguage);
-    const input = new TextInputBuilder()
-      .setCustomId(COMPACT_THRESHOLD_INPUT_ID)
-      .setLabel(language === 'en' ? 'Compact token limit or default' : 'Compact token 阈值或 default')
-      .setStyle(TextInputStyle.Short)
-      .setPlaceholder(language === 'en' ? 'e.g. 272000 or default' : '例如 272000 或 default')
-      .setRequired(true)
-      .setMaxLength(20);
-    if (session?.compactThresholdTokens !== null && session?.compactThresholdTokens !== undefined) {
-      input.setValue(String(session.compactThresholdTokens));
-    }
+    const input = createCommandTextInput({
+      id: COMPACT_THRESHOLD_INPUT_ID,
+      label: language === 'en' ? 'Compact token limit or default' : 'Compact token 阈值或 default',
+      style: 'short',
+      placeholder: language === 'en' ? 'e.g. 272000 or default' : '例如 272000 或 default',
+      value: session?.compactThresholdTokens !== null && session?.compactThresholdTokens !== undefined
+        ? String(session.compactThresholdTokens)
+        : '',
+      required: true,
+      maxLength: 20,
+    });
 
-    return new ModalBuilder()
-      .setCustomId(buildSettingsModalId('compact_threshold', userId))
-      .setTitle(language === 'en' ? 'Set compact token limit' : '设置 compact token 阈值')
-      .addComponents(
-        new ActionRowBuilder().addComponents(input),
-      );
+    return createCommandModalView({
+      id: buildSettingsModalId('compact_threshold', userId),
+      title: language === 'en' ? 'Set compact token limit' : '设置 compact token 阈值',
+      rows: [createCommandActionRow([input])],
+      fallback: {
+        content: language === 'en'
+          ? 'Interactive forms are unavailable. Use `!compact token_limit <positive-integer|default>`.'
+          : '当前平台不支持交互式表单。请使用 `!compact token_limit <正整数|default>`。',
+        visibility: 'ephemeral',
+      },
+    });
   }
 
   async function handleSettingsPanelInteraction(interaction) {
-    const parsed = parseSettingsComponentId(interaction.customId);
+    const parsed = parseSettingsComponentId(getInboundInteractionComponentId(interaction));
     if (!parsed) return false;
 
-    const key = String(interaction.channelId || '').trim();
-    const session = key ? getSession(key, { channel: interaction.channel || null }) : null;
+    const key = String(interaction?.conversation?.id || '').trim();
+    const channel = getInboundInteractionChannel(interaction);
+    const userId = getInboundInteractionActorId(interaction);
+    const values = getInboundInteractionValues(interaction);
+    const session = key ? getSession(key, { conversation: interaction?.conversation || null }) : null;
     const language = normalizeUiLanguage(getSessionLanguage(session) || defaultUiLanguage);
 
     if (!key || !session) {
-      await interaction.reply({
+      await responsePort.respond(interaction, {
         content: language === 'en' ? '❌ Unable to load channel settings.' : '❌ 无法读取当前频道设置。',
-        flags: 64,
+        visibility: 'ephemeral',
       });
       return true;
     }
 
-    if (parsed.userId !== interaction.user.id) {
-      await interaction.reply({
+    if (parsed.userId !== userId) {
+      await responsePort.respond(interaction, {
         content: language === 'en' ? '⛔ This settings panel belongs to another user.' : '⛔ 这个设置面板属于其他用户。',
-        flags: 64,
+        visibility: 'ephemeral',
       });
       return true;
     }
 
     if (isModelPanelTarget(parsed.target) && !isCurrentModelPanelGeneration(key, parsed.userId, parsed.generation)) {
       const isGlobalDefault = parsed.target === 'default_model' || parsed.target === 'default_effort';
-      await interaction.reply({
+      await responsePort.respond(interaction, {
         content: language === 'en'
           ? `❌ This ${isGlobalDefault ? 'settings' : 'model'} panel has expired. Open /${isGlobalDefault ? 'settings' : 'model'} again.`
           : `❌ 这个${isGlobalDefault ? '设置' : '模型'}面板已过期，请重新打开 /${isGlobalDefault ? 'settings' : 'model'}。`,
-        flags: 64,
+        visibility: 'ephemeral',
       });
       return true;
     }
 
     if (parsed.kind === 'nav') {
       const nextSection = parsed.target === 'section'
-        ? normalizeSection(interaction.values?.[0] || '')
+        ? normalizeSection(values[0] || '')
         : (parsed.target === 'defaults_group' ? 'defaults' : parsed.target);
-      await interaction.update(buildSettingsPayload({
+      await responsePort.update(interaction, buildSettingsPayload({
         key,
         session,
-        userId: interaction.user.id,
+        userId,
         activeSection: nextSection,
       }));
       return true;
@@ -1317,30 +1299,28 @@ function formatOverviewSection(snapshot) {
 
     if (parsed.kind === 'act') {
       if (parsed.target === 'panel' && parsed.value === 'close') {
-        issueModelPanelGeneration(key, interaction.user.id);
-        await interaction.update({
+        issueModelPanelGeneration(key, userId);
+        await responsePort.update(interaction, createCommandMessageView({
           content: language === 'en' ? '⚙️ Settings panel closed.' : '⚙️ 设置面板已关闭。',
-          components: [],
-        });
+        }));
         return true;
       }
 
       if (parsed.target === 'quick_model' && parsed.value === 'close') {
-        issueModelPanelGeneration(key, interaction.user.id);
-        await interaction.update({
+        issueModelPanelGeneration(key, userId);
+        await responsePort.update(interaction, createCommandMessageView({
           content: language === 'en' ? 'Model panel closed.' : '模型面板已关闭。',
-          components: [],
-        });
+        }));
         return true;
       }
 
       if (parsed.target === 'model' && parsed.value === 'custom') {
-        await interaction.showModal(buildModelModal(session, interaction.user.id, { generation: parsed.generation }));
+        await responsePort.showModal(interaction, buildModelModal(session, userId, { generation: parsed.generation }));
         return true;
       }
 
       if (parsed.target === 'quick_model' && parsed.value === 'custom') {
-        await interaction.showModal(buildModelModal(session, interaction.user.id, {
+        await responsePort.showModal(interaction, buildModelModal(session, userId, {
           target: 'quick_model',
           generation: parsed.generation,
         }));
@@ -1348,12 +1328,12 @@ function formatOverviewSection(snapshot) {
       }
 
       if (parsed.target === 'profile' && parsed.value === 'custom') {
-        await interaction.showModal(buildCodexProfileModal(session, interaction.user.id));
+        await responsePort.showModal(interaction, buildCodexProfileModal(session, userId));
         return true;
       }
 
       if (parsed.target === 'default_model' && parsed.value === 'custom') {
-        await interaction.showModal(buildModelModal(session, interaction.user.id, {
+        await responsePort.showModal(interaction, buildModelModal(session, userId, {
           useGlobalDefault: true,
           generation: parsed.generation,
         }));
@@ -1361,30 +1341,30 @@ function formatOverviewSection(snapshot) {
       }
 
       if (parsed.target === 'default_profile' && parsed.value === 'custom') {
-        await interaction.showModal(buildCodexProfileModal(session, interaction.user.id, { useGlobalDefault: true }));
+        await responsePort.showModal(interaction, buildCodexProfileModal(session, userId, { useGlobalDefault: true }));
         return true;
       }
 
       if (parsed.target === 'compact_threshold' && parsed.value === 'custom') {
-        await interaction.showModal(buildCompactThresholdModal(session, interaction.user.id));
+        await responsePort.showModal(interaction, buildCompactThresholdModal(session, userId));
         return true;
       }
 
       if (parsed.target === 'model' && parsed.value === 'default') {
         const conflict = findModelEffortConflict(key, session, 'default');
         if (conflict) {
-          await interaction.reply({
+          await responsePort.respond(interaction, {
             content: formatUnsupportedModelEffort(conflict.model, conflict.effort, language, { current: true }),
-            flags: 64,
+            visibility: 'ephemeral',
           });
           return true;
         }
         commandActions.setModel?.(session, 'default');
         closeRuntimeForKey(key);
-        await interaction.update(buildSettingsPayload({
+        await responsePort.update(interaction, buildSettingsPayload({
           key,
           session,
-          userId: interaction.user.id,
+          userId,
           activeSection: 'model',
           notice: language === 'en' ? '✅ Model now follows the provider default.' : '✅ 当前 model 已改为跟随 provider 默认。',
         }));
@@ -1394,18 +1374,18 @@ function formatOverviewSection(snapshot) {
       if (parsed.target === 'quick_model' && parsed.value === 'default') {
         const conflict = findModelEffortConflict(key, session, 'default');
         if (conflict) {
-          await interaction.reply({
+          await responsePort.respond(interaction, {
             content: formatUnsupportedModelEffort(conflict.model, conflict.effort, language, { current: true }),
-            flags: 64,
+            visibility: 'ephemeral',
           });
           return true;
         }
         commandActions.setModel?.(session, 'default');
         closeRuntimeForKey(key);
-        await interaction.update(buildModelSettingsPayload({
+        await responsePort.update(interaction, buildModelSettingsPayload({
           key,
           session,
-          userId: interaction.user.id,
+          userId,
           notice: language === 'en' ? 'Model now follows the provider default.' : '当前 model 已改为跟随 provider 默认。',
         }));
         return true;
@@ -1414,17 +1394,17 @@ function formatOverviewSection(snapshot) {
       if (parsed.target === 'default_model' && parsed.value === 'default') {
         const conflict = findGlobalModelEffortConflict(key, session, 'default');
         if (conflict) {
-          await interaction.reply({
+          await responsePort.respond(interaction, {
             content: formatUnsupportedModelEffort(conflict.model, conflict.effort, language, { current: true }),
-            flags: 64,
+            visibility: 'ephemeral',
           });
           return true;
         }
         commandActions.setGlobalModelDefault?.(session, 'default');
-        await interaction.update(buildSettingsPayload({
+        await responsePort.update(interaction, buildSettingsPayload({
           key,
           session,
-          userId: interaction.user.id,
+          userId,
           activeSection: 'defaults',
           activeDefaultsGroup: 'model',
           notice: language === 'en'
@@ -1437,10 +1417,10 @@ function formatOverviewSection(snapshot) {
       if (parsed.target === 'profile' && parsed.value === 'clear') {
         commandActions.setCodexProfile?.(session, 'default');
         closeRuntimeForKey(key);
-        await interaction.update(buildSettingsPayload({
+        await responsePort.update(interaction, buildSettingsPayload({
           key,
           session,
-          userId: interaction.user.id,
+          userId,
           activeSection: 'profile',
           notice: language === 'en' ? '✅ Codex profile now follows the provider default.' : '✅ 当前 Codex profile 已改为跟随 provider 默认。',
         }));
@@ -1449,10 +1429,10 @@ function formatOverviewSection(snapshot) {
 
       if (parsed.target === 'default_profile' && parsed.value === 'default') {
         commandActions.setGlobalCodexProfileDefault?.(session, 'default');
-        await interaction.update(buildSettingsPayload({
+        await responsePort.update(interaction, buildSettingsPayload({
           key,
           session,
-          userId: interaction.user.id,
+          userId,
           activeSection: 'defaults',
           activeDefaultsGroup: 'profile',
           notice: language === 'en'
@@ -1465,10 +1445,10 @@ function formatOverviewSection(snapshot) {
       if (parsed.target === 'compact_threshold' && parsed.value === 'default') {
         commandActions.applyCompactConfig?.(session, { type: 'set_threshold', tokens: null });
         closeRuntimeForKey(key);
-        await interaction.update(buildSettingsPayload({
+        await responsePort.update(interaction, buildSettingsPayload({
           key,
           session,
-          userId: interaction.user.id,
+          userId,
           activeSection: 'compact',
           notice: language === 'en' ? '✅ Compact token limit now follows the default.' : '✅ compact 阈值已改为跟随默认。',
         }));
@@ -1477,18 +1457,18 @@ function formatOverviewSection(snapshot) {
 
       if (parsed.target === 'workspace' && parsed.value === 'browse') {
         if (typeof openWorkspaceBrowser !== 'function') {
-          await interaction.reply({
+          await responsePort.respond(interaction, {
             content: language === 'en' ? '❌ Workspace browser is unavailable here.' : '❌ 当前环境没有可用的 workspace 浏览器。',
-            flags: 64,
+            visibility: 'ephemeral',
           });
           return true;
         }
-        await interaction.reply(openWorkspaceBrowser({
+        await responsePort.respond(interaction, openWorkspaceBrowser({
           key,
           session,
-          userId: interaction.user.id,
+          userId,
           mode: 'thread',
-          flags: 64,
+          visibility: 'ephemeral',
         }));
         return true;
       }
@@ -1496,10 +1476,10 @@ function formatOverviewSection(snapshot) {
       if (parsed.target === 'workspace' && parsed.value === 'clear') {
         const result = commandActions.clearWorkspaceDir?.(session, key);
         closeRuntimeForKey(key);
-        await interaction.update(buildSettingsPayload({
+        await responsePort.update(interaction, buildSettingsPayload({
           key,
           session,
-          userId: interaction.user.id,
+          userId,
           activeSection: 'workspace',
           notice: result
             ? (language === 'en' ? '✅ This channel now follows the provider default workspace.' : '✅ 当前频道已改为跟随 provider 默认 workspace。')
@@ -1514,38 +1494,38 @@ function formatOverviewSection(snapshot) {
         ? resolveReplyDeliverySetting(session).mode
         : null;
       if ((parsed.target === 'model' || parsed.target === 'quick_model') && parsed.value === 'preset') {
-        const selectedModel = String(interaction.values?.[0] || '').trim();
+        const selectedModel = String(values[0] || '').trim();
         if (!selectedModel) {
-          await interaction.reply({
+          await responsePort.respond(interaction, {
             content: language === 'en' ? '❌ No model selected.' : '❌ 没有选择模型。',
-            flags: 64,
+            visibility: 'ephemeral',
           });
           return true;
         }
         const conflict = findModelEffortConflict(key, session, selectedModel);
         if (conflict) {
-          await interaction.reply({
+          await responsePort.respond(interaction, {
             content: formatUnsupportedModelEffort(conflict.model, conflict.effort, language, { current: true }),
-            flags: 64,
+            visibility: 'ephemeral',
           });
           return true;
         }
         commandActions.setModel?.(session, selectedModel);
         closeRuntimeForKey(key);
       } else if (parsed.target === 'default_model' && parsed.value === 'preset') {
-        const selectedModel = String(interaction.values?.[0] || '').trim();
+        const selectedModel = String(values[0] || '').trim();
         if (!selectedModel) {
-          await interaction.reply({
+          await responsePort.respond(interaction, {
             content: language === 'en' ? '❌ No model selected.' : '❌ 没有选择模型。',
-            flags: 64,
+            visibility: 'ephemeral',
           });
           return true;
         }
         const conflict = findGlobalModelEffortConflict(key, session, selectedModel);
         if (conflict) {
-          await interaction.reply({
+          await responsePort.respond(interaction, {
             content: formatUnsupportedModelEffort(conflict.model, conflict.effort, language, { current: true }),
-            flags: 64,
+            visibility: 'ephemeral',
           });
           return true;
         }
@@ -1575,19 +1555,19 @@ function formatOverviewSection(snapshot) {
         const next = parsed.value === 'follow' ? null : parsed.value;
         commandActions.setBusyPromptMode?.(session, next);
       } else if (parsed.target === 'default_effort' && parsed.value === 'preset') {
-        const selectedEffort = String(interaction.values?.[0] || '').trim().toLowerCase();
+        const selectedEffort = String(values[0] || '').trim().toLowerCase();
         if (!selectedEffort) {
-          await interaction.reply({
+          await responsePort.respond(interaction, {
             content: language === 'en' ? '❌ No effort selected.' : '❌ 没有选择 effort。',
-            flags: 64,
+            visibility: 'ephemeral',
           });
           return true;
         }
         const conflict = findGlobalEffortConflict(key, session, selectedEffort);
         if (conflict) {
-          await interaction.reply({
+          await responsePort.respond(interaction, {
             content: formatUnsupportedModelEffort(conflict.model, conflict.effort, language),
-            flags: 64,
+            visibility: 'ephemeral',
           });
           return true;
         }
@@ -1595,9 +1575,9 @@ function formatOverviewSection(snapshot) {
       } else if (parsed.target === 'effort' || parsed.target === 'model_effort' || parsed.target === 'quick_model_effort') {
         const conflict = findEffortConflict(key, session, parsed.value);
         if (conflict) {
-          await interaction.reply({
+          await responsePort.respond(interaction, {
             content: formatUnsupportedModelEffort(conflict.model, conflict.effort, language),
-            flags: 64,
+            visibility: 'ephemeral',
           });
           return true;
         }
@@ -1620,18 +1600,18 @@ function formatOverviewSection(snapshot) {
       }
 
       if (parsed.target === 'quick_model' || parsed.target === 'quick_model_effort') {
-        await interaction.update(buildModelSettingsPayload({
+        await responsePort.update(interaction, buildModelSettingsPayload({
           key,
           session,
-          userId: interaction.user.id,
+          userId,
         }));
         return true;
       }
 
-      await interaction.update(buildSettingsPayload({
+      await responsePort.update(interaction, buildSettingsPayload({
         key,
         session,
-        userId: interaction.user.id,
+        userId,
         activeSection: parsed.target === 'default_reply'
           ? 'reply'
           : (parsed.target === 'busy_prompt')
@@ -1652,111 +1632,113 @@ function formatOverviewSection(snapshot) {
       return true;
     }
 
-    await interaction.reply({
+    await responsePort.respond(interaction, {
       content: language === 'en' ? '❌ Unsupported settings action.' : '❌ 不支持这个设置操作。',
-      flags: 64,
+      visibility: 'ephemeral',
     });
     return true;
   }
 
   async function handleSettingsPanelModalSubmit(interaction) {
-    const parsed = parseSettingsModalId(interaction.customId);
+    const parsed = parseSettingsModalId(interaction?.modal?.id);
     if (!parsed) return false;
 
-    const key = String(interaction.channelId || '').trim();
-    const session = key ? getSession(key, { channel: interaction.channel || null }) : null;
+    const key = String(interaction?.conversation?.id || '').trim();
+    const channel = getInboundInteractionChannel(interaction);
+    const userId = getInboundInteractionActorId(interaction);
+    const session = key ? getSession(key, { conversation: interaction?.conversation || null }) : null;
     const language = normalizeUiLanguage(getSessionLanguage(session) || defaultUiLanguage);
 
     if (!key || !session) {
-      await interaction.reply({
+      await responsePort.respond(interaction, {
         content: language === 'en' ? '❌ Unable to load channel settings.' : '❌ 无法读取当前频道设置。',
-        flags: 64,
+        visibility: 'ephemeral',
       });
       return true;
     }
 
-    if (parsed.userId !== interaction.user.id) {
-      await interaction.reply({
+    if (parsed.userId !== userId) {
+      await responsePort.respond(interaction, {
         content: language === 'en' ? '⛔ This settings panel belongs to another user.' : '⛔ 这个设置面板属于其他用户。',
-        flags: 64,
+        visibility: 'ephemeral',
       });
       return true;
     }
 
     if (isModelPanelTarget(parsed.target) && !isCurrentModelPanelGeneration(key, parsed.userId, parsed.generation)) {
       const isGlobalDefault = parsed.target === 'default_model' || parsed.target === 'default_effort';
-      await interaction.reply({
+      await responsePort.respond(interaction, {
         content: language === 'en'
           ? `❌ This ${isGlobalDefault ? 'settings' : 'model'} panel has expired. Open /${isGlobalDefault ? 'settings' : 'model'} again.`
           : `❌ 这个${isGlobalDefault ? '设置' : '模型'}面板已过期，请重新打开 /${isGlobalDefault ? 'settings' : 'model'}。`,
-        flags: 64,
+        visibility: 'ephemeral',
       });
       return true;
     }
 
     if (parsed.target === 'model') {
-      const rawValue = String(interaction.fields.getTextInputValue(MODEL_INPUT_ID) || '').trim();
+      const rawValue = getInboundInteractionField(interaction, MODEL_INPUT_ID).trim();
       const conflict = findModelEffortConflict(key, session, rawValue);
       if (conflict) {
-        await interaction.reply({
+        await responsePort.respond(interaction, {
           content: formatUnsupportedModelEffort(conflict.model, conflict.effort, language, { current: true }),
-          flags: 64,
+          visibility: 'ephemeral',
         });
         return true;
       }
       commandActions.setModel?.(session, rawValue);
       closeRuntimeForKey(key);
-      await interaction.reply(buildSettingsPayload({
+      await responsePort.respond(interaction, buildSettingsPayload({
         key,
         session,
-        userId: interaction.user.id,
+        userId,
         activeSection: 'model',
-        flags: 64,
+        visibility: 'ephemeral',
         notice: language === 'en' ? '✅ Model updated. This is the latest settings panel.' : '✅ model 已更新。这是最新的设置面板。',
       }));
       return true;
     }
 
     if (parsed.target === 'quick_model') {
-      const rawValue = String(interaction.fields.getTextInputValue(MODEL_INPUT_ID) || '').trim();
+      const rawValue = getInboundInteractionField(interaction, MODEL_INPUT_ID).trim();
       const conflict = findModelEffortConflict(key, session, rawValue);
       if (conflict) {
-        await interaction.reply({
+        await responsePort.respond(interaction, {
           content: formatUnsupportedModelEffort(conflict.model, conflict.effort, language, { current: true }),
-          flags: 64,
+          visibility: 'ephemeral',
         });
         return true;
       }
       commandActions.setModel?.(session, rawValue);
       closeRuntimeForKey(key);
-      await interaction.reply(buildModelSettingsPayload({
+      await responsePort.respond(interaction, buildModelSettingsPayload({
         key,
         session,
-        userId: interaction.user.id,
-        flags: 64,
+        userId,
+        visibility: 'ephemeral',
         notice: language === 'en' ? 'Model updated.' : 'model 已更新。',
       }));
       return true;
     }
 
     if (parsed.target === 'default_model') {
-      const rawValue = String(interaction.fields.getTextInputValue(MODEL_INPUT_ID) || '').trim();
+      const rawValue = getInboundInteractionField(interaction, MODEL_INPUT_ID).trim();
       const conflict = findGlobalModelEffortConflict(key, session, rawValue);
       if (conflict) {
-        await interaction.reply({
+        await responsePort.respond(interaction, {
           content: formatUnsupportedModelEffort(conflict.model, conflict.effort, language, { current: true }),
-          flags: 64,
+          visibility: 'ephemeral',
         });
         return true;
       }
       commandActions.setGlobalModelDefault?.(session, rawValue);
-      await interaction.reply(buildSettingsPayload({
+      await responsePort.respond(interaction, buildSettingsPayload({
         key,
         session,
-        userId: interaction.user.id,
+        userId,
         activeSection: 'defaults',
         activeDefaultsGroup: 'model',
-        flags: 64,
+        visibility: 'ephemeral',
         notice: language === 'en'
           ? '✅ Global default model updated in `~/.codex/config.toml`.'
           : '✅ 已更新 `~/.codex/config.toml` 里的全局默认 model。',
@@ -1765,30 +1747,30 @@ function formatOverviewSection(snapshot) {
     }
 
     if (parsed.target === 'profile') {
-      const rawValue = String(interaction.fields.getTextInputValue(CODEX_PROFILE_INPUT_ID) || '').trim();
+      const rawValue = getInboundInteractionField(interaction, CODEX_PROFILE_INPUT_ID).trim();
       commandActions.setCodexProfile?.(session, rawValue);
       closeRuntimeForKey(key);
-      await interaction.reply(buildSettingsPayload({
+      await responsePort.respond(interaction, buildSettingsPayload({
         key,
         session,
-        userId: interaction.user.id,
+        userId,
         activeSection: 'profile',
-        flags: 64,
+        visibility: 'ephemeral',
         notice: language === 'en' ? '✅ Codex profile updated. This is the latest settings panel.' : '✅ Codex profile 已更新。这是最新的设置面板。',
       }));
       return true;
     }
 
     if (parsed.target === 'default_profile') {
-      const rawValue = String(interaction.fields.getTextInputValue(CODEX_PROFILE_INPUT_ID) || '').trim();
+      const rawValue = getInboundInteractionField(interaction, CODEX_PROFILE_INPUT_ID).trim();
       commandActions.setGlobalCodexProfileDefault?.(session, rawValue);
-      await interaction.reply(buildSettingsPayload({
+      await responsePort.respond(interaction, buildSettingsPayload({
         key,
         session,
-        userId: interaction.user.id,
+        userId,
         activeSection: 'defaults',
         activeDefaultsGroup: 'profile',
-        flags: 64,
+        visibility: 'ephemeral',
         notice: language === 'en'
           ? '✅ Global default Codex profile updated.'
           : '✅ 已更新全局默认 Codex profile。',
@@ -1797,31 +1779,31 @@ function formatOverviewSection(snapshot) {
     }
 
     if (parsed.target === 'compact_threshold') {
-      const rawValue = String(interaction.fields.getTextInputValue(COMPACT_THRESHOLD_INPUT_ID) || '').trim();
+      const rawValue = getInboundInteractionField(interaction, COMPACT_THRESHOLD_INPUT_ID).trim();
       const parsedCompact = parseCompactConfigAction('token_limit', rawValue);
       if (parsedCompact?.type !== 'set_threshold') {
-        await interaction.reply({
+        await responsePort.respond(interaction, {
           content: language === 'en' ? '❌ Invalid compact token limit. Use a positive integer or `default`.' : '❌ compact 阈值无效。请输入正整数或 `default`。',
-          flags: 64,
+          visibility: 'ephemeral',
         });
         return true;
       }
       commandActions.applyCompactConfig?.(session, parsedCompact);
       closeRuntimeForKey(key);
-      await interaction.reply(buildSettingsPayload({
+      await responsePort.respond(interaction, buildSettingsPayload({
         key,
         session,
-        userId: interaction.user.id,
+        userId,
         activeSection: 'compact',
-        flags: 64,
+        visibility: 'ephemeral',
         notice: language === 'en' ? '✅ Compact token limit updated. This is the latest settings panel.' : '✅ compact 阈值已更新。这是最新的设置面板。',
       }));
       return true;
     }
 
-    await interaction.reply({
+    await responsePort.respond(interaction, {
       content: language === 'en' ? '❌ Unsupported settings modal.' : '❌ 不支持这个设置弹窗。',
-      flags: 64,
+      visibility: 'ephemeral',
     });
     return true;
   }

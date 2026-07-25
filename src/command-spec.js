@@ -3,6 +3,11 @@ import {
   getSupportedReasoningEffortLevels,
   normalizeProvider,
 } from './provider-metadata.js';
+import { createCommandSpec } from './platforms/command-registry.js';
+import {
+  DEFAULT_CONVERSATION_PRESENTATION,
+  assertConversationPresentation,
+} from './platforms/conversation-presentation.js';
 
 const ACTION_BUTTON_COMMAND_NAMES = Object.freeze(['status', 'sessions', 'queue', 'progress', 'new', 'cancel', 'retry']);
 
@@ -162,7 +167,11 @@ function getEffortChoices(botProvider = null) {
   ];
 }
 
-export function buildSlashCommandEntries({ botProvider = null } = {}) {
+export function buildCommandSpecs({
+  botProvider = null,
+  conversationPresentation = DEFAULT_CONVERSATION_PRESENTATION,
+} = {}) {
+  const presentation = assertConversationPresentation(conversationPresentation);
   const lockedProvider = botProvider ? normalizeProvider(botProvider) : null;
   const sessionAliases = getSessionCommandAliases('sessions', lockedProvider);
   const resumeAliases = getSessionCommandAliases('resume', lockedProvider);
@@ -170,6 +179,8 @@ export function buildSlashCommandEntries({ botProvider = null } = {}) {
   const compactKeyChoices = getCompactKeyChoices(lockedProvider);
   const sessionPlural = lockedProvider ? getProviderSessionTerm(lockedProvider, { plural: true }) : 'provider sessions';
   const sessionSingular = lockedProvider ? getProviderSessionTerm(lockedProvider) : 'session';
+  const childConversation = presentation.getTerm('childConversation', 'zh');
+  const childConversationShort = presentation.getTerm('childConversationShort', 'zh');
 
   return [
     {
@@ -197,30 +208,36 @@ export function buildSlashCommandEntries({ botProvider = null } = {}) {
     {
       name: 'setdir',
       description: '设置当前 thread 的工作目录（支持 browse/status/default/clear）',
-      configure(builder) {
-        return builder.addStringOption(o => o.setName('path').setDescription('绝对路径，或 browse/status/default/clear').setRequired(true));
-      },
+      options: [{
+        name: 'path',
+        description: '绝对路径，或 browse/status/default/clear',
+        required: true,
+      }],
     },
     {
       name: 'setdefaultdir',
       description: '设置当前 provider 的默认工作目录（支持 browse/status/clear）',
-      configure(builder) {
-        return builder.addStringOption(o => o.setName('path').setDescription('绝对路径，或 browse/status/clear').setRequired(true));
-      },
+      options: [{
+        name: 'path',
+        description: '绝对路径，或 browse/status/clear',
+        required: true,
+      }],
     },
     !botProvider && {
       name: 'provider',
       description: '切换当前频道使用的 CLI provider',
-      configure(builder) {
-        return builder.addStringOption(o => o.setName('name').setDescription('provider').setRequired(true)
-          .addChoices(
+      options: [{
+        name: 'name',
+        description: 'provider',
+        required: true,
+        choices: [
             { name: 'codex', value: 'codex' },
             { name: 'claude', value: 'claude' },
             { name: 'antigravity', value: 'antigravity' },
             { name: 'zcode', value: 'zcode' },
             { name: 'status', value: 'status' },
-          ));
-      },
+        ],
+      }],
     },
     {
       name: 'model',
@@ -229,123 +246,160 @@ export function buildSlashCommandEntries({ botProvider = null } = {}) {
     (!lockedProvider || lockedProvider === 'codex') && {
       name: 'fast',
       description: '切换 Codex Fast mode（on/off/status/default）',
-      configure(builder) {
-        return builder.addStringOption(o => o.setName('action').setDescription('Fast mode 操作').setRequired(true)
-          .addChoices(
+      options: [{
+        name: 'action',
+        description: 'Fast mode 操作',
+        required: true,
+        choices: [
             { name: 'on', value: 'on' },
             { name: 'off', value: 'off' },
             { name: 'status', value: 'status' },
             { name: 'default', value: 'default' },
-          ));
-      },
+        ],
+      }],
     },
     (!lockedProvider || lockedProvider === 'claude' || lockedProvider === 'codex') && {
       name: 'runtime',
       description: '切换运行时接入方式（exec/long/status/default）',
-      configure(builder) {
-        return builder.addStringOption(o => o.setName('mode').setDescription('runtime mode').setRequired(true)
-          .addChoices(
+      options: [{
+        name: 'mode',
+        description: 'runtime mode',
+        required: true,
+        choices: [
             { name: 'exec', value: 'normal' },
             { name: 'long', value: 'long' },
             { name: 'status', value: 'status' },
             { name: 'default', value: 'default' },
-          ));
-      },
+        ],
+      }],
     },
     effortChoices.length && {
       name: 'effort',
       description: '设置 reasoning effort',
-      configure(builder) {
-        return builder.addStringOption(o => o.setName('level').setDescription('推理力度').setRequired(true)
-          .addChoices(...effortChoices));
-      },
+      options: [{
+        name: 'level',
+        description: '推理力度',
+        required: true,
+        choices: effortChoices,
+      }],
     },
     {
       name: 'compact',
       description: lockedProvider && !getProviderCompactCapabilities(lockedProvider).supportsNativeLimit
         ? '配置上下文压缩（hard/native/off、token_limit、enabled、status）'
         : '配置上下文压缩（hard/native/off、limit、enabled、status）',
-      configure(builder) {
-        return builder
-          .addStringOption(o => o.setName('key').setDescription('配置项').setRequired(true)
-            .addChoices(...compactKeyChoices))
-          .addStringOption(o => o.setName('value').setDescription('值：如 native / 272000 / on / default').setRequired(false));
-      },
+      options: [
+        {
+          name: 'key',
+          description: '配置项',
+          required: true,
+          choices: compactKeyChoices,
+        },
+        {
+          name: 'value',
+          description: '值：如 native / 272000 / on / default',
+          required: false,
+        },
+      ],
     },
     {
       name: 'extra_info',
       aliases: ['extrainfo'],
       description: '配置每条 prompt 的额外信息（开关、内容、token 占用）',
-      configure(builder) {
-        return builder
-          .addStringOption(o => o.setName('key').setDescription('配置项').setRequired(true)
-            .addChoices(
+      options: [
+        {
+          name: 'key',
+          description: '配置项',
+          required: true,
+          choices: [
               { name: 'status', value: 'status' },
               { name: 'on', value: 'on' },
               { name: 'off', value: 'off' },
               { name: 'text', value: 'text' },
               { name: 'default', value: 'default' },
-            ))
-          .addStringOption(o => o.setName('value').setDescription('text 内容；优先用 {thread} {parent}，{msg} 会按消息变化').setRequired(false));
-      },
+          ],
+        },
+        {
+          name: 'value',
+          description: 'text 内容；优先用 {thread} {parent}，{msg} 会按消息变化',
+          required: false,
+        },
+      ],
     },
     {
       name: 'mode',
       description: '执行模式',
-      configure(builder) {
-        return builder.addStringOption(o => o.setName('type').setDescription('模式').setRequired(true)
-          .addChoices(
+      options: [{
+        name: 'type',
+        description: '模式',
+        required: true,
+        choices: [
             { name: 'safe (sandbox + auto-approve)', value: 'safe' },
             { name: 'dangerous (无 sandbox 无审批)', value: 'dangerous' },
-          ));
-      },
+        ],
+      }],
     },
     {
       name: 'name',
       description: lockedProvider ? `给当前 ${sessionSingular} 起个名字，方便识别` : '给当前 session 起个名字，方便识别',
-      configure(builder) {
-        return builder.addStringOption(o => o.setName('label').setDescription('名字，如「cc-hub诊断」「埋点重构」').setRequired(true));
-      },
+      options: [{
+        name: 'label',
+        description: '名字，如「cc-hub诊断」「埋点重构」',
+        required: true,
+      }],
     },
     {
       name: 'resume',
       aliases: resumeAliases,
       description: lockedProvider ? `继承一个已有的 ${sessionSingular}` : '继承一个已有的 session',
       aliasDescriptions: getSessionAliasDescriptions(resumeAliases),
-      configure(builder) {
-        return builder.addStringOption(o => o.setName('session_id').setDescription(
-          lockedProvider ? `${sessionSingular} UUID` : 'provider session UUID',
-        ).setRequired(true));
-      },
+      options: [{
+        name: 'session_id',
+        description: lockedProvider ? `${sessionSingular} UUID` : 'provider session UUID',
+        required: true,
+      }],
     },
     (!lockedProvider || lockedProvider === 'codex' || lockedProvider === 'claude') && {
       name: 'fork',
-      description: '用当前 provider 原生 fork 创建一个新的 Discord thread，可选指定 thread 名',
-      configure(builder) {
-        return builder.addStringOption(o => o.setName('name').setDescription('可选：新 thread 名；留空自动生成').setRequired(false));
-      },
+      description: `用当前 provider 原生 fork 创建一个新的 ${childConversation}，可选指定 ${childConversationShort} 名`,
+      requiredCapabilities: ['threads'],
+      options: [{
+        name: 'name',
+        description: `可选：新 ${childConversationShort} 名；留空自动生成`,
+        required: false,
+      }],
     },
     (!lockedProvider || lockedProvider === 'codex') && {
       name: 'side',
       description: '开启或管理 Codex 临时 side conversation',
-      configure(builder) {
-        return builder
-          .addStringOption(o => o.setName('action').setDescription('side 操作').setRequired(false)
-            .addChoices(
+      requiredCapabilities: ['threads'],
+      options: [
+        {
+          name: 'action',
+          description: 'side 操作',
+          required: false,
+          choices: [
               { name: 'start', value: 'start' },
               { name: 'status', value: 'status' },
               { name: 'close', value: 'close' },
-            ))
-          .addStringOption(o => o.setName('name').setDescription('可选：新 side thread 名').setRequired(false));
-      },
+          ],
+        },
+        {
+          name: 'name',
+          description: `可选：新 side ${childConversationShort} 名`,
+          required: false,
+        },
+      ],
     },
     (!lockedProvider || lockedProvider === 'codex') && {
       name: 'goal',
       description: '管理当前 Codex session 的持久目标；active 时会自动续跑',
-      configure(builder) {
-        return builder
-          .addStringOption(o => o.setName('action').setDescription('goal 操作').setRequired(true)
-            .addChoices(
+      options: [
+        {
+          name: 'action',
+          description: 'goal 操作',
+          required: true,
+          choices: [
               { name: 'status 查当前 goal', value: 'status' },
               { name: 'set 设置 goal', value: 'set' },
               { name: 'pause 标记暂停', value: 'pause' },
@@ -353,10 +407,19 @@ export function buildSlashCommandEntries({ botProvider = null } = {}) {
               { name: 'done 标记完成', value: 'done' },
               { name: 'clear 清除 goal', value: 'clear' },
               { name: 'budget 设置预算', value: 'budget' },
-            ))
-          .addStringOption(o => o.setName('objective').setDescription('set 时填写目标；带附件请用普通消息 !goal').setRequired(false))
-          .addStringOption(o => o.setName('token_budget').setDescription('token 预算，如 120000；clear 清除预算').setRequired(false));
-      },
+          ],
+        },
+        {
+          name: 'objective',
+          description: 'set 时填写目标；带附件请用普通消息 !goal',
+          required: false,
+        },
+        {
+          name: 'token_budget',
+          description: 'token 预算，如 120000；clear 清除预算',
+          required: false,
+        },
+      ],
     },
     {
       name: 'queue',
@@ -365,21 +428,28 @@ export function buildSlashCommandEntries({ botProvider = null } = {}) {
     {
       name: 'upgrade',
       description: '检查或升级 agents-in-discord 项目本体',
-      configure(builder) {
-        return builder
-          .addStringOption(o => o.setName('action').setDescription('升级操作').setRequired(true)
-            .addChoices(
+      options: [
+        {
+          name: 'action',
+          description: '升级操作',
+          required: true,
+          choices: [
               { name: 'status 检查远端版本', value: 'status' },
               { name: 'apply 执行安全升级', value: 'apply' },
               { name: 'mode 设置升级模式', value: 'mode' },
-            ))
-          .addStringOption(o => o.setName('mode').setDescription('mode 可选 off / notify / auto；默认 notify').setRequired(false)
-            .addChoices(
+          ],
+        },
+        {
+          name: 'mode',
+          description: 'mode 可选 off / notify / auto；默认 notify',
+          required: false,
+          choices: [
               { name: 'off 关闭检查', value: 'off' },
               { name: 'notify 只提示', value: 'notify' },
               { name: 'auto 自动升级', value: 'auto' },
-            ));
-      },
+          ],
+        },
+      ],
     },
     {
       name: 'doctor',
@@ -392,46 +462,54 @@ export function buildSlashCommandEntries({ botProvider = null } = {}) {
     {
       name: 'onboarding_config',
       description: '配置 onboarding 开关（当前频道）',
-      configure(builder) {
-        return builder.addStringOption(o => o.setName('action').setDescription('操作').setRequired(true)
-          .addChoices(
+      options: [{
+        name: 'action',
+        description: '操作',
+        required: true,
+        choices: [
             { name: 'on', value: 'on' },
             { name: 'off', value: 'off' },
             { name: 'status', value: 'status' },
-          ));
-      },
+        ],
+      }],
     },
     {
       name: 'language',
       description: '设置消息提示语言（中文/English）',
-      configure(builder) {
-        return builder.addStringOption(o => o.setName('name').setDescription('语言').setRequired(true)
-          .addChoices(
+      options: [{
+        name: 'name',
+        description: '语言',
+        required: true,
+        choices: [
             { name: '中文', value: 'zh' },
             { name: 'English', value: 'en' },
-          ));
-      },
+        ],
+      }],
     },
     {
       name: 'profile',
       description: '设置当前频道 security profile（auto/solo/team/public）',
-      configure(builder) {
-        return builder.addStringOption(o => o.setName('name').setDescription('profile').setRequired(true)
-          .addChoices(
+      options: [{
+        name: 'name',
+        description: 'profile',
+        required: true,
+        choices: [
             { name: 'auto', value: 'auto' },
             { name: 'solo', value: 'solo' },
             { name: 'team', value: 'team' },
             { name: 'public', value: 'public' },
             { name: 'status', value: 'status' },
-          ));
-      },
+        ],
+      }],
     },
     {
       name: 'timeout',
       description: '设置当前频道 runner timeout（ms/off/status）',
-      configure(builder) {
-        return builder.addStringOption(o => o.setName('value').setDescription('如 60000 / off / status').setRequired(true));
-      },
+      options: [{
+        name: 'value',
+        description: '如 60000 / off / status',
+        required: true,
+      }],
     },
     {
       name: 'progress',
@@ -442,5 +520,9 @@ export function buildSlashCommandEntries({ botProvider = null } = {}) {
       aliases: ['abort'],
       description: '中断当前任务并清空排队消息',
     },
-  ].filter(Boolean);
+  ].filter(Boolean).map((entry) => createCommandSpec(entry));
+}
+
+export function buildSlashCommandEntries(options = {}) {
+  return buildCommandSpecs(options);
 }

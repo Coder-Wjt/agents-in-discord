@@ -1,32 +1,34 @@
 import { buildCommandActionButtonId } from './slash-command-router.js';
-
-const ACTION_ROW_COMPONENT_TYPE = 1;
-const BUTTON_COMPONENT_TYPE = 2;
-const PRIMARY_BUTTON_STYLE = 1;
+import {
+  createCommandActionRow,
+  createCommandButton,
+  createCommandMessageView,
+} from './platforms/command-view.js';
 
 function normalizePayload(payload) {
   return typeof payload === 'string' ? { content: payload } : payload;
 }
 
-export function withRetryAction(payload, userId, { label = 'Retry' } = {}) {
+export function withRetryAction(payload, userId, {
+  label = 'Retry',
+  fallbackText = '按钮不可用时，请发送 `!retry` 重试这个失败任务。',
+} = {}) {
   const body = normalizePayload(payload);
   if (!body || !userId) return body;
 
-  const components = Array.isArray(body.components) ? [...body.components] : [];
-  components.push({
-    type: ACTION_ROW_COMPONENT_TYPE,
-    components: [
-      {
-        type: BUTTON_COMPONENT_TYPE,
-        style: PRIMARY_BUTTON_STYLE,
-        label,
-        custom_id: buildCommandActionButtonId('retry', userId),
-      },
+  return createCommandMessageView({
+    content: body.content,
+    rows: [
+      ...(Array.isArray(body.rows) ? body.rows : []),
+      createCommandActionRow([
+        createCommandButton({
+          id: buildCommandActionButtonId('retry', userId),
+          label,
+          style: 'primary',
+        }),
+      ]),
     ],
+    visibility: body.visibility,
+    fallbackText: body.fallbackText || fallbackText,
   });
-
-  return {
-    ...body,
-    components,
-  };
 }

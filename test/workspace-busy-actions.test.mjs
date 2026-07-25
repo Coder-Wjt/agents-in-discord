@@ -6,6 +6,8 @@ import {
   createWorkspaceBusyActions,
   parseWorkspaceBusyComponentId,
 } from '../src/workspace-busy-actions.js';
+import { createDiscordCommandViewRenderer } from '../src/platforms/discord/command-view-renderer.js';
+import { createDiscordInteractionResponse } from '../src/platforms/discord/interaction-response.js';
 
 class FakeButtonBuilder {
   constructor() {
@@ -44,6 +46,40 @@ const ButtonStyle = {
   Success: 'success',
 };
 
+const commandViewRenderer = createDiscordCommandViewRenderer({
+  ActionRowBuilder: FakeActionRowBuilder,
+  ButtonBuilder: FakeButtonBuilder,
+  ButtonStyle,
+});
+const interactionResponse = createDiscordInteractionResponse({ commandViewRenderer });
+
+function normalizeComponentInteraction(interaction) {
+  const channel = interaction.channel || { id: interaction.channelId };
+  return {
+    type: 'interaction',
+    kind: 'button',
+    platformId: 'discord',
+    id: interaction.id || 'test-workspace-busy-interaction',
+    actor: {
+      id: interaction.user?.id || '',
+      raw: interaction.user || null,
+    },
+    conversation: {
+      id: interaction.channelId || channel?.id || '',
+      tenantId: null,
+      parentId: null,
+      isThread: false,
+      raw: channel,
+    },
+    component: {
+      id: interaction.customId || '',
+      values: [],
+    },
+    responseTarget: interaction,
+    raw: interaction,
+  };
+}
+
 test('parseWorkspaceBusyComponentId decodes busy action buttons', () => {
   assert.deepEqual(parseWorkspaceBusyComponentId('wbusy:isolate:12345'), { action: 'isolate', userId: '12345' });
   assert.deepEqual(parseWorkspaceBusyComponentId('wbusy:auto:12345'), { action: 'auto', userId: '12345' });
@@ -53,9 +89,7 @@ test('parseWorkspaceBusyComponentId decodes busy action buttons', () => {
 
 test('createWorkspaceBusyActions builds action buttons for lock guidance', () => {
   const actions = createWorkspaceBusyActions({
-    ActionRowBuilder: FakeActionRowBuilder,
-    ButtonBuilder: FakeButtonBuilder,
-    ButtonStyle,
+    interactionResponse,
     commandActions: {},
     workspaceRoot: '/tmp/workspaces',
     getSession: () => ({ provider: 'codex', language: 'zh' }),
@@ -64,13 +98,13 @@ test('createWorkspaceBusyActions builds action buttons for lock guidance', () =>
     formatWorkspaceUpdateReport: () => 'updated',
   });
 
-  const payload = actions.buildWorkspaceBusyPayload({
+  const payload = commandViewRenderer.renderMessage(actions.buildWorkspaceBusyPayload({
     key: 'thread-1',
     session: { provider: 'codex', language: 'zh' },
     userId: '12345',
     workspaceDir: '/repo/shared',
     owner: { key: 'thread-2' },
-  });
+  }));
 
   assert.equal(payload.content, 'busy report');
   assert.equal(payload.components.length, 2);
@@ -94,9 +128,7 @@ test('createWorkspaceBusyActions isolates the current channel workspace in one c
   const ensured = [];
   const updates = [];
   const actions = createWorkspaceBusyActions({
-    ActionRowBuilder: FakeActionRowBuilder,
-    ButtonBuilder: FakeButtonBuilder,
-    ButtonStyle,
+    interactionResponse,
     commandActions: {
       setWorkspaceDir(currentSession, key, nextDir) {
         currentSession.workspaceDir = nextDir;
@@ -126,7 +158,7 @@ test('createWorkspaceBusyActions isolates the current channel workspace in one c
     },
   };
 
-  const handled = await actions.handleWorkspaceBusyInteraction(interaction);
+  const handled = await actions.handleWorkspaceBusyInteraction(normalizeComponentInteraction(interaction));
 
   assert.equal(handled, true);
   assert.deepEqual(ensured, ['/tmp/workspaces/thread-1']);
@@ -140,9 +172,7 @@ test('createWorkspaceBusyActions can enable automatic separate workspaces and is
   const updates = [];
   const modeCalls = [];
   const actions = createWorkspaceBusyActions({
-    ActionRowBuilder: FakeActionRowBuilder,
-    ButtonBuilder: FakeButtonBuilder,
-    ButtonStyle,
+    interactionResponse,
     commandActions: {
       setWorkspaceDir(currentSession, key, nextDir) {
         currentSession.workspaceDir = nextDir;
@@ -164,7 +194,7 @@ test('createWorkspaceBusyActions can enable automatic separate workspaces and is
     formatWorkspaceUpdateReport: (_key, currentSession) => `updated:${currentSession.workspaceDir}`,
   });
 
-  const handled = await actions.handleWorkspaceBusyInteraction({
+  const handled = await actions.handleWorkspaceBusyInteraction(normalizeComponentInteraction({
     customId: buildWorkspaceBusyComponentId('auto', '12345'),
     channelId: 'thread-1',
     channel: { id: 'thread-1' },
@@ -175,7 +205,7 @@ test('createWorkspaceBusyActions can enable automatic separate workspaces and is
     async reply() {
       throw new Error('unexpected reply');
     },
-  });
+  }));
 
   assert.equal(handled, true);
   assert.deepEqual(modeCalls, [{ provider: 'codex', mode: 'separate' }]);
@@ -188,9 +218,7 @@ test('createWorkspaceBusyActions can enable automatic separate workspaces and is
 test('createWorkspaceBusyActions opens default workspace browser from busy prompt', async () => {
   const replies = [];
   const actions = createWorkspaceBusyActions({
-    ActionRowBuilder: FakeActionRowBuilder,
-    ButtonBuilder: FakeButtonBuilder,
-    ButtonStyle,
+    interactionResponse,
     commandActions: {},
     workspaceRoot: '/tmp/workspaces',
     getSession: () => ({ provider: 'codex', language: 'zh', workspaceDir: '/repo/shared' }),
@@ -198,10 +226,15 @@ test('createWorkspaceBusyActions opens default workspace browser from busy promp
     getSessionProvider: (session) => session.provider,
     formatWorkspaceBusyReport: () => 'busy report',
     formatWorkspaceUpdateReport: () => 'updated',
-    openWorkspaceBrowser: ({ mode, flags }) => ({ content: `browser:${mode}`, flags }),
+    openWorkspaceBrowser: ({ mode, visibility }) => ({
+      type: 'message',
+      content: `browser:${mode}`,
+      rows: [],
+      visibility,
+    }),
   });
 
-  const handled = await actions.handleWorkspaceBusyInteraction({
+  const handled = await actions.handleWorkspaceBusyInteraction(normalizeComponentInteraction({
     customId: buildWorkspaceBusyComponentId('default', '12345'),
     channelId: 'thread-1',
     channel: { id: 'thread-1' },
@@ -212,8 +245,8 @@ test('createWorkspaceBusyActions opens default workspace browser from busy promp
     async update() {
       throw new Error('unexpected update');
     },
-  });
+  }));
 
   assert.equal(handled, true);
-  assert.deepEqual(replies, [{ content: 'browser:default', flags: 64 }]);
+  assert.deepEqual(replies, [{ content: 'browser:default', components: [], flags: 64 }]);
 });

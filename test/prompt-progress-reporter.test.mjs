@@ -49,8 +49,29 @@ function createHarness(overrides = {}) {
     },
   };
   const message = { id: 'msg-1', author: { id: '12345' } };
+  const defaultMessageDelivery = {
+    async reply(_message, body) {
+      sent.push(body);
+      return { id: 'progress-1' };
+    },
+    async send() {},
+    async edit(_target, nextBody) {
+      edits.push(nextBody);
+    },
+    startTyping() {
+      return () => {};
+    },
+    splitText(text) {
+      return [text];
+    },
+    formatUserMention() {
+      return '';
+    },
+    async setMessageStatus() {},
+  };
 
   const createProgressReporter = createPromptProgressReporterFactory({
+    messageDelivery: defaultMessageDelivery,
     defaultUiLanguage: 'zh',
     progressUpdatesEnabled: true,
     progressProcessLines: 2,
@@ -64,14 +85,8 @@ function createHarness(overrides = {}) {
     progressMessageMaxChars: 1800,
     progressPlanMaxLines: 4,
     progressDoneStepsMax: 4,
-    safeReply: async (_message, body) => {
-      sent.push(body);
-      return {
-        id: 'progress-1',
-        async edit(nextBody) {
-          edits.push(nextBody);
-        },
-      };
+    safeReply: async () => {
+      throw new Error('progress updates require the platform delivery port');
     },
     normalizeUiLanguage: (value) => (String(value || '').trim().toLowerCase() === 'en' ? 'en' : 'zh'),
     slashRef: (name) => `/bot-${name}`,
@@ -115,6 +130,7 @@ function createHarness(overrides = {}) {
       ),
       renderCompletedStepsLines: (steps) => steps.map((step) => `done: ${step}`),
       formatRuntimePhaseLabel: (phase) => String(phase || ''),
+      sanitizeProgressDisplayText: (value) => String(value || '').replace(/\|\|/g, '｜｜'),
     },
     now: () => currentNow,
     setIntervalFn: (fn, ms) => {
@@ -157,7 +173,8 @@ test('createPromptProgressReporterFactory seeds initial step and updates final p
 
   await harness.reporter.start();
   assert.match(harness.sent[0].content, /Waiting for workspace lock: \/repo\/demo/);
-  assert.deepEqual(harness.sent[0].components, []);
+  assert.equal(harness.sent[0].type, 'message');
+  assert.deepEqual(harness.sent[0].rows, []);
   assert.match(harness.sent[0].content, /effort: high/);
   assert.match(harness.sent[0].content, /fast mode: on \(this channel\)/);
   assert.match(harness.sent[0].content, /!c/);
@@ -170,15 +187,87 @@ test('createPromptProgressReporterFactory seeds initial step and updates final p
   harness.advance(50);
   harness.reporter.setLatestStep('Workspace lock acquired: /repo/demo');
   assert.match(harness.edits[0].content, /Workspace lock acquired: \/repo\/demo/);
-  assert.deepEqual(harness.edits[0].components, []);
+  assert.deepEqual(harness.edits[0].rows, []);
 
   await harness.reporter.finish({ ok: true });
   assert.match(harness.edits[harness.edits.length - 1].content, /✅ \*\*Task Completed\*\*/);
   assert.match(harness.edits[harness.edits.length - 1].content, /• phase: done/);
   assert.match(harness.edits[harness.edits.length - 1].content, /• latest activity: Final response sent/);
-  assert.deepEqual(harness.edits[harness.edits.length - 1].components, []);
+  assert.deepEqual(harness.edits[harness.edits.length - 1].rows, []);
   assert.equal(harness.channelState.activeRun.phase, 'done');
   assert.equal(harness.cleared.length, 2);
+});
+
+test('createPromptProgressReporterFactory replies and edits through the platform port', async () => {
+  const calls = [];
+  const progressMessage = { id: 'platform-progress' };
+  const messageDelivery = {
+    async reply(_message, payload) {
+      calls.push(['reply', payload]);
+      return progressMessage;
+    },
+    async send() {},
+    async edit(target, payload) {
+      calls.push(['edit', target, payload]);
+    },
+    startTyping() {
+      return () => {};
+    },
+    splitText(text) {
+      return [text];
+    },
+    formatUserMention() {
+      return '';
+    },
+    async setMessageStatus() {},
+  };
+  const harness = createHarness({
+    factoryOptions: {
+      messageDelivery,
+      safeReply: async () => {
+        throw new Error('legacy reply must not be used');
+      },
+    },
+  });
+
+  await harness.reporter.start();
+  harness.advance(100);
+  harness.reporter.setLatestStep('Delivered through platform port');
+  await harness.reporter.finish({ ok: true });
+
+  assert.equal(calls[0][0], 'reply');
+  assert.equal(calls.some(([type, target]) => type === 'edit' && target === progressMessage), true);
+});
+
+test('createPromptProgressReporterFactory stays silent without a message delivery port', async () => {
+  let replyCalls = 0;
+  const createProgressReporter = createPromptProgressReporterFactory({
+    progressUpdatesEnabled: true,
+    safeReply: async () => {
+      replyCalls += 1;
+    },
+  });
+  const channelState = {
+    queue: [],
+    activeRun: {
+      phase: 'exec',
+      progressPlan: null,
+      completedSteps: [],
+      recentActivities: [],
+    },
+  };
+  const reporter = createProgressReporter({
+    message: { id: 'message-1' },
+    channelState,
+    session: { provider: 'codex' },
+  });
+
+  await reporter.start();
+  reporter.setLatestStep('working');
+  await reporter.finish({ ok: true });
+
+  assert.equal(replyCalls, 0);
+  assert.equal(channelState.activeRun.lastProgressText, 'working');
 });
 
 test('createPromptProgressReporterFactory dedupes repeated events and keeps activity on the final card', async () => {

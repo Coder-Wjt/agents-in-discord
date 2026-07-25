@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  buildCommandSpecs,
   buildSlashCommandEntries,
   getActionButtonCommandNames,
   normalizeCommandName,
@@ -28,7 +29,7 @@ test('getActionButtonCommandNames exposes canonical button-safe commands', () =>
 });
 
 test('buildSlashCommandEntries includes aliases and provider toggle only in shared mode', () => {
-  const sharedEntries = buildSlashCommandEntries({ botProvider: null });
+  const sharedEntries = buildCommandSpecs({ botProvider: null });
   const lockedEntries = buildSlashCommandEntries({ botProvider: 'antigravity' });
 
   const newEntry = sharedEntries.find((entry) => entry.name === 'new');
@@ -42,7 +43,8 @@ test('buildSlashCommandEntries includes aliases and provider toggle only in shar
   const goalEntry = sharedEntries.find((entry) => entry.name === 'goal');
   const extraInfoEntry = sharedEntries.find((entry) => entry.name === 'extra_info');
 
-  assert.equal(Array.isArray(newEntry.aliases), false);
+  assert.deepEqual(newEntry.aliases, []);
+  assert.deepEqual(newEntry.options, []);
   assert.ok(settingsEntry);
   assert.deepEqual(cancelEntry.aliases, ['abort']);
   assert.deepEqual(sessionsEntry.aliases, ['rollout_sessions', 'project_sessions', 'conversation_sessions', 'chat_sessions', 'zcode_sessions']);
@@ -50,6 +52,8 @@ test('buildSlashCommandEntries includes aliases and provider toggle only in shar
   assert.ok(fastEntry);
   assert.ok(runtimeEntry);
   assert.ok(forkEntry);
+  assert.deepEqual(forkEntry.requiredCapabilities, ['threads']);
+  assert.deepEqual(sharedEntries.find((entry) => entry.name === 'side').requiredCapabilities, ['threads']);
   assert.ok(goalEntry);
   assert.deepEqual(extraInfoEntry.aliases, ['extrainfo']);
   assert.ok(sharedEntries.some((entry) => entry.name === 'provider'));
@@ -77,24 +81,10 @@ test('buildSlashCommandEntries includes aliases and provider toggle only in shar
   assert.deepEqual(zcodeEntries.find((entry) => entry.name === 'sessions').aliases, ['zcode_sessions']);
   assert.deepEqual(zcodeEntries.find((entry) => entry.name === 'resume').aliases, ['zcode_resume']);
   assert.deepEqual(
-    lockedCompact.configure({
-      addStringOption(configure) {
-        const option = {
-          data: { choices: [] },
-          setName() { return this; },
-          setDescription() { return this; },
-          setRequired() { return this; },
-          addChoices(...choices) {
-            this.data.choices.push(...choices);
-            return this;
-          },
-        };
-        configure(option);
-        this.options = this.options || [];
-        this.options.push(option.data);
-        return this;
-      },
-    }).options[0].choices.map((choice) => choice.value),
+    lockedCompact.options[0].choices.map((choice) => choice.value),
     ['status', 'run', 'strategy', 'token_limit', 'enabled', 'reset'],
   );
+  assert.deepEqual(lockedCompact.options.map((option) => option.name), ['key', 'value']);
+  assert.equal(lockedCompact.options[0].type, 'string');
+  assert.deepEqual(buildSlashCommandEntries({ botProvider: 'zcode' }), zcodeEntries);
 });

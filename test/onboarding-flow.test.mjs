@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createOnboardingFlow } from '../src/onboarding-flow.js';
+import { createDiscordCommandViewRenderer } from '../src/platforms/discord/command-view-renderer.js';
+import { createDiscordInteractionResponse } from '../src/platforms/discord/interaction-response.js';
 
 class FakeButtonBuilder {
   constructor() {
@@ -46,6 +48,40 @@ const ButtonStyle = {
   Success: 'success',
 };
 
+const commandViewRenderer = createDiscordCommandViewRenderer({
+  ActionRowBuilder: FakeActionRowBuilder,
+  ButtonBuilder: FakeButtonBuilder,
+  ButtonStyle,
+});
+const interactionResponse = createDiscordInteractionResponse({ commandViewRenderer });
+
+function normalizeComponentInteraction(interaction) {
+  const channel = interaction.channel || { id: interaction.channelId };
+  return {
+    type: 'interaction',
+    kind: Array.isArray(interaction.values) ? 'select' : 'button',
+    platformId: 'discord',
+    id: interaction.id || 'test-onboarding-interaction',
+    actor: {
+      id: interaction.user?.id || '',
+      raw: interaction.user || null,
+    },
+    conversation: {
+      id: interaction.channelId || channel?.id || '',
+      tenantId: null,
+      parentId: null,
+      isThread: false,
+      raw: channel,
+    },
+    component: {
+      id: interaction.customId || '',
+      values: Array.isArray(interaction.values) ? [...interaction.values] : [],
+    },
+    responseTarget: interaction,
+    raw: interaction,
+  };
+}
+
 function createFlow({
   session,
   botProvider = null,
@@ -54,14 +90,12 @@ function createFlow({
   openWorkspaceBrowser,
   getWorkspaceBinding,
 } = {}) {
-  return createOnboardingFlow({
+  const flow = createOnboardingFlow({
     onboardingEnabledByDefault: true,
     defaultUiLanguage: 'zh',
     onboardingTotalSteps: 4,
     botProvider,
-    ActionRowBuilder: FakeActionRowBuilder,
-    ButtonBuilder: FakeButtonBuilder,
-    ButtonStyle,
+    interactionResponse,
     getSession: () => session,
     saveDb,
     getSessionProvider: (currentSession) => currentSession?.provider || 'codex',
@@ -86,6 +120,12 @@ function createFlow({
     commandActions,
     openWorkspaceBrowser,
   });
+  return {
+    ...flow,
+    handleOnboardingButtonInteraction: (interaction) => (
+      flow.handleOnboardingButtonInteraction(normalizeComponentInteraction(interaction))
+    ),
+  };
 }
 
 test('createOnboardingFlow builds language step action rows', () => {
@@ -97,10 +137,10 @@ test('createOnboardingFlow builds language step action rows', () => {
   assert.equal(rows.length, 2);
   assert.equal(rows[0].components.length, 4);
   assert.equal(rows[1].components.length, 2);
-  assert.equal(rows[1].components[0].data.customId, 'onb:set_lang:1:12345:zh');
-  assert.equal(rows[1].components[0].data.style, ButtonStyle.Primary);
-  assert.equal(rows[1].components[1].data.customId, 'onb:set_lang:1:12345:en');
-  assert.equal(rows[1].components[1].data.style, ButtonStyle.Secondary);
+  assert.equal(rows[1].components[0].id, 'onb:set_lang:1:12345:zh');
+  assert.equal(rows[1].components[0].style, 'primary');
+  assert.equal(rows[1].components[1].id, 'onb:set_lang:1:12345:en');
+  assert.equal(rows[1].components[1].style, 'secondary');
 });
 
 test('createOnboardingFlow updates session language through button interaction', async () => {
@@ -148,10 +188,10 @@ test('createOnboardingFlow builds provider buttons in shared mode', () => {
 
   assert.equal(rows.length, 2);
   assert.deepEqual(
-    rows[1].components.map((component) => component.data.label),
+    rows[1].components.map((component) => component.label),
     ['codex', 'claude', 'antigravity', 'zcode'],
   );
-  assert.equal(rows[1].components[1].data.style, ButtonStyle.Primary);
+  assert.equal(rows[1].components[1].style, 'primary');
 });
 
 test('createOnboardingFlow hides provider buttons when bot provider is locked', () => {
@@ -202,10 +242,11 @@ test('createOnboardingFlow opens workspace browser in a separate reply', async (
   const replies = [];
   const flow = createFlow({
     session,
-    openWorkspaceBrowser: ({ key, userId, mode, flags }) => ({
+    openWorkspaceBrowser: ({ key, userId, mode, visibility }) => ({
+      type: 'message',
       content: `browse:${mode}:${key}:${userId}`,
-      components: [],
-      flags,
+      rows: [],
+      visibility,
     }),
   });
 
