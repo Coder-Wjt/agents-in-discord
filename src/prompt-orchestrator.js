@@ -515,6 +515,7 @@ export function createPromptOrchestrator({
     const session = getSession(key, { channel: message.channel || null });
     const startingSessionId = getSessionId(session);
     const startingLastInputTokens = session.lastInputTokens;
+    const startingLastObservedModel = session.lastObservedModel;
     const startingPendingForkFromSessionId = String(session?.pendingForkFromSessionId || '').trim() || null;
     const workspaceDir = ensureWorkspace(session, key);
     const language = normalizeUiLanguage(getSessionLanguage(session));
@@ -898,6 +899,9 @@ export function createPromptOrchestrator({
       if (result.ok && consumedPendingCompactSummary) {
         session.pendingCompactSummary = null;
         session.pendingCompactSourceSessionId = null;
+        sessionDirty = true;
+      }
+      if (session.lastObservedModel !== startingLastObservedModel) {
         sessionDirty = true;
       }
       if (sessionDirty) {
