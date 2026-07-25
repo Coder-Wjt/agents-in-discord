@@ -2,6 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createDiscordEntryHandlers } from '../src/discord-entry-handlers.js';
+import { createDiscordCommandViewRenderer } from '../src/platforms/discord/command-view-renderer.js';
+import { createDiscordInboundEventNormalizer } from '../src/platforms/discord/inbound-event.js';
+import { createDiscordInteractionResponse } from '../src/platforms/discord/interaction-response.js';
 
 function createLogger() {
   return {
@@ -25,26 +28,49 @@ function createHarness(overrides = {}) {
     settingsPanel: 0,
     settingsModal: 0,
     goalModal: 0,
+    getSession: [],
   };
+  const logger = {
+    log: (...args) => calls.logs.push(['log', ...args]),
+    warn: (...args) => calls.logs.push(['warn', ...args]),
+    error: (...args) => calls.logs.push(['error', ...args]),
+  };
+  const withDiscordNetworkRetry = async (fn, options = {}) => {
+    calls.retries.push(options);
+    return fn();
+  };
+  const interactionResponse = createDiscordInteractionResponse({
+    commandViewRenderer: createDiscordCommandViewRenderer(),
+    logger,
+    withDiscordNetworkRetry,
+  });
+  const commandRegistryRenderer = {
+    renderCommands() {},
+    formatCommandName: (name) => name,
+    normalizeCommandName: (name) => name,
+    formatCommandReference: (name) => `/${name}`,
+  };
+  const commandSpecs = [{ name: 'status' }];
+  const inboundEventNormalizer = createDiscordInboundEventNormalizer();
 
   const handlers = createDiscordEntryHandlers({
-    logger: {
-      log: (...args) => calls.logs.push(['log', ...args]),
-      warn: (...args) => calls.logs.push(['warn', ...args]),
-      error: (...args) => calls.logs.push(['error', ...args]),
-    },
-    registerSlashCommands: async (payload) => {
+    logger,
+    registerCommands: async (payload) => {
       calls.registerSlashCommands.push(payload);
     },
     REST: { name: 'REST' },
     Routes: { name: 'Routes' },
     discordToken: 'token',
     restProxyAgent: { name: 'agent' },
-    slashCommands: ['cmd'],
-    withDiscordNetworkRetry: async (fn, options = {}) => {
-      calls.retries.push(options);
-      return fn();
+    commandSpecs,
+    commandRegistryRenderer,
+    normalizeInteractionEvent: (interaction) => {
+      interaction.id ||= 'interaction-test';
+      interaction.channelId ||= interaction.channel?.id || 'channel-test';
+      return inboundEventNormalizer.normalizeInteraction(interaction);
     },
+    withDiscordNetworkRetry,
+    interactionResponse,
     safeReply: async () => {},
     safeError: (err) => err?.message || String(err),
     isIgnorableDiscordRuntimeError: (err) => Number(err?.code) === 10062,
@@ -54,7 +80,10 @@ function createHarness(overrides = {}) {
       isAllowedChannel: () => true,
       isAllowedInteractionChannel: async () => true,
     },
-    getSession: () => ({ id: 'sess-1' }),
+    getSession: (...args) => {
+      calls.getSession.push(args);
+      return { id: 'sess-1' };
+    },
     resolveSecurityContext: () => ({ profile: 'team', mentionOnly: false }),
     handleCommand: async (...args) => {
       calls.handleCommand.push(args);
@@ -99,10 +128,10 @@ function createHarness(overrides = {}) {
     ...overrides,
   });
 
-  return { handlers, calls };
+  return { handlers, calls, commandSpecs, commandRegistryRenderer };
 }
 
-test('sendInteractionResponse edits deferred replies and strips flags', async () => {
+test('sendInteractionResponse edits deferred replies and strips rendered visibility flags', async () => {
   const { handlers } = createHarness();
   const edits = [];
   const interaction = {
@@ -113,9 +142,9 @@ test('sendInteractionResponse edits deferred replies and strips flags', async ()
     },
   };
 
-  await handlers.sendInteractionResponse(interaction, { content: 'hello', flags: 64 });
+  await handlers.sendInteractionResponse(interaction, { content: 'hello', visibility: 'ephemeral' });
 
-  assert.deepEqual(edits, [{ content: 'hello' }]);
+  assert.deepEqual(edits, [{ content: 'hello', components: [] }]);
 });
 
 test('handleInteractionCreate rejects command button clicks from other users', async () => {
@@ -136,7 +165,11 @@ test('handleInteractionCreate rejects command button clicks from other users', a
 
   await handlers.handleInteractionCreate(interaction);
 
-  assert.deepEqual(replies, [{ content: '⛔ 这组快捷按钮属于发起命令的用户。', flags: 64 }]);
+  assert.deepEqual(replies, [{
+    content: '⛔ 这组快捷按钮属于发起命令的用户。',
+    components: [],
+    flags: 64,
+  }]);
 });
 
 test('handleInteractionCreate routes settings panel component interactions', async () => {
@@ -250,7 +283,7 @@ test('handleInteractionCreate defers chat commands and reports unknown commands 
   assert.deepEqual(defers, [{ flags: 64 }]);
   assert.equal(calls.routeSlashCommand.length, 1);
   assert.equal(calls.routeSlashCommand[0].commandName, 'norm:ping');
-  assert.deepEqual(edits, [{ content: '❌ 未知命令：`ping`' }]);
+  assert.deepEqual(edits, [{ content: '❌ 未知命令：`ping`', components: [] }]);
   assert.equal(calls.retries[0].label, 'interaction:ping deferReply');
   assert.equal(calls.retries[1].label, 'interaction:ping editReply');
 });
@@ -279,7 +312,7 @@ test('handleInteractionCreate retries deferReply before routing slash command', 
 
   assert.equal(attempts, 1);
   assert.equal(calls.routeSlashCommand.length, 1);
-  assert.equal(calls.logs[0][1], '[interaction] kind=chat-input cmd=status user=demo#0001 channel=unknown');
+  assert.equal(calls.logs[0][1], '[interaction] kind=chat-input cmd=status user=demo#0001 channel=channel-test');
   assert.equal(calls.retries[0].baseDelayMs, 75);
 });
 
@@ -358,6 +391,7 @@ test('handleMessageCreate strips bot mention and enqueues prompt', async () => {
     resolveSecurityContext: () => ({ profile: 'public', mentionOnly: true }),
   });
   const message = {
+    id: 'message-1',
     content: '<@123>  hello world  ',
     system: false,
     author: { id: 'user-1', bot: false, tag: 'demo#0001' },
@@ -381,8 +415,61 @@ test('handleMessageCreate strips bot mention and enqueues prompt', async () => {
   assert.deepEqual(calls.enqueuePrompt[0][3], { profile: 'public', mentionOnly: true });
 });
 
+test('handleMessageCreate uses the normalized inbound envelope for routing', async () => {
+  const normalizedMessage = {
+    type: 'message',
+    platformId: 'discord',
+    id: 'normalized-message',
+    actor: { id: 'normalized-user', displayName: 'Normalized User', isBot: false },
+    conversation: { id: 'normalized-channel', parentId: null, isThread: false },
+    rawText: 'raw platform text',
+    text: 'normalized prompt',
+    attachments: [],
+    isSystem: false,
+    targetsBot: true,
+  };
+  const normalizedCalls = [];
+  const { handlers, calls } = createHarness({
+    normalizeMessageEvent: (message, options) => {
+      normalizedCalls.push([message, options]);
+      return normalizedMessage;
+    },
+    messageInput: {
+      doesMessageTargetBot: () => false,
+      buildPromptFromMessage: (text) => `PROMPT:${text}`,
+    },
+    resolveSecurityContext: () => ({ profile: 'public', mentionOnly: true }),
+  });
+  const message = {
+    id: 'raw-message',
+    content: 'ignored raw content',
+    system: false,
+    author: { id: 'raw-user', bot: false, tag: 'raw#0001' },
+    channel: { id: 'raw-channel', isThread: () => false },
+    attachments: new Map(),
+    reactions: { cache: new Map() },
+    async react() {},
+  };
+  const bot = { user: { id: 'bot-1' } };
+
+  await handlers.handleMessageCreate(message, bot);
+
+  assert.deepEqual(normalizedCalls, [[message, { botUserId: 'bot-1' }]]);
+  assert.notEqual(calls.enqueuePrompt[0][0], message);
+  assert.equal(calls.enqueuePrompt[0][0].responseTarget, message);
+  assert.equal(calls.enqueuePrompt[0][0].channel, message.channel);
+  assert.equal(calls.enqueuePrompt[0][0].author.id, 'normalized-user');
+  assert.deepEqual(calls.enqueuePrompt[0][0].attachments, []);
+  assert.deepEqual(calls.getSession[0], [
+    'normalized-channel',
+    { conversation: normalizedMessage.conversation },
+  ]);
+  assert.equal(calls.enqueuePrompt[0][1], 'normalized-channel');
+  assert.equal(calls.enqueuePrompt[0][2], 'PROMPT:normalized prompt');
+});
+
 test('bindClientHandlers wires ready registration and recoverable shard disconnect self-heal', async () => {
-  const { handlers, calls } = createHarness();
+  const { handlers, calls, commandSpecs, commandRegistryRenderer } = createHarness();
   const onceHandlers = new Map();
   const onHandlers = new Map();
   const bot = {
@@ -407,5 +494,32 @@ test('bindClientHandlers wires ready registration and recoverable shard disconne
 
   assert.equal(calls.registerSlashCommands.length, 1);
   assert.equal(calls.registerSlashCommands[0].client, bot);
+  assert.equal(calls.registerSlashCommands[0].commandSpecs, commandSpecs);
+  assert.equal(calls.registerSlashCommands[0].commandRegistryRenderer, commandRegistryRenderer);
   assert.deepEqual(heals, ['shard_disconnect:2:code=1006']);
+});
+
+test('bindClientHandlers skips Discord thread listeners when threads are disabled', async () => {
+  const { handlers } = createHarness({
+    platformCapabilities: { threads: false },
+  });
+  const onceHandlers = new Map();
+  const onHandlers = new Map();
+  const bot = {
+    user: { id: 'bot-1', tag: 'bot#0001' },
+    once(event, handler) {
+      onceHandlers.set(event, handler);
+    },
+    on(event, handler) {
+      onHandlers.set(event, handler);
+    },
+  };
+
+  handlers.bindClientHandlers(bot, { scheduleSelfHeal() {} });
+
+  assert.equal(onceHandlers.has('ready'), true);
+  assert.equal(onHandlers.has('messageCreate'), true);
+  assert.equal(onHandlers.has('interactionCreate'), true);
+  assert.equal(onHandlers.has('threadCreate'), false);
+  assert.equal(onHandlers.has('threadListSync'), false);
 });

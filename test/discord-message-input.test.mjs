@@ -6,6 +6,15 @@ import {
   doesMessageTargetBot,
   formatAttachmentsForPrompt,
 } from '../src/discord-message-input.js';
+import {
+  buildPromptFromMessage as buildPlatformPromptFromMessage,
+  formatAttachmentsForPrompt as formatPlatformAttachmentsForPrompt,
+} from '../src/message-input.js';
+
+test('Discord message input facade re-exports the platform-neutral prompt helpers', () => {
+  assert.equal(buildPromptFromMessage, buildPlatformPromptFromMessage);
+  assert.equal(formatAttachmentsForPrompt, formatPlatformAttachmentsForPrompt);
+});
 
 test('doesMessageTargetBot matches mentions and replies to bot', () => {
   const mentionedMessage = {
@@ -42,6 +51,16 @@ test('buildPromptFromMessage appends formatted attachments and handles attachmen
   assert.match(buildPromptFromMessage('hello', attachments), /hello/);
   assert.match(buildPromptFromMessage('hello', attachments), /Attachments:/);
   assert.match(buildPromptFromMessage('', attachments), /用户发送了附件/);
+
+  const normalizedAttachments = [{
+    id: 'b',
+    name: 'normalized.png',
+    mimeType: 'image/png',
+    sizeBytes: 24,
+    url: 'https://example.com/normalized.png',
+  }];
+  const normalizedPrompt = buildPromptFromMessage('inspect', normalizedAttachments);
+  assert.match(normalizedPrompt, /name=normalized\.png; type=image\/png; size=24B/);
 });
 
 test('formatAttachmentsForPrompt truncates after 8 entries', () => {

@@ -1,17 +1,29 @@
+import { createCommandMessageView } from './platforms/command-view.js';
+import { registerDiscordCommands } from './platforms/discord/command-registration.js';
+import { createDiscordInboundEventNormalizer } from './platforms/discord/inbound-event.js';
+import { assertInteractionResponse } from './platforms/interaction-response.js';
+import { createInboundMessageContext } from './platforms/inbound-event.js';
+
 export function createDiscordEntryHandlers({
+  platformCapabilities = null,
   logger = console,
-  registerSlashCommands,
+  registerCommands = registerDiscordCommands,
   REST,
   Routes,
   discordToken,
   restProxyAgent = null,
-  slashCommands = [],
+  commandSpecs = [],
+  commandRegistryRenderer,
   withDiscordNetworkRetry,
   safeReply,
   safeError = (err) => err?.message || String(err),
   isIgnorableDiscordRuntimeError = () => false,
   isRecoverableGatewayCloseCode = () => true,
   accessPolicy = {},
+  interactionResponse,
+  messageDelivery = null,
+  normalizeInteractionEvent = null,
+  normalizeMessageEvent = null,
   getSession,
   resolveSecurityContext,
   handleCommand,
@@ -34,6 +46,9 @@ export function createDiscordEntryHandlers({
   shouldDeferInteraction = () => true,
   normalizeSlashCommandName,
 } = {}) {
+  const responsePort = assertInteractionResponse(interactionResponse);
+  const supportsThreads = platformCapabilities?.threads !== false;
+  const setMessageStatus = messageDelivery?.setMessageStatus || (async () => {});
   const {
     isAllowedUser = () => true,
     isAllowedChannel = () => true,
@@ -43,8 +58,46 @@ export function createDiscordEntryHandlers({
     doesMessageTargetBot = () => false,
     buildPromptFromMessage = () => '',
   } = messageInput;
+  const toInboundMessageEvent = normalizeMessageEvent || ((message, { botUserId = null } = {}) => {
+    const rawText = String(message?.content || '');
+    const normalizedBotUserId = String(botUserId || '').trim();
+    return {
+      type: 'message',
+      platformId: 'discord',
+      id: String(message?.id || '').trim(),
+      actor: {
+        id: String(message?.author?.id || '').trim(),
+        displayName: String(message?.author?.tag || message?.author?.id || '').trim(),
+        isBot: Boolean(message?.author?.bot),
+      },
+      conversation: {
+        id: String(message?.channel?.id || '').trim(),
+        parentId: message?.channel?.isThread?.() ? String(message?.channel?.parentId || '').trim() || null : null,
+        isThread: Boolean(message?.channel?.isThread?.()),
+      },
+      rawText,
+      text: normalizedBotUserId
+        ? rawText.replace(new RegExp(`<@!?${normalizedBotUserId}>`, 'g'), '').trim()
+        : rawText.trim(),
+      attachments: message?.attachments && typeof message.attachments.values === 'function'
+        ? [...message.attachments.values()]
+        : [],
+      replyToMessageId: String(
+        message?.reference?.messageId
+        || message?.reference?.message_id
+        || message?.reference?.message?.id
+        || '',
+      ).trim() || null,
+      isSystem: Boolean(message?.system),
+      targetsBot: Boolean(normalizedBotUserId && doesMessageTargetBot(message, normalizedBotUserId)),
+      raw: message,
+    };
+  });
+  const toInboundInteractionEvent = normalizeInteractionEvent
+    || createDiscordInboundEventNormalizer().normalizeInteraction;
 
   async function joinThreadWithRetry(thread, context = 'thread.join') {
+    if (!supportsThreads) return;
     if (!thread || thread.joined) return;
 
     await withDiscordNetworkRetry(
@@ -100,41 +153,40 @@ export function createDiscordEntryHandlers({
 
   async function handleMessageCreate(message, bot) {
     try {
-      if (message.author.bot) return;
-      if (message.system) return;
-      if (!isAllowedUser(message.author.id)) return;
+      const event = toInboundMessageEvent(message, { botUserId: bot?.user?.id || null });
+      const promptMessage = createInboundMessageContext(event, { fallbackRaw: message });
+      if (event.actor.isBot) return;
+      if (event.isSystem) return;
+      if (!isAllowedUser(event.actor.id)) return;
       const channelAllowed = isAllowedChannel(message.channel);
-      const key = message.channel.id;
-      const session = getSession(key, { channel: message.channel });
+      const key = event.conversation.id;
+      const session = getSession(key, { conversation: event.conversation });
       const security = resolveSecurityContext(message.channel, session);
 
-      const chId = message.channel.id;
-      const parentId = message.channel.isThread?.() ? message.channel.parentId : null;
-      const attachmentCount = message.attachments?.size || 0;
-      logger.log(`[msg] ch=${chId} parent=${parentId} author=${message.author.tag} allowed=${channelAllowed} profile=${security.profile} mentionOnly=${security.mentionOnly} contentLen=${message.content.length} attachments=${attachmentCount} system=${message.system}`);
+      const chId = event.conversation.id;
+      const parentId = event.conversation.parentId;
+      const attachmentCount = event.attachments.length;
+      logger.log(`[msg] platform=${event.platformId} ch=${chId} parent=${parentId} author=${event.actor.displayName} allowed=${channelAllowed} profile=${security.profile} mentionOnly=${security.mentionOnly} contentLen=${event.rawText.length} attachments=${attachmentCount} system=${event.isSystem}`);
 
       if (!channelAllowed) return;
 
-      const rawContent = message.content
-        .replace(new RegExp(`<@!?${bot.user.id}>`, 'g'), '')
-        .trim();
+      const rawContent = event.text;
       const isCommand = rawContent.startsWith('!');
 
       if (isCommand) {
-        await handleCommand(message, key, rawContent);
+        await handleCommand(promptMessage, key, rawContent);
         return;
       }
 
-      if (security.mentionOnly && !doesMessageTargetBot(message, bot.user.id)) return;
+      if (security.mentionOnly && !event.targetsBot) return;
 
-      const content = buildPromptFromMessage(rawContent, message.attachments);
+      const content = buildPromptFromMessage(rawContent, event.attachments);
       if (!content) return;
-      await enqueuePrompt(message, key, content, security);
+      await enqueuePrompt(promptMessage, key, content, security);
     } catch (err) {
       logger.error('messageCreate handler error:', err);
       try {
-        await message.reactions.cache.get('⚡')?.users.remove(bot.user?.id).catch(() => {});
-        await message.react('❌').catch(() => {});
+        await setMessageStatus(message, 'failed').catch(() => {});
         await safeReply(message, `❌ 处理失败：${safeError(err)}`);
       } catch {
         // ignore
@@ -143,39 +195,7 @@ export function createDiscordEntryHandlers({
   }
 
   async function sendInteractionResponse(interaction, payload) {
-    const body = typeof payload === 'string' ? { content: payload } : payload;
-    if (interaction.deferred && !interaction.replied) {
-      const { flags: _ignoredFlags, ...editPayload } = body;
-      return withDiscordNetworkRetry(
-        () => interaction.editReply(editPayload),
-        {
-          logger,
-          label: `${describeInteraction(interaction)} editReply`,
-          maxAttempts: 3,
-          baseDelayMs: 250,
-        },
-      );
-    }
-    if (interaction.replied) {
-      return withDiscordNetworkRetry(
-        () => interaction.followUp(body),
-        {
-          logger,
-          label: `${describeInteraction(interaction)} followUp`,
-          maxAttempts: 3,
-          baseDelayMs: 250,
-        },
-      );
-    }
-    return withDiscordNetworkRetry(
-      () => interaction.reply(body),
-      {
-        logger,
-        label: `${describeInteraction(interaction)} reply`,
-        maxAttempts: 3,
-        baseDelayMs: 250,
-      },
-    );
+    return responsePort.respond(interaction, payload);
   }
 
   async function safeInteractionFailureReply(interaction, err) {
@@ -196,7 +216,10 @@ export function createDiscordEntryHandlers({
     }
 
     try {
-      await sendInteractionResponse(interaction, { content: `❌ ${safeError(err)}`, flags: 64 });
+      await sendInteractionResponse(interaction, createCommandMessageView({
+        content: `❌ ${safeError(err)}`,
+        visibility: 'ephemeral',
+      }));
     } catch (replyErr) {
       if (isIgnorableDiscordRuntimeError(replyErr)) {
         logger.warn(`Ignoring non-fatal interaction reply error: ${safeError(replyErr)}`);
@@ -207,51 +230,60 @@ export function createDiscordEntryHandlers({
   }
 
   async function handleInteractionCreate(interaction) {
-    if (interaction.isButton() || interaction.isStringSelectMenu()) {
-      const isWorkspaceBusy = interaction.isButton() && isWorkspaceBusyComponentId(interaction.customId);
-      const isWorkspaceBrowser = isWorkspaceBrowserComponentId(interaction.customId);
-      const commandButton = interaction.isButton() ? parseCommandActionButtonId(interaction.customId) : null;
-      const isOnboarding = interaction.isButton() && isOnboardingButtonId(interaction.customId);
-      const isSettingsPanel = isSettingsPanelComponentId(interaction.customId);
+    const event = toInboundInteractionEvent(interaction);
+    if (event.kind === 'button' || event.kind === 'select') {
+      const componentId = event.component.id;
+      const isButton = event.kind === 'button';
+      const isWorkspaceBusy = isButton && isWorkspaceBusyComponentId(componentId);
+      const isWorkspaceBrowser = isWorkspaceBrowserComponentId(componentId);
+      const commandButton = isButton ? parseCommandActionButtonId(componentId) : null;
+      const isOnboarding = isButton && isOnboardingButtonId(componentId);
+      const isSettingsPanel = isSettingsPanelComponentId(componentId);
       if (!isWorkspaceBusy && !isWorkspaceBrowser && !isOnboarding && !commandButton && !isSettingsPanel) return;
-      logger.log(`[interaction] kind=${interaction.isButton() ? 'button' : 'select'} id=${interaction.customId} user=${interaction.user?.tag || interaction.user?.id || 'unknown'} channel=${interaction.channelId || 'unknown'}`);
+      logger.log(`[interaction] kind=${event.kind} id=${componentId} user=${event.actor.displayName || event.actor.id || 'unknown'} channel=${event.conversation.id || 'unknown'}`);
       try {
-        if (!isAllowedUser(interaction.user.id)) {
-          await sendInteractionResponse(interaction, { content: '⛔ 没有权限。', flags: 64 });
+        if (!isAllowedUser(event.actor.id)) {
+          await sendInteractionResponse(event, createCommandMessageView({ content: '⛔ 没有权限。', visibility: 'ephemeral' }));
           return;
         }
         if (!(await isAllowedInteractionChannel(interaction))) {
-          await sendInteractionResponse(interaction, { content: '⛔ 当前频道未开放。', flags: 64 });
+          await sendInteractionResponse(event, createCommandMessageView({ content: '⛔ 当前频道未开放。', visibility: 'ephemeral' }));
           return;
         }
         if (commandButton) {
-          if (commandButton.userId !== interaction.user.id) {
-            await sendInteractionResponse(interaction, { content: '⛔ 这组快捷按钮属于发起命令的用户。', flags: 64 });
+          if (commandButton.userId !== event.actor.id) {
+            await sendInteractionResponse(event, createCommandMessageView({
+              content: '⛔ 这组快捷按钮属于发起命令的用户。',
+              visibility: 'ephemeral',
+            }));
             return;
           }
           const handled = await routeSlashCommand({
-            interaction,
+            interaction: event,
             commandName: commandButton.command,
-            respond: (payload) => sendInteractionResponse(interaction, payload),
+            respond: (payload) => sendInteractionResponse(event, payload),
           });
           if (!handled) {
-            await sendInteractionResponse(interaction, { content: '❌ 快捷按钮已失效，请重新执行 slash 命令。', flags: 64 });
+            await sendInteractionResponse(event, createCommandMessageView({
+              content: '❌ 快捷按钮已失效，请重新执行 slash 命令。',
+              visibility: 'ephemeral',
+            }));
           }
           return;
         }
         if (isWorkspaceBusy) {
-          await handleWorkspaceBusyInteraction(interaction);
+          await handleWorkspaceBusyInteraction(event);
           return;
         }
         if (isWorkspaceBrowser) {
-          await handleWorkspaceBrowserInteraction(interaction);
+          await handleWorkspaceBrowserInteraction(event);
           return;
         }
         if (isSettingsPanel) {
-          await handleSettingsPanelInteraction(interaction);
+          await handleSettingsPanelInteraction(event);
           return;
         }
-        await handleOnboardingButtonInteraction(interaction);
+        await handleOnboardingButtonInteraction(event);
       } catch (err) {
         logger.error(`interactionCreate component handler error (${describeInteraction(interaction)}):`, err);
         await safeInteractionFailureReply(interaction, err);
@@ -259,24 +291,25 @@ export function createDiscordEntryHandlers({
       return;
     }
 
-    if (typeof interaction.isModalSubmit === 'function' && interaction.isModalSubmit()) {
-      const isSettingsModal = isSettingsPanelModalId(interaction.customId);
-      const isGoalModal = isGoalModalId?.(interaction.customId);
+    if (event.kind === 'modal') {
+      const modalId = event.modal.id;
+      const isSettingsModal = isSettingsPanelModalId(modalId);
+      const isGoalModal = isGoalModalId?.(modalId);
       if (!isSettingsModal && !isGoalModal) return;
-      logger.log(`[interaction] kind=modal id=${interaction.customId} user=${interaction.user?.tag || interaction.user?.id || 'unknown'} channel=${interaction.channelId || 'unknown'}`);
+      logger.log(`[interaction] kind=modal id=${modalId} user=${event.actor.displayName || event.actor.id || 'unknown'} channel=${event.conversation.id || 'unknown'}`);
       try {
-        if (!isAllowedUser(interaction.user.id)) {
-          await sendInteractionResponse(interaction, { content: '⛔ 没有权限。', flags: 64 });
+        if (!isAllowedUser(event.actor.id)) {
+          await sendInteractionResponse(event, createCommandMessageView({ content: '⛔ 没有权限。', visibility: 'ephemeral' }));
           return;
         }
         if (!(await isAllowedInteractionChannel(interaction))) {
-          await sendInteractionResponse(interaction, { content: '⛔ 当前频道未开放。', flags: 64 });
+          await sendInteractionResponse(event, createCommandMessageView({ content: '⛔ 当前频道未开放。', visibility: 'ephemeral' }));
           return;
         }
         if (isSettingsModal) {
-          await handleSettingsPanelModalSubmit(interaction);
+          await handleSettingsPanelModalSubmit(event);
         } else {
-          await handleGoalModalSubmit(interaction);
+          await handleGoalModalSubmit(event);
         }
       } catch (err) {
         logger.error(`interactionCreate modal handler error (${describeInteraction(interaction)}):`, err);
@@ -285,41 +318,36 @@ export function createDiscordEntryHandlers({
       return;
     }
 
-    if (!interaction.isChatInputCommand()) return;
-    logger.log(`[interaction] kind=chat-input cmd=${interaction.commandName} user=${interaction.user?.tag || interaction.user?.id || 'unknown'} channel=${interaction.channelId || 'unknown'}`);
-    if (!isAllowedUser(interaction.user.id)) {
-      await sendInteractionResponse(interaction, { content: '⛔ 没有权限。', flags: 64 });
+    if (event.kind !== 'command') return;
+    logger.log(`[interaction] kind=chat-input cmd=${event.command.name} user=${event.actor.displayName || event.actor.id || 'unknown'} channel=${event.conversation.id || 'unknown'}`);
+    if (!isAllowedUser(event.actor.id)) {
+      await sendInteractionResponse(event, createCommandMessageView({ content: '⛔ 没有权限。', visibility: 'ephemeral' }));
       return;
     }
 
     try {
-      const respond = (payload) => sendInteractionResponse(interaction, payload);
-      const cmd = normalizeSlashCommandName(interaction.commandName);
+      const respond = (payload) => sendInteractionResponse(event, payload);
+      const cmd = normalizeSlashCommandName(event.command.name);
 
-      if (shouldDeferInteraction(interaction, cmd)) {
-        await withDiscordNetworkRetry(
-          () => interaction.deferReply({ flags: 64 }),
-          {
-            logger,
-            label: `${describeInteraction(interaction)} deferReply`,
-            maxAttempts: 3,
-            baseDelayMs: 75,
-          },
-        );
+      if (shouldDeferInteraction(event, cmd)) {
+        await responsePort.defer(event, { visibility: 'ephemeral' });
       }
 
       if (!(await isAllowedInteractionChannel(interaction))) {
-        await respond({ content: '⛔ 当前频道未开放。', flags: 64 });
+        await respond(createCommandMessageView({ content: '⛔ 当前频道未开放。', visibility: 'ephemeral' }));
         return;
       }
 
       const handled = await routeSlashCommand({
-        interaction,
+        interaction: event,
         commandName: cmd,
         respond,
       });
       if (!handled) {
-        await respond({ content: `❌ 未知命令：\`${interaction.commandName}\``, flags: 64 });
+        await respond(createCommandMessageView({
+          content: `❌ 未知命令：\`${event.command.name}\``,
+          visibility: 'ephemeral',
+        }));
       }
     } catch (err) {
       logger.error(`interactionCreate chat-input handler error (${describeInteraction(interaction)}):`, err);
@@ -330,35 +358,38 @@ export function createDiscordEntryHandlers({
   function bindClientHandlers(bot, lifecycle) {
     bot.once('ready', async () => {
       logger.log(`✅ Logged in as ${bot.user.tag}`);
-      await registerSlashCommands({
+      await registerCommands({
         client: bot,
         REST,
         Routes,
         discordToken,
         restProxyAgent,
-        slashCommands,
+        commandSpecs,
+        commandRegistryRenderer,
         logger,
       });
     });
 
-    bot.on('threadCreate', async (thread) => {
-      try {
-        await joinThreadWithRetry(thread, 'threadCreate');
-        logger.log(`🧵 Joined thread: ${thread.name} (${thread.id})`);
-      } catch (err) {
-        logger.error(`Failed to join thread ${thread.id}:`, err.message);
-      }
-    });
-
-    bot.on('threadListSync', (threads) => {
-      for (const thread of threads.values()) {
-        if (!thread.joined) {
-          joinThreadWithRetry(thread, 'threadListSync')
-            .then(() => logger.log(`🧵 Synced into thread: ${thread.name}`))
-            .catch((err) => logger.error(`Failed to sync thread ${thread.id}:`, err.message));
+    if (supportsThreads) {
+      bot.on('threadCreate', async (thread) => {
+        try {
+          await joinThreadWithRetry(thread, 'threadCreate');
+          logger.log(`🧵 Joined thread: ${thread.name} (${thread.id})`);
+        } catch (err) {
+          logger.error(`Failed to join thread ${thread.id}:`, err.message);
         }
-      }
-    });
+      });
+
+      bot.on('threadListSync', (threads) => {
+        for (const thread of threads.values()) {
+          if (!thread.joined) {
+            joinThreadWithRetry(thread, 'threadListSync')
+              .then(() => logger.log(`🧵 Synced into thread: ${thread.name}`))
+              .catch((err) => logger.error(`Failed to sync thread ${thread.id}:`, err.message));
+          }
+        }
+      });
+    }
 
     bot.on('messageCreate', (message) => handleMessageCreate(message, bot));
     bot.on('interactionCreate', handleInteractionCreate);

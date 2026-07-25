@@ -52,13 +52,9 @@ function normalizeChannelId(value) {
   return raw || null;
 }
 
-function resolveParentChannelId(channel, key = null) {
-  if (!channel) return null;
-  const isThread = typeof channel.isThread === 'function'
-    ? channel.isThread()
-    : Boolean(channel.parentId);
-  if (!isThread) return null;
-  const parentId = normalizeChannelId(channel.parentId || channel.parent?.id);
+function resolveParentConversationId(conversation, key = null) {
+  if (!conversation || conversation.isThread !== true) return null;
+  const parentId = normalizeChannelId(conversation.parentId);
   const currentKey = normalizeChannelId(key);
   if (!parentId || parentId === currentKey) return null;
   return parentId;
@@ -187,7 +183,7 @@ export function createSessionStore({
   function hydrateSession(key, {
     createIfMissing = false,
     touchUpdatedAt = false,
-    channel = null,
+    conversation = null,
     parentChannelId = undefined,
   } = {}) {
     db.threads ||= {};
@@ -402,8 +398,8 @@ export function createSessionStore({
     }
     if (parentChannelId !== undefined) {
       normalizedParentChannelId = normalizeChannelId(parentChannelId);
-    } else if (channel) {
-      normalizedParentChannelId = resolveParentChannelId(channel, key);
+    } else if (conversation) {
+      normalizedParentChannelId = resolveParentConversationId(conversation, key);
     }
     if (session.parentChannelId !== normalizedParentChannelId) {
       session.parentChannelId = normalizedParentChannelId;

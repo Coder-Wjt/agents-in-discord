@@ -155,9 +155,10 @@ test('createSessionStore records the parent channel for thread sessions', () => 
   });
 
   const session = store.getSession('thread-1', {
-    channel: {
+    conversation: {
+      id: 'thread-1',
       parentId: 'channel-1',
-      isThread: () => true,
+      isThread: true,
     },
   });
   const persisted = JSON.parse(fs.readFileSync(dataFile, 'utf8'));
@@ -198,9 +199,10 @@ test('createSessionStore lets a thread inherit the parent channel workspace bind
   store.saveDb();
 
   const threadSession = store.getSession('thread-1', {
-    channel: {
+    conversation: {
+      id: 'thread-1',
       parentId: 'channel-1',
-      isThread: () => true,
+      isThread: true,
     },
   });
   const binding = store.getWorkspaceBinding(threadSession, 'thread-1');
@@ -248,9 +250,10 @@ test('createSessionStore can keep child threads on separate fallback workspaces'
   store.saveDb();
 
   const threadSession = store.getSession('thread-1', {
-    channel: {
+    conversation: {
+      id: 'thread-1',
       parentId: 'channel-1',
-      isThread: () => true,
+      isThread: true,
     },
   });
   const binding = store.getWorkspaceBinding(threadSession, 'thread-1');
@@ -294,9 +297,10 @@ test('createSessionStore can resolve child thread workspace mode dynamically per
   store.saveDb();
 
   const threadSession = store.getSession('thread-1', {
-    channel: {
+    conversation: {
+      id: 'thread-1',
       parentId: 'channel-1',
-      isThread: () => true,
+      isThread: true,
     },
   });
   const binding = store.getWorkspaceBinding(threadSession, 'thread-1');
@@ -331,9 +335,10 @@ test('createSessionStore keeps thread legacy fallback isolated when parent has n
 
   store.getSession('channel-1');
   const threadSession = store.getSession('thread-1', {
-    channel: {
+    conversation: {
+      id: 'thread-1',
       parentId: 'channel-1',
-      isThread: () => true,
+      isThread: true,
     },
   });
   const binding = store.getWorkspaceBinding(threadSession, 'thread-1');

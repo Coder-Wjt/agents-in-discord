@@ -11,6 +11,7 @@ test('isImageAttachment matches image content types and extensions', () => {
   assert.equal(isImageAttachment({ name: 'demo.jpg', contentType: 'application/octet-stream' }), true);
   assert.equal(isImageAttachment({ name: 'demo.bin', contentType: 'image/png' }), true);
   assert.equal(isImageAttachment({ name: 'demo.txt', contentType: 'text/plain' }), false);
+  assert.equal(isImageAttachment({ name: 'normalized.bin', mimeType: 'image/webp' }), true);
 });
 
 test('buildNativeImagePromptNote is empty without images', () => {
@@ -60,6 +61,44 @@ test('stageNativeImageAttachments downloads image attachments and cleans up temp
   assert.deepEqual(removes, [
     { dir: '/tmp/aid-codex-images-test', options: { recursive: true, force: true } },
   ]);
+});
+
+test('stageNativeImageAttachments accepts normalized-only message attachments', async () => {
+  const writes = [];
+  const message = {
+    actor: { id: 'user-1' },
+    conversation: { id: 'conversation-1', parentId: null, isThread: false },
+    attachments: [{
+      id: 'image-1',
+      name: 'normalized-image',
+      mimeType: 'image/png',
+      sizeBytes: 10,
+      url: 'https://example.com/normalized-image',
+    }],
+  };
+
+  const result = await stageNativeImageAttachments(message, {
+    fetchImpl: async () => ({
+      ok: true,
+      async arrayBuffer() {
+        return Buffer.from('normalized-image');
+      },
+    }),
+    mkdtempFn: async () => '/tmp/aid-codex-images-normalized',
+    writeFileFn: async (filePath, bytes) => {
+      writes.push({ filePath, bytes: bytes.toString('utf8') });
+    },
+    rmFn: async () => {},
+    tmpdir: '/tmp',
+  });
+
+  assert.deepEqual(result.inputImages, [
+    '/tmp/aid-codex-images-normalized/01-normalized-image.png',
+  ]);
+  assert.deepEqual(writes, [{
+    filePath: '/tmp/aid-codex-images-normalized/01-normalized-image.png',
+    bytes: 'normalized-image',
+  }]);
 });
 
 test('stageNativeImageAttachments keeps URL fallback notes when image download fails', async () => {

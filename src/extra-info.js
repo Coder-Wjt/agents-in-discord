@@ -1,4 +1,10 @@
-export const DEFAULT_EXTRA_INFO_TEMPLATE = '[Via agents-in-discord; discord_thread={thread}; parent={parent}]';
+import {
+  getInboundMessageConversation,
+  getInboundMessageConversationId,
+  getInboundMessageConversationTarget,
+} from './platforms/inbound-event.js';
+
+export const DEFAULT_EXTRA_INFO_TEMPLATE = '[Via agents-in-discord; conversation={conversation}; parent={parent}]';
 const PER_MESSAGE_PLACEHOLDER_RE = /\{(?:msg|message|message_id)\}/i;
 
 export function normalizeExtraInfoTemplate(value) {
@@ -16,17 +22,25 @@ export function normalizeExtraInfoEnabled(value) {
 }
 
 export function buildExtraInfoValues({ message = null, channel = null, key = '', messageId = '' } = {}) {
-  const currentChannel = channel || message?.channel || null;
+  const conversation = getInboundMessageConversation(message);
+  const currentChannel = channel || getInboundMessageConversationTarget(message);
+  const conversationId = String(
+    getInboundMessageConversationId(message)
+    || currentChannel?.id
+    || key
+    || '',
+  ).trim();
   return {
-    thread: String(currentChannel?.id || key || '').trim(),
-    parent: String(currentChannel?.parentId || '').trim(),
+    conversation: conversationId,
+    thread: conversationId,
+    parent: String(conversation?.parentId || currentChannel?.parentId || '').trim(),
     msg: String(messageId || message?.id || '').trim(),
   };
 }
 
 function renderDefaultExtraInfoLine(values) {
   const parts = ['Via agents-in-discord'];
-  if (values.thread) parts.push(`discord_thread=${values.thread}`);
+  if (values.conversation || values.thread) parts.push(`conversation=${values.conversation || values.thread}`);
   if (values.parent) parts.push(`parent=${values.parent}`);
   return `[${parts.join('; ')}]`;
 }
@@ -41,9 +55,11 @@ export function renderExtraInfoTemplate(template, values = {}) {
   if (normalized === DEFAULT_EXTRA_INFO_TEMPLATE) return renderDefaultExtraInfoLine(values);
 
   return normalized
-    .replaceAll('{thread}', values.thread || '')
-    .replaceAll('{thread_id}', values.thread || '')
-    .replaceAll('{discord_thread}', values.thread || '')
+    .replaceAll('{conversation}', values.conversation || values.thread || '')
+    .replaceAll('{conversation_id}', values.conversation || values.thread || '')
+    .replaceAll('{thread}', values.thread || values.conversation || '')
+    .replaceAll('{thread_id}', values.thread || values.conversation || '')
+    .replaceAll('{discord_thread}', values.thread || values.conversation || '')
     .replaceAll('{parent}', values.parent || '')
     .replaceAll('{parent_id}', values.parent || '')
     .replaceAll('{msg}', values.msg || '')

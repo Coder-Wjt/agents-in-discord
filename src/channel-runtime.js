@@ -1,3 +1,8 @@
+import {
+  getInboundMessageActorId,
+  getInboundMessageConversationId,
+} from './platforms/inbound-event.js';
+
 const STOP_CHILD_PROCESS_STATE = Symbol('agentsInDiscordStopChildProcessState');
 
 export function createChannelRuntimeStore({
@@ -86,9 +91,9 @@ export function createChannelRuntimeStore({
     const queuedPrompts = state.queue.map((job, index) => ({
       index: index + 1,
       id: job.id || null,
-      authorId: job.authorId || job.message?.author?.id || null,
+      authorId: job.authorId || getInboundMessageActorId(job.message) || null,
       messageId: job.messageId || job.message?.id || null,
-      channelId: job.channelId || job.message?.channel?.id || null,
+      channelId: job.channelId || getInboundMessageConversationId(job.message) || null,
       enqueuedAt: job.enqueuedAt || null,
       promptPreview: truncate(String(job.content || '').replace(/\s+/g, ' '), promptPreviewChars),
     }));

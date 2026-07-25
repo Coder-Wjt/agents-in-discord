@@ -50,6 +50,33 @@ test('createChannelRuntimeStore preserves streamed process messages when the run
   assert.deepEqual(state.activeRun.streamedProcessActivityKeys, ['command: npm test']);
 });
 
+test('createChannelRuntimeStore snapshots normalized-only queued message ownership', () => {
+  const store = createChannelRuntimeStore({
+    cloneProgressPlan: (plan) => (plan ? JSON.parse(JSON.stringify(plan)) : null),
+    truncate: (text, max) => (text.length <= max ? text : `${text.slice(0, max - 3)}...`),
+  });
+  const state = store.getChannelState('normalized-conversation');
+  state.queue.push({
+    id: 'job-1',
+    content: 'normalized queued prompt',
+    message: {
+      id: 'message-1',
+      actor: { id: 'user-1' },
+      conversation: { id: 'normalized-conversation', parentId: null, isThread: false },
+    },
+  });
+
+  assert.deepEqual(store.getRuntimeSnapshot('normalized-conversation').queuedPrompts, [{
+    index: 1,
+    id: 'job-1',
+    authorId: 'user-1',
+    messageId: 'message-1',
+    channelId: 'normalized-conversation',
+    enqueuedAt: null,
+    promptPreview: 'normalized queued prompt',
+  }]);
+});
+
 test('stopChildProcess escalates when SIGTERM does not close the process', async () => {
   const signals = [];
   const child = new EventEmitter();

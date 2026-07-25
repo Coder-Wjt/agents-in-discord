@@ -1,6 +1,7 @@
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { getInboundMessageAttachments } from './platforms/inbound-event.js';
 
 const MAX_NATIVE_IMAGE_ATTACHMENTS = 8;
 const IMAGE_EXTENSIONS = new Set([
@@ -29,11 +30,12 @@ function sanitizeFilename(value, fallback = 'image') {
 }
 
 function pickImageExtension(attachment) {
+  const raw = attachment?.raw || attachment;
   const name = normalizeText(attachment?.name || '');
   const ext = path.extname(name).toLowerCase();
   if (IMAGE_EXTENSIONS.has(ext)) return ext;
 
-  const contentType = normalizeText(attachment?.contentType || '').toLowerCase();
+  const contentType = normalizeText(attachment?.mimeType || raw?.contentType || '').toLowerCase();
   if (contentType === 'image/jpeg') return '.jpg';
   if (contentType === 'image/png') return '.png';
   if (contentType === 'image/gif') return '.gif';
@@ -45,7 +47,8 @@ function pickImageExtension(attachment) {
 }
 
 export function isImageAttachment(attachment) {
-  const contentType = normalizeText(attachment?.contentType || '').toLowerCase();
+  const raw = attachment?.raw || attachment;
+  const contentType = normalizeText(attachment?.mimeType || raw?.contentType || '').toLowerCase();
   if (contentType.startsWith('image/')) return true;
   const ext = path.extname(normalizeText(attachment?.name || '')).toLowerCase();
   return IMAGE_EXTENSIONS.has(ext);
@@ -59,7 +62,7 @@ export async function stageNativeImageAttachments(message, {
   tmpdir = os.tmpdir(),
   safeError = (err) => err?.message || String(err),
 } = {}) {
-  const attachments = Array.from(message?.attachments?.values?.() || [])
+  const attachments = getInboundMessageAttachments(message)
     .filter(isImageAttachment)
     .slice(0, MAX_NATIVE_IMAGE_ATTACHMENTS);
 
@@ -86,7 +89,8 @@ export async function stageNativeImageAttachments(message, {
 
   for (let index = 0; index < attachments.length; index += 1) {
     const attachment = attachments[index];
-    const url = normalizeText(attachment?.url || attachment?.proxyURL || '');
+    const raw = attachment?.raw || attachment;
+    const url = normalizeText(attachment?.url || raw?.url || raw?.proxyURL || '');
     if (!url) {
       notes.push(`图片附件 ${attachment?.name || index + 1} 缺少 URL，已回退到附件文本。`);
       continue;
