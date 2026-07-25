@@ -11,6 +11,7 @@ const FEATURES_SECTION = 'features';
 const CODEX_MODEL_CATALOG_CACHE = new Map();
 const CLAUDE_MODEL_CATALOG_CACHE = new Map();
 const ANTIGRAVITY_MODEL_CATALOG_CACHE = new Map();
+const PI_FAMILY_MODEL_CATALOG_CACHE = new Map();
 const ANTIGRAVITY_DOCUMENTED_MODELS = Object.freeze([
   'Gemini 3.5 Flash',
   'Gemini 3.1 Pro (High)',
@@ -560,6 +561,89 @@ export function readAntigravityModelCatalog({
   return catalog;
 }
 
+const PI_FAMILY_REASONING_LEVELS = new Set(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'auto']);
+
+function normalizePiFamilyModelCatalog(raw) {
+  let payload = null;
+  try {
+    payload = JSON.parse(String(raw || ''));
+  } catch {
+    return { models: [], error: 'Pi-family CLI returned unparseable model JSON' };
+  }
+
+  const entries = Array.isArray(payload?.models) ? payload.models : [];
+  const models = [];
+  const seen = new Set();
+  for (const entry of entries) {
+    // `selector` is the provider-qualified form the CLI accepts unambiguously
+    // (openai-codex/gpt-5.6-sol); `id` alone can collide across providers.
+    const slug = normalizeOptionalJsonString(entry?.selector) || normalizeOptionalJsonString(entry?.id);
+    if (!slug) continue;
+    const key = slug.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    const levels = Array.isArray(entry?.thinking)
+      ? entry.thinking
+        .map((level) => String(level || '').trim().toLowerCase())
+        .filter((level) => PI_FAMILY_REASONING_LEVELS.has(level))
+      : [];
+
+    models.push({
+      slug,
+      displayName: normalizeOptionalJsonString(entry?.name) || slug,
+      description: normalizeOptionalJsonString(entry?.provider)
+        ? `Pi-family model from ${entry.provider}`
+        : 'Pi-family model from CLI catalog',
+      defaultReasoningLevel: null,
+      supportedReasoningLevels: levels,
+      visibility: 'catalog',
+    });
+  }
+
+  return {
+    models,
+    error: models.length ? null : 'Pi-family CLI did not report any models',
+  };
+}
+
+export function readPiFamilyModelCatalog({
+  provider = 'omp',
+  bin = '',
+  env = process.env,
+  execFileSyncFn = execFileSync,
+  now = Date.now,
+  ttlMs = 5 * 60_000,
+} = {}) {
+  const normalizedProvider = String(provider || '').trim().toLowerCase() || 'omp';
+  const resolvedBin = String(bin || '').trim() || normalizedProvider;
+  const cacheKey = `${normalizedProvider}:${resolvedBin}`;
+  const cached = PI_FAMILY_MODEL_CATALOG_CACHE.get(cacheKey);
+  const currentTime = typeof now === 'function' ? now() : Date.now();
+  if (cached && currentTime - cached.timestamp < ttlMs) {
+    return cached.catalog;
+  }
+
+  let catalog;
+  try {
+    const raw = execFileSyncFn(resolvedBin, ['models', '--json'], {
+      encoding: 'utf-8',
+      env,
+      maxBuffer: 8 * 1024 * 1024,
+      timeout: 10_000,
+    });
+    catalog = normalizePiFamilyModelCatalog(raw);
+  } catch (err) {
+    catalog = {
+      models: [],
+      error: String(err?.message || err || 'unknown error').trim() || 'unknown error',
+    };
+  }
+
+  PI_FAMILY_MODEL_CATALOG_CACHE.set(cacheKey, { timestamp: currentTime, catalog });
+  return catalog;
+}
+
 export function readCodexModelCatalog({
   codexBin = 'codex',
   env = process.env,
@@ -650,6 +734,8 @@ export function readProviderModelCatalog({
   provider = 'codex',
   codexBin = 'codex',
   claudeBin = 'claude',
+  piBin = 'pi',
+  ompBin = 'omp',
   env = process.env,
   execFileSyncFn = execFileSync,
   now = Date.now,
@@ -664,6 +750,16 @@ export function readProviderModelCatalog({
   }
   if (normalized === 'agy' || normalized === 'antigravity') {
     return readAntigravityModelCatalog({ env, now, ttlMs });
+  }
+  if (normalized === 'pi' || normalized === 'omp') {
+    return readPiFamilyModelCatalog({
+      provider: normalized,
+      bin: normalized === 'pi' ? piBin : ompBin,
+      env,
+      execFileSyncFn,
+      now,
+      ttlMs,
+    });
   }
   return { models: [], error: null };
 }

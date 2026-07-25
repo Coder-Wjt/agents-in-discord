@@ -16,6 +16,7 @@ import {
   readCodexModelCatalog,
   readCodexProfileCatalog,
   readClaudeModelCatalog,
+  readPiFamilyModelCatalog,
   readProviderModelCatalog,
   renderMissingDiscordTokenHint,
   writeAntigravityModelSetting,
@@ -699,4 +700,95 @@ test('createDiscordClient applies Discord intents and optional REST proxy agent'
   assert.deepEqual(client.options.intents, ['guilds', 'messages', 'content']);
   assert.deepEqual(client.options.partials, ['channel', 'message']);
   assert.equal(client.agent, restProxyAgent);
+});
+
+test('readPiFamilyModelCatalog reads models from the CLI JSON catalog', () => {
+  const calls = [];
+  const catalog = readPiFamilyModelCatalog({
+    provider: 'omp',
+    bin: '/usr/local/bin/omp',
+    execFileSyncFn: (bin, args) => {
+      calls.push({ bin, args });
+      return JSON.stringify({
+        models: [
+          {
+            provider: 'openai-codex',
+            id: 'gpt-5.6-sol',
+            selector: 'openai-codex/gpt-5.6-sol',
+            name: 'GPT-5.6-Sol',
+            thinking: ['low', 'medium', 'high', 'xhigh', 'max'],
+          },
+          {
+            provider: 'zenmux',
+            id: 'glm-5',
+            selector: 'zenmux/glm-5',
+            name: 'GLM-5',
+            thinking: ['auto', 'bogus-level'],
+          },
+        ],
+      });
+    },
+    now: () => 1_000,
+  });
+
+  assert.deepEqual(calls, [{ bin: '/usr/local/bin/omp', args: ['models', '--json'] }]);
+  assert.equal(catalog.error, null);
+  assert.deepEqual(catalog.models.map((model) => model.slug), [
+    'openai-codex/gpt-5.6-sol',
+    'zenmux/glm-5',
+  ]);
+  assert.equal(catalog.models[0].displayName, 'GPT-5.6-Sol');
+  assert.deepEqual(catalog.models[0].supportedReasoningLevels, ['low', 'medium', 'high', 'xhigh', 'max']);
+  // Unknown thinking levels are dropped so the panel cannot offer an unsettable value.
+  assert.deepEqual(catalog.models[1].supportedReasoningLevels, ['auto']);
+});
+
+test('readPiFamilyModelCatalog caches per provider and reports failures', () => {
+  let callCount = 0;
+  const execFileSyncFn = () => {
+    callCount += 1;
+    return JSON.stringify({ models: [{ id: 'gpt-5.6-sol', selector: 'openai-codex/gpt-5.6-sol' }] });
+  };
+
+  const first = readPiFamilyModelCatalog({ provider: 'pi', bin: 'pi-cached', execFileSyncFn, now: () => 5_000 });
+  const second = readPiFamilyModelCatalog({ provider: 'pi', bin: 'pi-cached', execFileSyncFn, now: () => 5_100 });
+  assert.equal(callCount, 1);
+  assert.deepEqual(first.models, second.models);
+
+  const failed = readPiFamilyModelCatalog({
+    provider: 'omp',
+    bin: 'omp-missing',
+    execFileSyncFn: () => { throw new Error('spawn omp-missing ENOENT'); },
+    now: () => 6_000,
+  });
+  assert.deepEqual(failed.models, []);
+  assert.match(failed.error, /ENOENT/);
+
+  const unparseable = readPiFamilyModelCatalog({
+    provider: 'omp',
+    bin: 'omp-garbage',
+    execFileSyncFn: () => 'not json',
+    now: () => 7_000,
+  });
+  assert.deepEqual(unparseable.models, []);
+  assert.match(unparseable.error, /unparseable/);
+});
+
+test('readProviderModelCatalog routes pi and omp to the Pi-family reader', () => {
+  const bins = [];
+  const read = (provider) => readProviderModelCatalog({
+    provider,
+    piBin: 'pi-routed',
+    ompBin: 'omp-routed',
+    execFileSyncFn: (bin) => {
+      bins.push(bin);
+      return JSON.stringify({ models: [{ selector: `${provider}/model-a` }] });
+    },
+    now: () => Date.now() + Math.random(),
+    ttlMs: 0,
+  });
+
+  assert.deepEqual(read('pi').models.map((m) => m.slug), ['pi/model-a']);
+  assert.deepEqual(read('omp').models.map((m) => m.slug), ['omp/model-a']);
+  assert.deepEqual(bins, ['pi-routed', 'omp-routed']);
 });

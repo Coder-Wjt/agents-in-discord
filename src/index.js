@@ -144,6 +144,7 @@ import {
   normalizeSlashPrefix,
   readAntigravityDefaults,
   readAntigravityModelCatalog,
+  readPiFamilyModelCatalog,
   readClaudeDefaults,
   readCodexDefaults,
   readCodexModelCatalog,
@@ -755,6 +756,14 @@ const appContext = createAppContext({
         if (provider === 'codex') return readCodexModelCatalog({ codexBin: CODEX_BIN, env: SPAWN_ENV });
         if (provider === 'claude') return readClaudeModelCatalog({ claudeBin: CLAUDE_BIN, env: SPAWN_ENV });
         if (normalizeProvider(provider) === 'antigravity') return readAntigravityModelCatalog({ env: SPAWN_ENV });
+        const normalizedProvider = normalizeProvider(provider);
+        if (normalizedProvider === 'pi' || normalizedProvider === 'omp') {
+          return readPiFamilyModelCatalog({
+            provider: normalizedProvider,
+            bin: normalizedProvider === 'pi' ? PI_BIN : OMP_BIN,
+            env: SPAWN_ENV,
+          });
+        }
         return { models: [], error: null };
       },
       getProviderCompactCapabilities,
