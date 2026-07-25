@@ -2,6 +2,8 @@ import { createClaudeProviderAdapter } from './providers/claude.js';
 import { createCodexProviderAdapter } from './providers/codex.js';
 import { createAntigravityProviderAdapter } from './providers/antigravity.js';
 import { createZCodeProviderAdapter } from './providers/zcode.js';
+import { createPiProviderAdapter } from './providers/pi.js';
+import { createOmpProviderAdapter } from './providers/omp.js';
 import { createProviderAdapterRegistry } from './providers/index.js';
 import {
   extractUnphasedCodexAgentMessage,
@@ -30,12 +32,60 @@ export function createRunnerEventParser({
     createZCodeProviderAdapter({
       parseEvent: (event, state) => handleZCodeRunnerEvent(event, state),
     }),
+    createPiProviderAdapter({
+      parseEvent: (event, state, ensureSessionBridge) => handlePiFamilyRunnerEvent(event, state, ensureSessionBridge),
+    }),
+    createOmpProviderAdapter({
+      parseEvent: (event, state, ensureSessionBridge) => handlePiFamilyRunnerEvent(event, state, ensureSessionBridge),
+    }),
   ]);
 
   return function handleRunnerEvent(provider, event, state, ensureSessionBridge) {
     const adapter = providerAdapters.get(normalizeProvider(provider));
     adapter.runtime.parseEvent(event, state, ensureSessionBridge);
   };
+}
+
+export function handlePiFamilyRunnerEvent(event, state, ensureSessionBridge = () => {}) {
+  const eventType = String(event?.type || '').trim().toLowerCase();
+  if (eventType === 'session') {
+    const sessionId = String(event?.id || event?.sessionId || event?.session_id || '').trim();
+    if (sessionId) {
+      state.threadId = sessionId;
+      state.meta.piFamilySawSession = true;
+      ensureSessionBridge(sessionId);
+    }
+    return;
+  }
+
+  if (eventType !== 'message_end') return;
+  const message = event?.message;
+  if (!message || String(message.role || '').trim().toLowerCase() !== 'assistant') return;
+  state.meta.piFamilyAssistantEnded = true;
+
+  const stopReason = String(message.stopReason || message.stop_reason || '').trim().toLowerCase();
+  if (stopReason === 'error') {
+    const error = String(message.errorMessage || message.error_message || 'Pi-family model request failed').trim();
+    state.meta.piFamilyError = error;
+    state.logs.push(error);
+  }
+
+  const textParts = [];
+  const thinkingParts = [];
+  for (const part of Array.isArray(message.content) ? message.content : []) {
+    const type = String(part?.type || '').trim().toLowerCase();
+    if (type === 'text') {
+      const text = String(part?.text || '').trim();
+      if (text) textParts.push(text);
+    } else if (type === 'thinking') {
+      const thinking = String(part?.thinking || part?.text || '').trim();
+      if (thinking) thinkingParts.push(thinking);
+    }
+  }
+  for (const thinking of thinkingParts) appendUniqueText(state.reasonings, thinking);
+  const text = textParts.join('\n\n').trim();
+  if (text) appendUniqueText(state.finalAnswerMessages, text);
+  if (message.usage && typeof message.usage === 'object') state.usage = message.usage;
 }
 
 export function handleZCodeRunnerEvent(event, state) {

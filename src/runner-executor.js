@@ -390,7 +390,7 @@ export function createRunnerExecutor({
           workspaceDir,
           onEvent: (ev) => {
             const normalizedProvider = normalizeProvider(provider);
-            if (normalizedProvider === 'claude' || normalizedProvider === 'codex') {
+            if (['claude', 'codex', 'pi', 'omp'].includes(normalizedProvider)) {
               handleEvent(ev);
             }
             options.onEvent?.(ev);
@@ -548,13 +548,24 @@ export function createRunnerExecutor({
             finalAnswerMessages.push(formatCodexGoalCompletedMessage(goalCompleted));
           }
         }
+        let piFamilyProtocolError = '';
+        if (['pi', 'omp'].includes(normalizeProvider(provider))) {
+          piFamilyProtocolError = String(meta.piFamilyError || '').trim();
+          if (!piFamilyProtocolError && (!meta.piFamilySawSession || !threadId)) {
+            piFamilyProtocolError = 'invalid Pi JSON stream: missing session header';
+          } else if (!piFamilyProtocolError && (!meta.piFamilyAssistantEnded || finalAnswerMessages.length === 0)) {
+            piFamilyProtocolError = 'invalid Pi JSON stream: missing final assistant output';
+          }
+          if (piFamilyProtocolError && !logs.includes(piFamilyProtocolError)) logs.push(piFamilyProtocolError);
+        }
         const ok = !zcodeProtocolError
+          && !piFamilyProtocolError
           && (stoppedAfterGoalComplete || stoppedAfterGoalBlocked || (!cancelled && code === 0));
         finish({
           ok,
           cancelled: stoppedAfterGoalComplete || stoppedAfterGoalBlocked ? false : cancelled,
           timedOut,
-          error: ok ? '' : (zcodeProtocolError || buildRunnerError({ provider, code, signal, logs })),
+          error: ok ? '' : (zcodeProtocolError || piFamilyProtocolError || buildRunnerError({ provider, code, signal, logs })),
           logs,
           messages,
           finalAnswerMessages,

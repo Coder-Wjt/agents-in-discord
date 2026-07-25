@@ -6,11 +6,49 @@ import {
   handleCodexRunnerEvent,
   handleAntigravityRunnerEvent,
   handleZCodeRunnerEvent,
+  handlePiFamilyRunnerEvent,
 } from '../src/runner-event-handlers.js';
 import {
   extractAgentMessageText,
   isFinalAnswerLikeAgentMessage,
 } from '../src/codex-event-utils.js';
+
+test('handlePiFamilyRunnerEvent captures session header, reasoning, final text, and usage', () => {
+  const state = {
+    messages: [],
+    finalAnswerMessages: [],
+    reasonings: [],
+    logs: [],
+    usage: null,
+    threadId: null,
+    meta: {},
+  };
+  const bridges = [];
+
+  handlePiFamilyRunnerEvent({
+    type: 'session',
+    id: '019abc-session',
+    cwd: '/tmp/workspace',
+  }, state, (sessionId) => bridges.push(sessionId));
+  handlePiFamilyRunnerEvent({
+    type: 'message_end',
+    message: {
+      role: 'assistant',
+      content: [
+        { type: 'thinking', thinking: 'checked the repository' },
+        { type: 'text', text: 'PI_FAMILY_OK' },
+      ],
+      usage: { input: 12, output: 3, totalTokens: 15 },
+      stopReason: 'stop',
+    },
+  }, state, () => {});
+
+  assert.equal(state.threadId, '019abc-session');
+  assert.deepEqual(bridges, ['019abc-session']);
+  assert.deepEqual(state.reasonings, ['checked the repository']);
+  assert.deepEqual(state.finalAnswerMessages, ['PI_FAMILY_OK']);
+  assert.deepEqual(state.usage, { input: 12, output: 3, totalTokens: 15 });
+});
 
 test('handleCodexRunnerEvent captures codex 0.111 item.completed final answer', () => {
   const state = {
