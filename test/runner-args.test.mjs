@@ -45,6 +45,80 @@ test('createRunnerArgsBuilder builds Antigravity args instead of codex args', ()
   ]);
 });
 
+test('createRunnerArgsBuilder passes a selected Claude model to fresh and resumed runs', () => {
+  const { buildSessionRunnerArgs } = createRunnerArgsBuilder({
+    defaultModel: null,
+    normalizeProvider: (value) => value,
+    getSessionId: (session) => session.runnerSessionId,
+    resolveModelSetting: (session) => ({ value: session.model, source: 'session override' }),
+    resolveReasoningEffortSetting: () => ({ value: null, source: 'provider' }),
+    resolveFastModeSetting: () => ({ enabled: false, source: 'provider unsupported' }),
+    resolveCompactStrategySetting: () => ({ strategy: 'hard' }),
+    resolveCompactEnabledSetting: () => ({ enabled: false }),
+    resolveNativeCompactTokenLimitSetting: () => ({ tokens: 0 }),
+  });
+
+  for (const runnerSessionId of [null, 'claude-session-1']) {
+    const args = buildSessionRunnerArgs({
+      provider: 'claude',
+      session: {
+        provider: 'claude',
+        mode: 'dangerous',
+        model: 'opus',
+        runnerSessionId,
+      },
+      workspaceDir: '/tmp/workspace',
+      prompt: 'inspect',
+    });
+
+    assert.equal(args[args.indexOf('--model') + 1], 'opus');
+  }
+});
+
+test('createRunnerArgsBuilder keeps Pi and OMP resume syntax separate', () => {
+  const { buildSessionRunnerArgs } = createRunnerArgsBuilder({
+    defaultModel: null,
+    normalizeProvider: (value) => value,
+    getSessionId: (session) => session.runnerSessionId,
+    resolveModelSetting: (session) => ({ value: session.model || null, source: 'session override' }),
+    resolveReasoningEffortSetting: (session) => ({ value: session.effort || null, source: 'session override' }),
+  });
+  const common = {
+    session: {
+      mode: 'dangerous',
+      model: 'anthropic/claude-sonnet-4',
+      effort: 'high',
+      runnerSessionId: '019abc-session',
+    },
+    workspaceDir: '/tmp/workspace',
+    prompt: 'inspect',
+    systemPrompt: 'discord context',
+    additionalWorkspaceDirs: ['/tmp/shared'],
+  };
+
+  assert.deepEqual(buildSessionRunnerArgs({ provider: 'pi', ...common }), [
+    '-p',
+    '--mode', 'json',
+    '--approve',
+    '--model', 'anthropic/claude-sonnet-4',
+    '--thinking', 'high',
+    '--append-system-prompt', 'discord context',
+    '--session', '019abc-session',
+    'inspect',
+  ]);
+  assert.deepEqual(buildSessionRunnerArgs({ provider: 'omp', ...common }), [
+    '-p',
+    '--mode', 'json',
+    '--approval-mode', 'yolo',
+    '--model', 'anthropic/claude-sonnet-4',
+    '--thinking', 'high',
+    '--append-system-prompt', 'discord context',
+    '--add-dir', '/tmp/shared',
+    '--resume', '019abc-session',
+    'inspect',
+  ]);
+});
+
 test('createRunnerArgsBuilder adds native compact config for fresh codex sessions when enabled', () => {
   const { buildSessionRunnerArgs } = createRunnerArgsBuilder({
     defaultModel: 'gpt-5-codex',
