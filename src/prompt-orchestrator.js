@@ -6,28 +6,29 @@ import {
   buildExtraInfoPromptLine,
   DEFAULT_EXTRA_INFO_TEMPLATE,
   extraInfoTemplateUsesPerMessageData,
-  renderExtraInfoTemplate,
 } from './extra-info.js';
+import { assertMessageDelivery } from './platforms/message-delivery.js';
+import {
+  getInboundMessageActorId,
+  getInboundMessageConversation,
+} from './platforms/inbound-event.js';
 
 function defaultSleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-export function buildDiscordBridgePromptLine({ message = null, key = '' } = {}) {
-  return renderExtraInfoTemplate(DEFAULT_EXTRA_INFO_TEMPLATE, {
-    thread: String(message?.channel?.id || key || '').trim(),
-    parent: String(message?.channel?.parentId || '').trim(),
-    msg: String(message?.id || '').trim(),
+export function buildConversationBridgePromptLine({ message = null, key = '' } = {}) {
+  return buildExtraInfoPromptLine({
+    setting: { enabled: true, text: DEFAULT_EXTRA_INFO_TEMPLATE },
+    message,
+    key,
   });
 }
 
 export function createPromptOrchestrator({
+  messageDelivery = null,
   showReasoning = false,
   resultChunkChars = 1900,
-  safeReply,
-  safeChannelSend = async (message, payload) => message.channel.send(payload),
-  withDiscordNetworkRetry,
-  splitForDiscord,
   getSession,
   ensureWorkspace,
   saveDb,
@@ -92,6 +93,12 @@ export function createPromptOrchestrator({
     };
   },
 } = {}) {
+  const deliveryPort = assertMessageDelivery(messageDelivery);
+  const replyToMessage = deliveryPort.reply;
+  const sendToConversation = deliveryPort.send;
+  const splitMessageText = deliveryPort.splitText;
+  const startTyping = deliveryPort.startTyping;
+  const formatUserMention = deliveryPort.formatUserMention;
   const { composeResultText } = createPromptResultRenderer({
     showReasoning,
     truncate,
@@ -364,7 +371,7 @@ export function createPromptOrchestrator({
       const sent = new Set(activeRun.streamedProcessActivityKeys.map(normalizeProcessActivityKey));
       if (sent.has(key)) return;
     }
-    await safeChannelSend(message, text);
+    await sendToConversation(message, text);
     const currentActiveRun = channelState?.activeRun;
     if (currentActiveRun && key) {
       if (!Array.isArray(currentActiveRun.streamedProcessActivityKeys)) {
@@ -381,9 +388,11 @@ export function createPromptOrchestrator({
 
   function applyTerminalMention(message, payload, mode) {
     if (!shouldMentionOnTerminalReply(mode)) return payload;
-    const userId = String(message?.author?.id || '').trim();
+    const userId = getInboundMessageActorId(message);
     if (!userId) return payload;
-    const prefix = `<@${userId}> `;
+    const mention = formatUserMention(userId);
+    if (!mention) return payload;
+    const prefix = `${mention} `;
     if (typeof payload === 'string') return `${prefix}${payload}`;
     if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
       return {
@@ -395,7 +404,7 @@ export function createPromptOrchestrator({
   }
 
   async function compactCurrentSession(message, key, channelState = {}) {
-    const session = getSession(key, { channel: message.channel || null });
+    const session = getSession(key, { conversation: getInboundMessageConversation(message) });
     const sessionId = getSessionId(session);
     const workspaceDir = ensureWorkspace(session, key);
     const language = normalizeUiLanguage(getSessionLanguage(session));
@@ -429,7 +438,7 @@ export function createPromptOrchestrator({
     };
 
     if (!sessionId) {
-      await safeReply(
+      await replyToMessage(
         message,
         applyCurrentTerminalMention(message, session, language === 'en'
           ? 'No existing session to compact.'
@@ -478,7 +487,7 @@ export function createPromptOrchestrator({
         const error = compactResult.error || 'manual compact failed';
         progressOutcome = { ok: false, cancelled: false, timedOut: false, error };
         await finishProgress();
-        await safeReply(
+        await replyToMessage(
           message,
           applyCurrentTerminalMention(message, session, language === 'en'
             ? `❌ Manual compact failed: ${error}`
@@ -494,7 +503,7 @@ export function createPromptOrchestrator({
       saveDb();
       progressOutcome = { ok: true, cancelled: false, timedOut: false, error: '' };
       await finishProgress();
-      await safeReply(
+      await replyToMessage(
         message,
         applyCurrentTerminalMention(message, session, language === 'en'
           ? `✅ Compacted ${formatProviderSessionTerm(getSessionProvider(session), language)} ${sessionId}. The next message will continue in a fresh session.`
@@ -512,7 +521,7 @@ export function createPromptOrchestrator({
       return { ok: false, cancelled: true };
     }
 
-    const session = getSession(key, { channel: message.channel || null });
+    const session = getSession(key, { conversation: getInboundMessageConversation(message) });
     const startingSessionId = getSessionId(session);
     const startingLastInputTokens = session.lastInputTokens;
     const startingPendingForkFromSessionId = String(session?.pendingForkFromSessionId || '').trim() || null;
@@ -534,10 +543,12 @@ export function createPromptOrchestrator({
       onStreamProcessMessage: async (text) => sendStreamProcessMessageIfEnabled(message, session, channelState, text),
     });
 
-    void message.channel.sendTyping().catch(() => {});
-    const typingInterval = setInterval(() => {
-      message.channel.sendTyping().catch(() => {});
-    }, 8000);
+    let stopTyping = () => {};
+    try {
+      stopTyping = startTyping(message) || (() => {});
+    } catch {
+      stopTyping = () => {};
+    }
     await progress.start();
     let progressOutcome = { ok: false, cancelled: false, timedOut: false, error: '' };
     let progressFinished = false;
@@ -584,10 +595,10 @@ export function createPromptOrchestrator({
                 ? `Workspace busy: ${workspaceDir}`
                 : `workspace 正忙：${workspaceDir}`,
             );
-            return safeReply(message, buildWorkspaceBusyPayload({
+            return replyToMessage(message, buildWorkspaceBusyPayload({
               key,
               session,
-              userId: message?.author?.id || null,
+              userId: getInboundMessageActorId(message) || null,
               workspaceDir,
               owner,
             })).catch(() => {});
@@ -614,7 +625,7 @@ export function createPromptOrchestrator({
           : `等待期间 workspace 已切换：${currentWorkspaceDir}`;
         progressOutcome = { ok: false, cancelled: false, timedOut: false, error };
         await finishProgress();
-        await safeReply(
+        await replyToMessage(
           message,
           applyCurrentTerminalMention(message, session, language === 'en'
             ? 'Workspace changed while this run was waiting. Please send the message again so it starts in the new workspace.'
@@ -910,7 +921,7 @@ export function createPromptOrchestrator({
         if (result.cancelled) {
           progressOutcome = { ok: false, cancelled: true, timedOut: false, error: result.error || 'cancelled' };
           await finishProgress();
-          await safeReply(message, applyCurrentTerminalMention(message, session, '🛑 当前任务已中断。'));
+          await replyToMessage(message, applyCurrentTerminalMention(message, session, '🛑 当前任务已中断。'));
           return { ok: false, cancelled: true };
         }
 
@@ -952,9 +963,12 @@ export function createPromptOrchestrator({
           error: result.error || `${getSessionProvider(session)} run failed`,
         };
         await finishProgress();
-        await safeReply(
+        await replyToMessage(
           message,
-          applyCurrentTerminalMention(message, session, withRetryAction(failText, message?.author?.id || null)),
+          applyCurrentTerminalMention(message, session, withRetryAction(
+            failText,
+            getInboundMessageActorId(message) || null,
+          )),
         );
         return { ok: false, cancelled: false };
       }
@@ -970,16 +984,16 @@ export function createPromptOrchestrator({
             && result.finalAnswerMessages.some((item) => String(item || '').trim()),
         },
       );
-      const parts = splitForDiscord(body, resultChunkChars);
+      const parts = splitMessageText(body, resultChunkChars);
 
       if (parts.length === 0) {
-        await safeReply(message, applyCurrentTerminalMention(message, session, '✅ 完成（无可展示文本输出）。'));
+        await replyToMessage(message, applyCurrentTerminalMention(message, session, '✅ 完成（无可展示文本输出）。'));
         return { ok: true, cancelled: false };
       }
 
-      await safeReply(message, applyCurrentTerminalMention(message, session, parts[0]));
+      await replyToMessage(message, applyCurrentTerminalMention(message, session, parts[0]));
       for (let i = 1; i < parts.length; i += 1) {
-        await safeChannelSend(message, parts[i]);
+        await sendToConversation(message, parts[i]);
       }
 
       return { ok: true, cancelled: false };
@@ -988,7 +1002,7 @@ export function createPromptOrchestrator({
       throw err;
     } finally {
       releaseWorkspaceLock();
-      clearInterval(typingInterval);
+      stopTyping();
       try {
         await finishProgress();
       } finally {

@@ -70,8 +70,18 @@ test('createPromptRuntime wires presentation runtime runner orchestrator and que
     onLog() {},
     async finish() {},
   });
+  const messageDelivery = {
+    reply() {},
+    send() {},
+    edit() {},
+    startTyping() {},
+    splitText() {},
+    formatUserMention() {},
+    setMessageStatus() {},
+  };
 
   const runtime = createPromptRuntime({
+    messageDelivery,
     runtimePresentationOptions: { showReasoning: true },
     channelRuntimeStoreOptions: { truncate: (value) => value },
     sessionProgressBridgeOptions: { normalizeProvider: () => 'codex' },
@@ -124,11 +134,13 @@ test('createPromptRuntime wires presentation runtime runner orchestrator and que
   assert.equal(calls.channelRuntimeStore.cloneProgressPlan, presentation.cloneProgressPlan);
   assert.equal(calls.runnerExecutor.startSessionProgressBridge, bridgeFactory.startSessionProgressBridge);
   assert.equal(calls.progressReporterFactory.presentation, presentation);
-  assert.equal(calls.progressReporterFactory.safeReply, undefined);
+  assert.equal(calls.progressReporterFactory.messageDelivery, messageDelivery);
+  assert.equal(calls.promptOrchestrator.messageDelivery, messageDelivery);
   assert.equal(calls.promptOrchestrator.setActiveRun, channelRuntimeStore.setActiveRun);
   assert.equal(calls.promptOrchestrator.createProgressReporter, createProgressReporter);
   assert.equal(calls.promptOrchestrator.formatTimeoutLabel, presentation.formatTimeoutLabel);
   assert.equal(calls.channelQueue.getChannelState, channelRuntimeStore.getChannelState);
+  assert.equal(calls.channelQueue.messageDelivery, messageDelivery);
   assert.equal(calls.channelQueue.handlePrompt, promptOrchestrator.handlePrompt);
   assert.equal(calls.channelQueue.rememberFailedPrompt, channelRuntimeStore.rememberFailedPrompt);
   assert.equal(calls.channelQueue.clearLastFailedPrompt, channelRuntimeStore.clearLastFailedPrompt);
@@ -139,6 +151,7 @@ test('createPromptRuntime wires presentation runtime runner orchestrator and que
   assert.deepEqual(runnerCalls, [{ prompt: 'demo' }]);
 
   assert.equal(runtime.enqueuePrompt, channelQueue.enqueuePrompt);
+  assert.equal(runtime.messageDelivery, messageDelivery);
   assert.equal(runtime.dequeuePrompt, channelQueue.dequeuePrompt);
   assert.equal(runtime.retryLastPrompt, channelQueue.retryLastPrompt);
   assert.equal(runtime.getRuntimeSnapshot, channelRuntimeStore.getRuntimeSnapshot);

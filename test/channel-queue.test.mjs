@@ -101,10 +101,110 @@ test('createChannelQueue processes queued prompts sequentially', async () => {
 
   assert.deepEqual(handled, ['first', 'second']);
   assert.equal(replyLog.some((entry) => String(entry.payload).includes('已加入队列')), true);
-  assert.equal(reactionLog.filter((entry) => entry.emoji === '⚡').length, 2);
-  assert.equal(reactionLog.filter((entry) => entry.emoji === '✅').length, 2);
-  assert.deepEqual(firstMessage.removals, ['bot-user']);
-  assert.deepEqual(secondMessage.removals, ['bot-user']);
+  assert.deepEqual(reactionLog, []);
+  assert.deepEqual(firstMessage.removals, []);
+  assert.deepEqual(secondMessage.removals, []);
+});
+
+test('createChannelQueue reports semantic task status through the platform port', async () => {
+  const runtime = createChannelRuntimeStore({
+    cloneProgressPlan: (plan) => (plan ? JSON.parse(JSON.stringify(plan)) : null),
+    truncate: (text, max) => (text.length <= max ? text : `${text.slice(0, max - 3)}...`),
+  });
+  const statuses = [];
+  const messageDelivery = {
+    async reply() {},
+    async send() {},
+    async edit() {},
+    startTyping() {
+      return () => {};
+    },
+    splitText(text) {
+      return [text];
+    },
+    formatUserMention() {
+      return '';
+    },
+    async setMessageStatus(message, status) {
+      statuses.push([message.id, status]);
+    },
+  };
+  const queue = createChannelQueue({
+    messageDelivery,
+    getChannelState: runtime.getChannelState,
+    getSession: () => ({ provider: 'codex' }),
+    resolveSecurityContext: () => ({ maxQueuePerChannel: 10 }),
+    safeError: (error) => error.message,
+    handlePrompt: async () => ({ ok: true, cancelled: false }),
+  });
+  const message = {
+    id: 'platform-message',
+    author: { id: 'platform-user' },
+    channel: { id: 'platform-channel' },
+  };
+
+  await queue.enqueuePrompt(message, 'platform-thread', 'run');
+  await waitFor(() => runtime.getChannelState('platform-thread').running === false);
+
+  assert.deepEqual(statuses, [
+    ['platform-message', 'processing'],
+    ['platform-message', 'succeeded'],
+  ]);
+});
+
+test('createChannelQueue uses normalized-only actor conversation and security context', async () => {
+  const runtime = createChannelRuntimeStore({
+    cloneProgressPlan: (plan) => (plan ? JSON.parse(JSON.stringify(plan)) : null),
+    truncate: (text, max) => (text.length <= max ? text : `${text.slice(0, max - 3)}...`),
+  });
+  const state = runtime.getChannelState('normalized-key');
+  state.running = true;
+  const conversationTarget = { id: 'normalized-security-target' };
+  const conversation = {
+    id: 'normalized-conversation',
+    tenantId: 'tenant-1',
+    parentId: null,
+    isThread: false,
+    raw: conversationTarget,
+  };
+  const message = {
+    id: 'normalized-message',
+    actor: { id: 'normalized-user' },
+    conversation,
+    attachments: [],
+  };
+  const sessionCalls = [];
+  const securityCalls = [];
+  const queue = createChannelQueue({
+    getChannelState: runtime.getChannelState,
+    getSession: (key, options) => {
+      sessionCalls.push({ key, options });
+      return { provider: 'codex' };
+    },
+    resolveSecurityContext: (target, session) => {
+      securityCalls.push({ target, session });
+      return { maxQueuePerChannel: 10 };
+    },
+    safeReply: async () => {},
+    safeError: (error) => error.message,
+    handlePrompt: async () => ({ ok: true, cancelled: false }),
+  });
+
+  const result = await queue.enqueuePrompt(message, 'normalized-key', 'queued prompt');
+
+  assert.equal(result.enqueued, true);
+  assert.equal(state.queue[0].authorId, 'normalized-user');
+  assert.equal(state.queue[0].channelId, 'normalized-conversation');
+  assert.deepEqual(sessionCalls, [{ key: 'normalized-key', options: { conversation } }]);
+  assert.equal(securityCalls[0].target, conversationTarget);
+  assert.equal(queue.dequeuePrompt('normalized-key', {
+    requesterUserId: 'another-user',
+    selector: { type: 'index', index: 1 },
+  }).reason, 'forbidden');
+  assert.equal(queue.dequeuePrompt('normalized-key', {
+    requesterUserId: 'normalized-user',
+    selector: { type: 'index', index: 1 },
+  }).ok, true);
 });
 
 test('createChannelQueue steers running Codex long prompts instead of queueing', async () => {
@@ -302,7 +402,7 @@ test('createChannelQueue refuses to dequeue an already started message', () => {
   assert.equal(state.activeRun.child.killed, false);
 });
 
-test('createChannelQueue falls back to message client user id when getCurrentUserId is omitted', async () => {
+test('createChannelQueue does not access platform reactions without a delivery port', async () => {
   const runtime = createChannelRuntimeStore({
     cloneProgressPlan: (plan) => (plan ? JSON.parse(JSON.stringify(plan)) : null),
     truncate: (text, max) => (text.length <= max ? text : `${text.slice(0, max - 3)}...`),
@@ -324,7 +424,8 @@ test('createChannelQueue falls back to message client user id when getCurrentUse
   await queue.enqueuePrompt(message, 'thread-2', 'third');
   await waitFor(() => runtime.getChannelState('thread-2').running === false);
 
-  assert.deepEqual(message.removals, ['bot-user']);
+  assert.deepEqual(message.removals, []);
+  assert.deepEqual(reactionLog, []);
 });
 
 test('createChannelQueue remembers failed prompts and can re-enqueue them', async () => {
@@ -423,16 +524,21 @@ test('createChannelQueue adds retry button when unexpected processing error bubb
   });
   const replyLog = [];
   const reactionLog = [];
+  const statuses = [];
 
   const queue = createChannelQueue({
+    messageDelivery: {
+      reply: async (message, payload) => {
+        replyLog.push({ id: message.id, payload });
+      },
+      setMessageStatus: async (message, status) => {
+        statuses.push([message.id, status]);
+      },
+    },
     getChannelState: runtime.getChannelState,
     getSession: () => ({ provider: 'codex' }),
     resolveSecurityContext: () => ({ maxQueuePerChannel: 10 }),
-    safeReply: async (message, payload) => {
-      replyLog.push({ id: message.id, payload });
-    },
     safeError: (error) => error.message,
-    getCurrentUserId: () => 'bot-user',
     handlePrompt: async () => {
       throw new Error('boom');
     },
@@ -448,24 +554,25 @@ test('createChannelQueue adds retry button when unexpected processing error bubb
   const failedPrompt = runtime.getLastFailedPrompt('thread-4');
   assert.equal(failedPrompt?.content, 'explode');
   assert.equal(failedPrompt?.error, 'boom');
-  assert.equal(reactionLog.some((entry) => entry.id === '5' && entry.emoji === '❌'), true);
+  assert.deepEqual(statuses, [
+    ['5', 'processing'],
+    ['5', 'failed'],
+  ]);
+  assert.deepEqual(reactionLog, []);
 
   const errorReply = replyLog.at(-1)?.payload;
   assert.equal(typeof errorReply, 'object');
   assert.equal(errorReply.content, '❌ 处理失败：boom');
-  assert.deepEqual(errorReply.components, [
-    {
-      type: 1,
-      components: [
-        {
-          type: 2,
-          style: 1,
-          label: 'Retry',
-          custom_id: 'cmd:retry:user-5',
-        },
-      ],
-    },
-  ]);
+  assert.equal(errorReply.type, 'message');
+  assert.equal(errorReply.fallbackText, '按钮不可用时，请发送 `!retry` 重试这个失败任务。');
+  assert.deepEqual(errorReply.rows[0].components[0], {
+    type: 'button',
+    id: 'cmd:retry:user-5',
+    label: 'Retry',
+    style: 'primary',
+    disabled: false,
+    url: null,
+  });
 });
 
 test('createChannelQueue refuses mutating side prompt while parent is active', async () => {

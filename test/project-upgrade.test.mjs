@@ -242,15 +242,16 @@ test('project upgrade scheduler notifies once and blocks auto upgrade while work
       return { ok: true, changed: true, check: update };
     },
   };
-  const client = {
-    channels: {
-      fetch: async () => ({ send: async (payload) => sent.push(payload.content) }),
+  const notificationDelivery = {
+    sendNotification: async (_conversationId, payload) => {
+      sent.push(payload.content);
+      return true;
     },
   };
   const scheduler = createProjectUpgradeScheduler({
     manager,
-    notifyChannelIds: ['channel-1'],
-    getClient: () => client,
+    notifyConversationIds: ['channel-1'],
+    notificationDelivery,
     getRuntimeSnapshots: () => [],
     requestRestart: () => { restartCalls += 1; },
     stateFile: path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'aid-upgrade-state-')), 'state.json'),
@@ -270,8 +271,8 @@ test('project upgrade scheduler notifies once and blocks auto upgrade while work
   update.config = { mode: 'auto' };
   const busyScheduler = createProjectUpgradeScheduler({
     manager,
-    notifyChannelIds: ['channel-1'],
-    getClient: () => client,
+    notifyConversationIds: ['channel-1'],
+    notificationDelivery,
     getRuntimeSnapshots: () => [{ key: 'thread-1', running: true, queued: 0 }],
     requestRestart: () => { restartCalls += 1; },
   });
@@ -301,20 +302,16 @@ test('project upgrade scheduler retries notices after send failures', async () =
     check: async () => update,
     apply: async () => ({ ok: true, changed: true, check: update }),
   };
-  const client = {
-    channels: {
-      fetch: async () => ({
-        send: async () => {
-          attempts += 1;
-          throw new Error('discord unavailable');
-        },
-      }),
+  const notificationDelivery = {
+    sendNotification: async () => {
+      attempts += 1;
+      throw new Error('platform unavailable');
     },
   };
   const scheduler = createProjectUpgradeScheduler({
     manager,
-    notifyChannelIds: ['channel-1'],
-    getClient: () => client,
+    notifyConversationIds: ['channel-1'],
+    notificationDelivery,
     getRuntimeSnapshots: () => [],
     stateFile: path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'aid-upgrade-state-')), 'state.json'),
     logger: { warn: () => {} },
@@ -355,7 +352,7 @@ test('project upgrade scheduler blocks auto upgrade on fresh peer heartbeat only
   };
   const scheduler = createProjectUpgradeScheduler({
     manager,
-    notifyChannelIds: [],
+    notifyConversationIds: [],
     getRuntimeSnapshots: () => [],
     requestRestart: () => {},
     heartbeatDir,

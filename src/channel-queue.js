@@ -1,4 +1,11 @@
 import { withRetryAction } from './retry-action-button.js';
+import {
+  getInboundMessageActorId,
+  getInboundMessageAttachments,
+  getInboundMessageConversation,
+  getInboundMessageConversationId,
+  getInboundMessageConversationTarget,
+} from './platforms/inbound-event.js';
 
 function isOpenSideSession(session) {
   const meta = session?.sideConversation;
@@ -17,6 +24,7 @@ function looksLikeMutatingSidePrompt(content) {
 }
 
 export function createChannelQueue({
+  messageDelivery = null,
   getChannelState,
   getSession,
   resolveSecurityContext,
@@ -24,7 +32,6 @@ export function createChannelQueue({
   slashRef = (name) => `/${name}`,
   safeReply,
   safeError,
-  getCurrentUserId,
   handlePrompt,
   steerPrompt = null,
   rememberFailedPrompt = () => null,
@@ -33,16 +40,8 @@ export function createChannelQueue({
 } = {}) {
   let nextQueueItemId = 1;
 
-  function resolveCurrentUserId(message) {
-    const explicit = String(getCurrentUserId?.() || '').trim();
-    if (explicit) return explicit;
-    const fromClient = String(
-      message?.client?.user?.id
-      || message?.channel?.client?.user?.id
-      || '',
-    ).trim();
-    return fromClient || null;
-  }
+  const replyToMessage = messageDelivery?.reply || safeReply;
+  const setMessageStatus = messageDelivery?.setMessageStatus || (async () => {});
 
   function normalizeUserId(value) {
     return String(value || '').trim() || null;
@@ -53,13 +52,7 @@ export function createChannelQueue({
   }
 
   function hasMessageAttachments(message) {
-    const attachments = message?.attachments;
-    if (!attachments) return false;
-    if (typeof attachments.size === 'number') return attachments.size > 0;
-    if (Array.isArray(attachments)) return attachments.length > 0;
-    if (typeof attachments.length === 'number') return attachments.length > 0;
-    if (typeof attachments.values === 'function') return !attachments.values().next().done;
-    return false;
+    return getInboundMessageAttachments(message).length > 0;
   }
 
   function formatSteerFailure(reason) {
@@ -90,7 +83,7 @@ export function createChannelQueue({
         channelState: state,
       });
       if (outcome?.steered) {
-        await safeReply(message, '↪️ 已插入当前 Codex 任务。');
+        await replyToMessage(message, '↪️ 已插入当前 Codex 任务。');
         return { ok: true, steered: true };
       }
       return {
@@ -109,12 +102,12 @@ export function createChannelQueue({
 
   async function enqueuePrompt(message, key, content, securityContext = null) {
     const state = getChannelState(key);
-    const session = getSession(key, { channel: message.channel || null });
-    const security = securityContext || resolveSecurityContext(message.channel, session);
+    const session = getSession(key, { conversation: getInboundMessageConversation(message) });
+    const security = securityContext || resolveSecurityContext(getInboundMessageConversationTarget(message), session);
     if (isOpenSideSession(session) && looksLikeMutatingSidePrompt(content)) {
       const parentState = getChannelState(session.sideConversation.parentChannelId);
       if (parentState?.running || parentState?.queue?.length) {
-        await safeReply(
+        await replyToMessage(
           message,
           '⏳ 父线程还有任务在跑。side 线程里的修改类请求先不接，等父线程空闲后再发，避免两个 Codex 同时改同一个 workspace。',
         );
@@ -129,7 +122,7 @@ export function createChannelQueue({
     if (isOpenSideSession(session)) {
       const parentState = getChannelState(session.sideConversation.parentChannelId);
       if (parentState?.running) {
-        await safeReply(
+        await replyToMessage(
           message,
           '⏳ 父线程还有任务在跑。side 线程先等父线程空闲后再接，避免复用同一个 Codex app-server 时失败。',
         );
@@ -154,7 +147,7 @@ export function createChannelQueue({
 
     const maxQueue = security.maxQueuePerChannel;
     if (maxQueue > 0 && state.queue.length >= maxQueue) {
-      await safeReply(
+      await replyToMessage(
         message,
         `🚧 当前频道队列已满（上限 ${maxQueue}）。请稍后重试，或用 \`${slashRef('status')}\` 查看状态，必要时用 \`!c\` 清空当前任务与积压。`,
       );
@@ -167,9 +160,9 @@ export function createChannelQueue({
       message,
       key,
       content,
-      authorId: normalizeUserId(message?.author?.id),
+      authorId: normalizeUserId(getInboundMessageActorId(message)),
       messageId: normalizeMessageId(message?.id),
-      channelId: normalizeMessageId(message?.channel?.id),
+      channelId: normalizeMessageId(getInboundMessageConversationId(message)),
       enqueuedAt: Date.now(),
     });
     nextQueueItemId += 1;
@@ -178,7 +171,7 @@ export function createChannelQueue({
       const steerFailure = steerAttempt && !steerAttempt.steered
         ? `插入当前任务失败（${formatSteerFailure(steerAttempt.fallbackReason)}），`
         : '';
-      await safeReply(
+      await replyToMessage(
         message,
         `⏳ ${steerFailure}已加入队列，前面还有 ${queuedAhead} 条。可用 \`${slashRef('status')}\` 查看状态，必要时用 \`!c\` 中断当前任务。`,
       );
@@ -193,7 +186,7 @@ export function createChannelQueue({
       message: job.message,
       key: job.key,
       content: job.content,
-      authorId: String(job?.message?.author?.id || '').trim() || null,
+      authorId: normalizeUserId(getInboundMessageActorId(job?.message)),
       failedAt: Date.now(),
       reason: reason || null,
       error: err ? safeError(err) : null,
@@ -241,7 +234,9 @@ export function createChannelQueue({
       return state.queue.findIndex((job) => normalizeMessageId(job.messageId || job.message?.id) === messageId);
     }
     for (let i = state.queue.length - 1; i >= 0; i -= 1) {
-      const jobAuthorId = normalizeUserId(state.queue[i]?.authorId || state.queue[i]?.message?.author?.id);
+      const jobAuthorId = normalizeUserId(
+        state.queue[i]?.authorId || getInboundMessageActorId(state.queue[i]?.message),
+      );
       if (jobAuthorId && requesterUserId && jobAuthorId === requesterUserId) return i;
     }
     return -1;
@@ -285,7 +280,7 @@ export function createChannelQueue({
     }
 
     const job = state.queue[index];
-    const jobAuthorId = normalizeUserId(job.authorId || job.message?.author?.id);
+    const jobAuthorId = normalizeUserId(job.authorId || getInboundMessageActorId(job.message));
     if (!isManager && jobAuthorId && normalizedRequesterId && jobAuthorId !== normalizedRequesterId) {
       return { ok: false, reason: 'forbidden', removedCount: 0 };
     }
@@ -323,32 +318,27 @@ export function createChannelQueue({
     channelState.cancelRequested = false;
 
     try {
-      await message.react('⚡').catch(() => {});
+      await setMessageStatus(message, 'processing').catch(() => {});
       const outcome = await handlePrompt(message, key, content, channelState);
-      const currentUserId = resolveCurrentUserId(message);
-      if (currentUserId) {
-        await message.reactions.cache.get('⚡')?.users.remove(currentUserId).catch(() => {});
-      }
       if (outcome.ok) {
-        await message.react('✅').catch(() => {});
+        await setMessageStatus(message, 'succeeded').catch(() => {});
       } else if (outcome.cancelled) {
-        await message.react('🛑').catch(() => {});
+        await setMessageStatus(message, 'cancelled').catch(() => {});
       } else {
         rememberFailedPrompt(channelState, createFailedPromptRecord(job, null, outcome?.reason || null));
-        await message.react('❌').catch(() => {});
+        await setMessageStatus(message, 'failed').catch(() => {});
       }
     } catch (err) {
       console.error('runPromptJob error:', err);
       try {
         rememberFailedPrompt(channelState, createFailedPromptRecord(job, err));
-        const currentUserId = resolveCurrentUserId(message);
-        if (currentUserId) {
-          await message.reactions.cache.get('⚡')?.users.remove(currentUserId).catch(() => {});
-        }
-        await message.react('❌').catch(() => {});
-        await safeReply(
+        await setMessageStatus(message, 'failed').catch(() => {});
+        await replyToMessage(
           message,
-          withRetryAction(`❌ 处理失败：${safeError(err)}`, message?.author?.id || null),
+          withRetryAction(
+            `❌ 处理失败：${safeError(err)}`,
+            getInboundMessageActorId(message) || null,
+          ),
         );
       } catch {
         // ignore

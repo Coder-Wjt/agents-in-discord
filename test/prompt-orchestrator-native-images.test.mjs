@@ -15,13 +15,24 @@ function createHarness(overrides = {}) {
 
   const replyLog = [];
   const orchestrator = createPromptOrchestrator({
-    safeReply: async (_message, payload) => {
-      replyLog.push(payload);
-      return { id: `reply-${replyLog.length}`, edit: async () => {} };
+    messageDelivery: {
+      async reply(_message, payload) {
+        replyLog.push(payload);
+        return { id: `reply-${replyLog.length}`, edit: async () => {} };
+      },
+      async send() {},
+      async edit() {},
+      startTyping() {
+        return () => {};
+      },
+      splitText(text) {
+        return [text];
+      },
+      formatUserMention() {
+        return '';
+      },
+      async setMessageStatus() {},
     },
-    safeChannelSend: async () => {},
-    withDiscordNetworkRetry: async (fn) => fn(),
-    splitForDiscord: (text) => [text],
     getSession: () => session,
     ensureWorkspace: () => '/repo/demo',
     saveDb: () => {},

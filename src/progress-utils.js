@@ -1095,7 +1095,7 @@ export function extractRawProgressTextFromEvent(ev, options = {}) {
     const containsStructuredBlocks = content.some((part) => part && typeof part === 'object' && normalizeEventType(part.type || ''));
     // Claude stream-json emits assistant snapshots before the trailing message_delta/result.
     // They often contain the final answer body without a stop_reason yet, so they should not
-    // be treated as process content for the Discord progress card.
+    // be treated as process content for the live progress surface.
     if (hasClaudeMessageShape && containsStructuredBlocks) return '';
   }
 

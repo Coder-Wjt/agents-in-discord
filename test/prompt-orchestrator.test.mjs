@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { buildDiscordBridgePromptLine, createPromptOrchestrator } from '../src/prompt-orchestrator.js';
+import { buildConversationBridgePromptLine, createPromptOrchestrator } from '../src/prompt-orchestrator.js';
+import { createDiscordMessageDelivery } from '../src/platforms/discord/message-delivery.js';
 
 function createOrchestrator(overrides = {}) {
   const replyLog = [];
@@ -39,12 +40,28 @@ function createOrchestrator(overrides = {}) {
         progressCalls.push({ type: 'finish', outcome });
       },
     }),
-    safeReply: async (_message, payload) => {
-      replyLog.push(payload);
-      return { id: `reply-${replyLog.length}`, edit: async () => {} };
+    messageDelivery: {
+      async reply(_message, payload) {
+        replyLog.push(payload);
+        return { id: `reply-${replyLog.length}`, edit: async () => {} };
+      },
+      async send(_message, payload) {
+        replyLog.push(payload);
+        return { id: `send-${replyLog.length}`, edit: async () => {} };
+      },
+      async edit() {},
+      startTyping() {
+        return () => {};
+      },
+      splitText(text) {
+        return [text];
+      },
+      formatUserMention(userId) {
+        const normalized = String(userId || '').trim();
+        return normalized ? `<@${normalized}>` : '';
+      },
+      async setMessageStatus() {},
     },
-    withDiscordNetworkRetry: async (fn) => fn(),
-    splitForDiscord: (text) => [text],
     getSession: () => session,
     ensureWorkspace: () => '/repo/demo',
     saveDb: () => {
@@ -126,6 +143,20 @@ function createOrchestrator(overrides = {}) {
     sleep: async () => {},
   };
 
+  const {
+    safeReply: legacyReply,
+    safeChannelSend: legacySend,
+    splitForDiscord: legacySplit,
+    messageDelivery: suppliedMessageDelivery,
+    ...restOverrides
+  } = overrides;
+  const messageDelivery = suppliedMessageDelivery || {
+    ...deps.messageDelivery,
+    ...(legacyReply ? { reply: legacyReply } : {}),
+    ...(legacySend ? { send: legacySend } : {}),
+    ...(legacySplit ? { splitText: legacySplit } : {}),
+  };
+
   return {
     session,
     replyLog,
@@ -133,7 +164,11 @@ function createOrchestrator(overrides = {}) {
     get saveCount() {
       return saveCount;
     },
-    orchestrator: createPromptOrchestrator({ ...deps, ...overrides }),
+    orchestrator: createPromptOrchestrator({
+      ...deps,
+      ...restOverrides,
+      messageDelivery,
+    }),
   };
 }
 
@@ -191,7 +226,12 @@ test('createPromptOrchestrator.handlePrompt runs task updates session and replie
 });
 
 test('createPromptOrchestrator.handlePrompt continues when Discord typing indicator fails', async () => {
-  const harness = createOrchestrator();
+  const messageDelivery = createDiscordMessageDelivery({
+    reply: async (message, payload) => message.channel.send(payload),
+    send: async (message, payload) => message.channel.send(payload),
+    splitText: (text) => [text],
+  });
+  const harness = createOrchestrator({ messageDelivery });
   const { replyLog, orchestrator } = harness;
   const message = {
     id: 'msg-1',
@@ -211,6 +251,65 @@ test('createPromptOrchestrator.handlePrompt continues when Discord typing indica
   assert.deepEqual(outcome, { ok: true, cancelled: false });
   assert.equal(replyLog.length, 1);
   assert.match(replyLog[0], /final answer/);
+});
+
+test('createPromptOrchestrator routes terminal delivery through the platform port', async () => {
+  const calls = [];
+  const messageDelivery = {
+    async reply(target, payload) {
+      calls.push(['reply', target.id, payload]);
+    },
+    async send(target, payload) {
+      calls.push(['send', target.id, payload]);
+    },
+    async edit() {},
+    startTyping(target) {
+      calls.push(['typing:start', target.id]);
+      return () => calls.push(['typing:stop', target.id]);
+    },
+    splitText(_text, maxChars) {
+      calls.push(['split', maxChars]);
+      return ['first part', 'second part'];
+    },
+    formatUserMention(userId) {
+      return `@platform:${userId}`;
+    },
+    async setMessageStatus() {},
+  };
+  const harness = createOrchestrator({
+    messageDelivery,
+    safeReply: async () => {
+      throw new Error('legacy reply must not be used');
+    },
+    safeChannelSend: async () => {
+      throw new Error('legacy send must not be used');
+    },
+    splitForDiscord: () => {
+      throw new Error('legacy splitter must not be used');
+    },
+    resolveReplyDeliverySetting: () => ({ mode: 'card_mention', source: 'test' }),
+  });
+  const message = {
+    id: 'msg-port',
+    author: { id: 'user-port' },
+    channel: { id: 'channel-port' },
+  };
+
+  const outcome = await harness.orchestrator.handlePrompt(
+    message,
+    'thread-port',
+    'do work',
+    { queue: [], cancelRequested: false, activeRun: null },
+  );
+
+  assert.deepEqual(outcome, { ok: true, cancelled: false });
+  assert.deepEqual(calls, [
+    ['typing:start', 'msg-port'],
+    ['split', 1900],
+    ['reply', 'msg-port', '@platform:user-port first part'],
+    ['send', 'msg-port', 'second part'],
+    ['typing:stop', 'msg-port'],
+  ]);
 });
 
 test('createPromptOrchestrator.handlePrompt clears pending Claude fork after first fork turn binds', async () => {
@@ -292,8 +391,8 @@ test('createPromptOrchestrator.handlePrompt keeps pending Claude fork after fail
   assert.equal(session.pendingForkFromSessionId, 'parent-session');
 });
 
-test('buildDiscordBridgePromptLine keeps Discord context compact', () => {
-  const line = buildDiscordBridgePromptLine({
+test('buildConversationBridgePromptLine keeps normalized conversation context compact', () => {
+  const line = buildConversationBridgePromptLine({
     key: 'fallback-channel',
     message: {
       id: 'msg-1',
@@ -304,10 +403,10 @@ test('buildDiscordBridgePromptLine keeps Discord context compact', () => {
     },
   });
 
-  assert.equal(line, '[Via agents-in-discord; discord_thread=thread-1; parent=parent-1]');
+  assert.equal(line, '[Via agents-in-discord; conversation=thread-1; parent=parent-1]');
 });
 
-test('createPromptOrchestrator.handlePrompt sends Discord bridge context as system prompt', async () => {
+test('createPromptOrchestrator.handlePrompt sends conversation bridge context as system prompt', async () => {
   const runTaskPrompts = [];
   const runTaskSystemPrompts = [];
   const harness = createOrchestrator({
@@ -347,7 +446,7 @@ test('createPromptOrchestrator.handlePrompt sends Discord bridge context as syst
   assert.deepEqual(outcome, { ok: true, cancelled: false });
   assert.deepEqual(runTaskPrompts, ['do work']);
   assert.deepEqual(runTaskSystemPrompts, [
-    '[Via agents-in-discord; discord_thread=thread-bridge; parent=parent-channel]',
+    '[Via agents-in-discord; conversation=thread-bridge; parent=parent-channel]',
   ]);
 });
 
@@ -989,19 +1088,16 @@ test('createPromptOrchestrator.handlePrompt adds retry button after final failur
   assert.match(replyLog[0].content, /Codex 执行失败/);
   assert.match(replyLog[0].content, /已自动重试 2 次/);
   assert.match(replyLog[0].content, /runner exploded/);
-  assert.deepEqual(replyLog[0].components, [
-    {
-      type: 1,
-      components: [
-        {
-          type: 2,
-          style: 1,
-          label: 'Retry',
-          custom_id: 'cmd:retry:user-9',
-        },
-      ],
-    },
-  ]);
+  assert.equal(replyLog[0].type, 'message');
+  assert.equal(replyLog[0].fallbackText, '按钮不可用时，请发送 `!retry` 重试这个失败任务。');
+  assert.deepEqual(replyLog[0].rows[0].components[0], {
+    type: 'button',
+    id: 'cmd:retry:user-9',
+    label: 'Retry',
+    style: 'primary',
+    disabled: false,
+    url: null,
+  });
   assert.equal(progressCalls.some((entry) => entry.type === 'setLatestStep' && /第 1\/3 次尝试失败/.test(entry.text)), true);
   assert.equal(progressCalls.some((entry) => entry.type === 'setLatestStep' && /第 2\/3 次尝试失败/.test(entry.text)), true);
   assert.deepEqual(progressCalls.at(-1), {

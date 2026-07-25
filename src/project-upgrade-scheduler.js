@@ -6,13 +6,14 @@ import {
   formatProjectUpgradeStatusLine,
   normalizeProjectUpgradeMode,
 } from './project-upgrade.js';
+import { assertNotificationDelivery } from './platforms/notification-delivery.js';
 
 export function createProjectUpgradeScheduler({
   manager,
   intervalMs = 6 * 60 * 60_000,
   initialDelayMs = 30_000,
-  notifyChannelIds = [],
-  getClient = () => null,
+  notifyConversationIds = [],
+  notificationDelivery = null,
   getRuntimeSnapshots = () => [],
   requestRestart = () => false,
   stateFile = '',
@@ -24,6 +25,9 @@ export function createProjectUpgradeScheduler({
   setTimer = setTimeout,
   clearTimer = clearTimeout,
 } = {}) {
+  const resolvedNotificationDelivery = notificationDelivery
+    ? assertNotificationDelivery(notificationDelivery)
+    : null;
   let timer = null;
   let heartbeatTimer = null;
   let running = false;
@@ -99,17 +103,12 @@ export function createProjectUpgradeScheduler({
   }
 
   async function notifyAll(content) {
-    const ids = [...new Set(notifyChannelIds.map((id) => String(id || '').trim()).filter(Boolean))];
+    const ids = [...new Set(notifyConversationIds.map((id) => String(id || '').trim()).filter(Boolean))];
     if (!ids.length) return 0;
-    const client = getClient();
-    if (!client?.channels?.fetch) return 0;
+    if (!resolvedNotificationDelivery) return 0;
     const results = await Promise.all(ids.map(async (id) => {
       try {
-        const channel = await client.channels.fetch(id);
-        if (channel?.send) {
-          await channel.send({ content });
-          return true;
-        }
+        return await resolvedNotificationDelivery.sendNotification(id, { content }) === true;
       } catch (err) {
         logger.warn?.(`project upgrade notify failed for ${id}: ${String(err?.message || err)}`);
       }

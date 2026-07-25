@@ -5,8 +5,10 @@ import { createPromptProgressReporterFactory } from './prompt-progress-reporter.
 import { createRuntimePresentation } from './runtime-presentation.js';
 import { createRunnerExecutor } from './runner-executor.js';
 import { createSessionProgressBridgeFactory } from './session-progress-bridge.js';
+import { assertMessageDelivery } from './platforms/message-delivery.js';
 
 export function createPromptRuntime({
+  messageDelivery = null,
   runtimePresentationOptions = {},
   channelRuntimeStoreOptions = {},
   sessionProgressBridgeOptions = {},
@@ -15,6 +17,7 @@ export function createPromptRuntime({
   channelQueueOptions = {},
   factories = {},
 } = {}) {
+  const deliveryPort = assertMessageDelivery(messageDelivery);
   const {
     createChannelQueueFn = createChannelQueue,
     createChannelRuntimeStoreFn = createChannelRuntimeStore,
@@ -65,10 +68,12 @@ export function createPromptRuntime({
   }));
   const createProgressReporter = createPromptProgressReporterFactoryFn({
     ...promptOrchestratorOptions,
+    messageDelivery: deliveryPort,
     presentation,
   });
   const { handlePrompt, compactCurrentSession } = createPromptOrchestratorFn({
     ...promptOrchestratorOptions,
+    messageDelivery: deliveryPort,
     createProgressReporter,
     formatTimeoutLabel: presentation.formatTimeoutLabel,
     setActiveRun,
@@ -79,6 +84,7 @@ export function createPromptRuntime({
     : async () => ({ ok: false, error: 'manual compact unavailable' });
   const { enqueuePrompt, dequeuePrompt, retryLastPrompt } = createChannelQueueFn({
     ...channelQueueOptions,
+    messageDelivery: deliveryPort,
     getChannelState,
     handlePrompt,
     steerPrompt: (options) => steerProviderTask(options),
@@ -89,6 +95,7 @@ export function createPromptRuntime({
 
   return {
     ...presentation,
+    messageDelivery: deliveryPort,
     enqueuePrompt,
     dequeuePrompt,
     retryLastPrompt,
