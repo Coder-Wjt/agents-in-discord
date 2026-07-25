@@ -294,7 +294,7 @@ test('createPromptProgressReporterFactory keeps Codex command executions out of 
   assert.doesNotMatch(harness.edits.at(-1).content, /process content:/);
 });
 
-test('createPromptProgressReporterFactory still streams failed Codex commands', async () => {
+test('createPromptProgressReporterFactory keeps failed Codex commands off the process stream', async () => {
   const harness = createHarness({
     factoryOptions: {
       presentation: createRealPresentation(),
@@ -315,8 +315,56 @@ test('createPromptProgressReporterFactory still streams failed Codex commands', 
     },
   });
 
-  assert.equal(harness.streamed.length, 1);
-  assert.match(harness.streamed[0], /command failed/);
+  // The failure is already readable on the latest-activity line, so streaming it
+  // as its own Discord message would repeat it. On runs where the agent narrates
+  // nothing, that lone failure line used to be the only thing posted.
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(harness.streamed, []);
+  assert.match(harness.edits.at(-1).content, /latest activity: command failed/);
+});
+
+test('createPromptProgressReporterFactory streams Codex narration around a failing command', async () => {
+  const harness = createHarness({
+    factoryOptions: {
+      presentation: createRealPresentation(),
+    },
+  });
+
+  await harness.reporter.start();
+  harness.channelState.activeRun.phase = 'exec';
+
+  // Codex agent_message events carry no phase marker, so narration is buffered
+  // until a work event proves the agent acted on it.
+  harness.reporter.onEvent({
+    type: 'item.completed',
+    item: { id: 'item_1', type: 'agent_message', text: '先确认这个命令是否存在。' },
+  });
+  assert.deepEqual(harness.streamed, []);
+
+  harness.reporter.onEvent({
+    type: 'item.started',
+    item: {
+      id: 'item_2',
+      type: 'command_execution',
+      command: "/bin/zsh -lc 'use Cohub'",
+      exit_code: null,
+      status: 'in_progress',
+    },
+  });
+  harness.reporter.onEvent({
+    type: 'item.completed',
+    item: {
+      id: 'item_2',
+      type: 'command_execution',
+      command: "/bin/zsh -lc 'use Cohub'",
+      aggregated_output: 'zsh:1: command not found: use',
+      exit_code: 127,
+      status: 'completed',
+    },
+  });
+
+  // Narration reaches the channel; the command and its failure do not.
+  assert.deepEqual(harness.streamed, ['先确认这个命令是否存在。']);
 });
 
 test('createPromptProgressReporterFactory streams native Codex reasoning summaries', async () => {

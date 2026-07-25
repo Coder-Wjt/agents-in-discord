@@ -965,7 +965,9 @@ test('extractProcessNarrationFromEvent drops tool activity but keeps agent narra
   assert.equal(extractProcessNarrationFromEvent(narrationEvent), '先把三个来源并行拉一遍。');
 });
 
-test('extractProcessNarrationFromEvent keeps failed commands and errors readable', () => {
+test('extractProcessNarrationFromEvent excludes failed commands but keeps errors readable', () => {
+  // A failed command still reads as tool activity: its text already reaches the
+  // latest-activity line, so streaming it would duplicate the same sentence.
   const failedCommand = {
     type: 'item.completed',
     item: {
@@ -976,7 +978,8 @@ test('extractProcessNarrationFromEvent keeps failed commands and errors readable
       status: 'completed',
     },
   };
-  assert.match(extractProcessNarrationFromEvent(failedCommand), /command failed/);
+  assert.equal(extractProcessNarrationFromEvent(failedCommand), '');
+  assert.match(extractRawProgressTextFromEvent(failedCommand), /command failed/);
 
   const apiError = {
     type: 'system',

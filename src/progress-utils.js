@@ -1308,10 +1308,17 @@ function unwrapProgressEventForClassification(ev, depth = 0) {
   return ev;
 }
 
-// Tool/command activity is already surfaced by the "latest activity" line and the
-// completed-milestones list. Keeping it out of the process narration stream stops
-// per-call chatter (one line per shell command) from crowding out what the agent
-// actually says about its progress. Failures stay in, they are worth reading.
+// The process narration stream posts one Discord message per entry, so it is
+// reserved for what the agent says about its own progress. Tool and command
+// activity is already surfaced by the "latest activity" line and the
+// completed-milestones list; streaming it too crowds the agent out entirely on
+// tool-heavy runs.
+//
+// Command failures are excluded as well. They read like something worth
+// streaming, but the failure text already lands on the latest-activity line, so
+// forwarding it here just says the same thing twice — and on a run where the
+// agent narrates nothing, a lone failure line was the only thing reaching the
+// channel.
 export function isToolActivityProgressEvent(rawEvent) {
   const ev = unwrapProgressEventForClassification(rawEvent);
   if (!ev || typeof ev !== 'object') return false;
@@ -1322,9 +1329,7 @@ export function isToolActivityProgressEvent(rawEvent) {
   if (type === 'item_started' || type === 'item_completed') {
     const item = ev.item && typeof ev.item === 'object' ? ev.item : {};
     const itemType = normalizeEventType(item.type || '');
-    if (!TOOL_ACTIVITY_ITEM_TYPES.has(itemType)) return false;
-    if (isCommandExecutionType(itemType) && isFailedCommandExecution(item)) return false;
-    return true;
+    return TOOL_ACTIVITY_ITEM_TYPES.has(itemType);
   }
 
   return false;
