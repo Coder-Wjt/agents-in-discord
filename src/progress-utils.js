@@ -750,6 +750,23 @@ export function summarizeCodexEvent(ev, options = {}) {
       || 'plan updated';
   }
 
+  if (type === 'message_update') {
+    const update = ev.assistantMessageEvent && typeof ev.assistantMessageEvent === 'object'
+      ? ev.assistantMessageEvent
+      : null;
+    const updateType = normalizeEventType(update?.type || '');
+    if (updateType !== 'text_delta') return '';
+    const text = pickFirstRawText([update?.delta, update?.text]);
+    if (!text || isLowSignalProcessText(text)) return '';
+    return text;
+  }
+
+  if (type === 'tool_execution_start') {
+    const toolName = normalizeWhitespace(ev.toolName || ev.tool_name || '') || 'tool';
+    const detail = summarizeKnownArgObject(ev.args || {}, options);
+    return detail ? `${toolName}: ${detail}` : `tool ${toolName}`;
+  }
+
   if (type === 'response_item' && payload) {
     const summary = summarizeResponseItem(payload, opts);
     if (summary) return summary;
@@ -1087,6 +1104,23 @@ export function extractRawProgressTextFromEvent(ev, options = {}) {
       || '';
   }
 
+  if (type === 'message_update') {
+    const update = ev.assistantMessageEvent && typeof ev.assistantMessageEvent === 'object'
+      ? ev.assistantMessageEvent
+      : null;
+    const updateType = normalizeEventType(update?.type || '');
+    if (updateType !== 'text_delta') return '';
+    const text = pickFirstRawText([update?.delta, update?.text]);
+    if (!text || isLowSignalProcessText(text)) return '';
+    return text;
+  }
+
+  if (type === 'tool_execution_start') {
+    const toolName = normalizeWhitespace(ev.toolName || ev.tool_name || '') || 'tool';
+    const detail = summarizeKnownArgObject(ev.args || {}, options);
+    return detail ? `${toolName}: ${detail}` : `tool ${toolName}`;
+  }
+
   if (type === 'assistant') {
     const content = Array.isArray(payload?.content) ? payload.content : Array.isArray(ev?.content) ? ev.content : [];
     const hasClaudeMessageShape = payload && typeof payload === 'object'
@@ -1246,6 +1280,59 @@ export function extractRawProgressTextFromEvent(ev, options = {}) {
   }
 
   return '';
+}
+
+const TOOL_ACTIVITY_ITEM_TYPES = new Set([
+  'command_execution',
+  'local_shell_call',
+  'web_search',
+  'web_search_call',
+  'file_change',
+  'mcp_tool_call',
+  'collab_tool_call',
+]);
+
+function unwrapProgressEventForClassification(ev, depth = 0) {
+  if (!ev || typeof ev !== 'object' || depth > 3) return ev;
+  const type = normalizeEventType(ev.type || '');
+  if (type === 'stream_event' && ev.event && typeof ev.event === 'object') {
+    return unwrapProgressEventForClassification({ ...ev.event, type: ev.event.type }, depth + 1);
+  }
+  if (type === 'event_msg') {
+    const payload = extractEventPayload(ev);
+    const nestedType = normalizeEventType(payload?.type || '');
+    if (nestedType && nestedType !== 'event_msg') {
+      return unwrapProgressEventForClassification({ ...payload, type: payload.type }, depth + 1);
+    }
+  }
+  return ev;
+}
+
+// Tool/command activity is already surfaced by the "latest activity" line and the
+// completed-milestones list. Keeping it out of the process narration stream stops
+// per-call chatter (one line per shell command) from crowding out what the agent
+// actually says about its progress. Failures stay in, they are worth reading.
+export function isToolActivityProgressEvent(rawEvent) {
+  const ev = unwrapProgressEventForClassification(rawEvent);
+  if (!ev || typeof ev !== 'object') return false;
+  const type = normalizeEventType(ev.type || '');
+
+  if (type === 'tool_execution_start' || type === 'tool_use' || type === 'tool_result') return true;
+
+  if (type === 'item_started' || type === 'item_completed') {
+    const item = ev.item && typeof ev.item === 'object' ? ev.item : {};
+    const itemType = normalizeEventType(item.type || '');
+    if (!TOOL_ACTIVITY_ITEM_TYPES.has(itemType)) return false;
+    if (isCommandExecutionType(itemType) && isFailedCommandExecution(item)) return false;
+    return true;
+  }
+
+  return false;
+}
+
+export function extractProcessNarrationFromEvent(ev, options = {}) {
+  if (isToolActivityProgressEvent(ev)) return '';
+  return extractRawProgressTextFromEvent(ev, options);
 }
 
 export function extractEventTextPreview(item, options = {}) {
