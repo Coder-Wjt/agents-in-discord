@@ -79,6 +79,46 @@ const PROVIDER_METADATA = Object.freeze({
       workspaceSessionPolicy: 'strict',
     }),
   }),
+  pi: Object.freeze({
+    aliases: Object.freeze(['pi']),
+    displayName: 'Pi Agent',
+    shortName: 'Pi',
+    defaultBin: 'pi',
+    binEnvName: 'PI_BIN',
+    defaultSlashPrefix: 'pi',
+    capabilities: Object.freeze({
+      reasoningEffortLevels: Object.freeze(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']),
+      rawConfigOverrides: Object.freeze({
+        supported: false,
+      }),
+      compact: Object.freeze({
+        strategies: Object.freeze(['hard', 'native', 'off']),
+        supportsNativeStrategy: true,
+        supportsNativeLimit: false,
+      }),
+      workspaceSessionPolicy: 'strict',
+    }),
+  }),
+  omp: Object.freeze({
+    aliases: Object.freeze(['omp', 'oh-my-pi', 'ohmypi']),
+    displayName: 'Oh My Pi',
+    shortName: 'OMP',
+    defaultBin: 'omp',
+    binEnvName: 'OMP_BIN',
+    defaultSlashPrefix: 'omp',
+    capabilities: Object.freeze({
+      reasoningEffortLevels: Object.freeze(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'auto']),
+      rawConfigOverrides: Object.freeze({
+        supported: false,
+      }),
+      compact: Object.freeze({
+        strategies: Object.freeze(['hard', 'native', 'off']),
+        supportsNativeStrategy: true,
+        supportsNativeLimit: false,
+      }),
+      workspaceSessionPolicy: 'strict',
+    }),
+  }),
 });
 
 function normalizeCompactStrategyValue(value) {

@@ -27,6 +27,9 @@ test('provider-metadata normalizes aliases and optional parsing consistently', (
   assert.equal(normalizeProvider('antigravity'), 'antigravity');
   assert.equal(normalizeProvider('zcode'), 'zcode');
   assert.equal(normalizeProvider('glm'), 'zcode');
+  assert.equal(normalizeProvider('pi'), 'pi');
+  assert.equal(normalizeProvider('omp'), 'omp');
+  assert.equal(normalizeProvider('oh-my-pi'), 'omp');
   assert.equal(normalizeProvider('google'), 'codex');
   assert.equal(normalizeProvider('gemini'), 'codex');
   assert.equal(parseOptionalProvider('google'), null);
@@ -42,25 +45,35 @@ test('provider-metadata exposes provider labels, bins, and slash prefixes', () =
   assert.equal(getProviderDisplayName('claude'), 'Claude Code');
   assert.equal(getProviderDisplayName('antigravity'), 'Antigravity CLI');
   assert.equal(getProviderDisplayName('zcode'), 'ZCode CLI');
+  assert.equal(getProviderDisplayName('pi'), 'Pi Agent');
+  assert.equal(getProviderDisplayName('omp'), 'Oh My Pi');
   assert.equal(getProviderDisplayName('gemini'), 'Codex CLI');
   assert.equal(getProviderShortName('antigravity'), 'Antigravity');
   assert.equal(getProviderShortName('zcode'), 'ZCode');
   assert.equal(getProviderDefaultBin('claude'), 'claude');
   assert.equal(getProviderDefaultBin('antigravity'), 'agy');
   assert.equal(getProviderDefaultBin('zcode'), 'zcode');
+  assert.equal(getProviderDefaultBin('pi'), 'pi');
+  assert.equal(getProviderDefaultBin('omp'), 'omp');
   assert.equal(getProviderBinEnvName('codex'), 'CODEX_BIN');
   assert.equal(getProviderBinEnvName('antigravity'), 'ANTIGRAVITY_BIN');
   assert.equal(getProviderBinEnvName('zcode'), 'ZCODE_BIN');
+  assert.equal(getProviderBinEnvName('pi'), 'PI_BIN');
+  assert.equal(getProviderBinEnvName('omp'), 'OMP_BIN');
   assert.equal(getProviderDefaultSlashPrefix('codex'), 'cx');
   assert.equal(getProviderDefaultSlashPrefix('claude'), 'cc');
   assert.equal(getProviderDefaultSlashPrefix('antigravity'), 'ag');
   assert.equal(getProviderDefaultSlashPrefix('zcode'), 'zc');
+  assert.equal(getProviderDefaultSlashPrefix('pi'), 'pi');
+  assert.equal(getProviderDefaultSlashPrefix('omp'), 'omp');
 });
 
 test('provider-metadata exposes workspace, compact, and reasoning capabilities', () => {
   assert.equal(providerBindsSessionsToWorkspace('codex'), true);
   assert.equal(providerBindsSessionsToWorkspace('claude'), true);
   assert.equal(providerBindsSessionsToWorkspace('antigravity'), true);
+  assert.equal(providerBindsSessionsToWorkspace('pi'), true);
+  assert.equal(providerBindsSessionsToWorkspace('omp'), true);
   assert.deepEqual(getSupportedCompactStrategies('codex'), ['hard', 'native', 'off']);
   assert.deepEqual(getSupportedCompactStrategies('claude'), ['hard', 'native', 'off']);
   assert.equal(getProviderCompactCapabilities('antigravity').supportsNativeLimit, false);
@@ -70,6 +83,8 @@ test('provider-metadata exposes workspace, compact, and reasoning capabilities',
   assert.equal(isReasoningEffortSupported('codex', 'xhigh'), true);
   assert.equal(isReasoningEffortSupported('claude', 'xhigh'), false);
   assert.equal(isReasoningEffortSupported('antigravity', 'medium'), false);
+  assert.equal(isReasoningEffortSupported('pi', 'max'), true);
+  assert.equal(isReasoningEffortSupported('omp', 'auto'), true);
 });
 
 test('provider-metadata formats provider-aware help', () => {
