@@ -29,7 +29,18 @@ import {
   formatProjectUpgradeReport,
   parseProjectUpgradeTextInput,
 } from './project-upgrade.js';
-import { buildPromptFromMessage, formatAttachmentsForPrompt } from './discord-message-input.js';
+import { buildPromptFromMessage, formatAttachmentsForPrompt } from './message-input.js';
+import {
+  DEFAULT_CONVERSATION_PRESENTATION,
+  assertConversationPresentation,
+} from './platforms/conversation-presentation.js';
+import {
+  getInboundMessageActorId,
+  getInboundMessageAttachments,
+  getInboundMessageConversation,
+  getInboundMessageConversationTarget,
+  getInboundMessageReplyToMessageId,
+} from './platforms/inbound-event.js';
 
 function isExistingDirectory(dir) {
   try {
@@ -71,12 +82,7 @@ function buildGoalTextInput(arg = '', attachments = null) {
 }
 
 function resolveDequeueReplyMessageId(message) {
-  return String(
-    message?.reference?.messageId
-    || message?.reference?.message_id
-    || message?.reference?.message?.id
-    || '',
-  ).trim();
+  return getInboundMessageReplyToMessageId(message) || '';
 }
 
 function parseDequeueTextInput(arg = '', message = null) {
@@ -114,18 +120,26 @@ function formatDequeueOutcome(outcome) {
   return 'ℹ️ 没有找到你可撤回的排队消息。';
 }
 
-async function reactDequeuedMessages(outcome) {
+async function markDequeuedMessages(outcome, setMessageStatus) {
   const removed = Array.isArray(outcome?.removed) ? outcome.removed : [];
   await Promise.all(removed.map(async (job) => {
-    if (typeof job?.message?.react !== 'function') return;
     try {
-      await job.message.react('🗑️');
+      await setMessageStatus(job?.message, 'dequeued');
     } catch {
     }
   }));
 }
 
+function formatThreadsUnavailable(language = 'zh') {
+  return language === 'en'
+    ? '❌ This platform does not support thread-based conversations.'
+    : '❌ 当前平台不支持基于 thread 的会话功能。';
+}
+
 export function createTextCommandHandler({
+  platformCapabilities = null,
+  messageDelivery = null,
+  conversationPresentation = DEFAULT_CONVERSATION_PRESENTATION,
   botProvider = null,
   enableConfigCmd = false,
   getSession,
@@ -206,17 +220,24 @@ export function createTextCommandHandler({
   forkCodexThread,
   startCodexSideConversation,
   closeCodexSideConversation,
+  conversationSpawn,
   resolveForkWorkspace,
   getCodexThreadGoal,
   setCodexThreadGoal,
   clearCodexThreadGoal,
   enqueuePrompt,
   dequeuePrompt,
+  retryLastPrompt,
   resolveSecurityContext,
   openWorkspaceBrowser,
   resolvePath,
   safeError,
 } = {}) {
+  const presentation = assertConversationPresentation(conversationPresentation);
+  const supportsThreads = platformCapabilities?.threads !== false;
+  const supportsAttachments = platformCapabilities?.attachments !== false;
+  const setMessageStatus = messageDelivery?.setMessageStatus || (async () => {});
+
   async function maybeEnqueueCodexGoalContinuation({ action, result, message, key, session }) {
     if (!shouldStartCodexGoalContinuation(action, result)) return result;
     if (typeof enqueuePrompt !== 'function') {
@@ -224,7 +245,7 @@ export function createTextCommandHandler({
     }
     try {
       const security = typeof resolveSecurityContext === 'function'
-        ? resolveSecurityContext(message.channel, session)
+        ? resolveSecurityContext(getInboundMessageConversationTarget(message), session)
         : null;
       const queued = await enqueuePrompt(message, key, CODEX_GOAL_CONTINUATION_PROMPT, security);
       if (queued?.enqueued) {
@@ -264,7 +285,11 @@ export function createTextCommandHandler({
   return async function handleCommand(message, key, content) {
     const [cmd, ...rest] = content.split(/\s+/);
     const arg = rest.join(' ').trim();
-    const session = getSession(key, { channel: message.channel || null });
+    const actorId = getInboundMessageActorId(message);
+    const conversation = getInboundMessageConversation(message);
+    const conversationTarget = getInboundMessageConversationTarget(message);
+    const attachments = getInboundMessageAttachments(message);
+    const session = getSession(key, { conversation });
     const commandName = normalizeCommandName(cmd, { allowBangPrefix: true });
 
     switch (commandName) {
@@ -274,12 +299,12 @@ export function createTextCommandHandler({
       }
 
       case 'status': {
-        await safeReply(message, await formatStatusReport(key, session, message.channel));
+        await safeReply(message, await formatStatusReport(key, session, conversationTarget));
         break;
       }
 
       case 'queue': {
-        await safeReply(message, formatQueueReport(key, session, message.channel));
+        await safeReply(message, formatQueueReport(key, session, conversationTarget));
         break;
       }
 
@@ -293,14 +318,14 @@ export function createTextCommandHandler({
           await safeReply(message, formatDequeueOutcome({ ok: false, reason: 'unavailable' }));
           break;
         }
-        const isManager = Boolean(canManageQueue(message.author?.id, message));
+        const isManager = Boolean(canManageQueue(actorId, message));
         const outcome = dequeuePrompt(key, {
-          requesterUserId: message.author?.id,
+          requesterUserId: actorId,
           selector: parsed.selector,
           isManager,
         });
         if (outcome?.ok) {
-          await reactDequeuedMessages(outcome);
+          await markDequeuedMessages(outcome, setMessageStatus);
         }
         await safeReply(message, formatDequeueOutcome({ ...outcome, selector: parsed.selector }));
         break;
@@ -310,7 +335,7 @@ export function createTextCommandHandler({
         const language = getSessionLanguage(session);
         const action = parseProjectUpgradeTextInput(arg);
         if (action.type === 'set_mode') {
-          if (!canManageProjectUpgrade(message.author?.id)) {
+          if (!canManageProjectUpgrade(actorId)) {
             await safeReply(message, '❌ 只有项目升级管理员可以修改升级模式。');
             break;
           }
@@ -322,7 +347,7 @@ export function createTextCommandHandler({
           break;
         }
         if (action.type === 'apply') {
-          if (!canManageProjectUpgrade(message.author?.id)) {
+          if (!canManageProjectUpgrade(actorId)) {
             await safeReply(message, '❌ 只有项目升级管理员可以执行升级。');
             break;
           }
@@ -346,7 +371,7 @@ export function createTextCommandHandler({
       }
 
       case 'doctor': {
-        await safeReply(message, formatDoctorReport(key, session, message.channel));
+        await safeReply(message, formatDoctorReport(key, session, conversationTarget));
         break;
       }
 
@@ -393,7 +418,7 @@ export function createTextCommandHandler({
           await safeReply(message, formatOnboardingDisabledMessage(language));
           break;
         }
-        await safeReply(message, formatOnboardingReport(key, session, message.channel, language));
+        await safeReply(message, formatOnboardingReport(key, session, conversationTarget, language));
         break;
       }
 
@@ -441,13 +466,35 @@ export function createTextCommandHandler({
       }
 
       case 'progress': {
-        await safeReply(message, formatProgressReport(key, session, message.channel));
+        await safeReply(message, formatProgressReport(key, session, conversationTarget));
         break;
       }
 
       case 'cancel': {
         const outcome = cancelChannelWork(key, `text_command:${String(cmd || '').trim().toLowerCase()}`);
         await safeReply(message, formatCancelReport(outcome));
+        break;
+      }
+
+      case 'retry': {
+        if (typeof retryLastPrompt !== 'function') {
+          await safeReply(message, '❌ 当前环境未启用失败任务重试。');
+          break;
+        }
+        const outcome = await retryLastPrompt(key, actorId || null);
+        if (!outcome?.enqueued) {
+          const content = outcome?.reason === 'queue_full' && Number.isFinite(outcome?.maxQueue)
+            ? `🚧 当前频道队列已满（上限 ${outcome.maxQueue}），请稍后再试。`
+            : '❌ 没有可重试的失败任务。';
+          await safeReply(message, content);
+          break;
+        }
+        await safeReply(
+          message,
+          outcome.queuedAhead > 0
+            ? `🔁 已重新加入队列，前面还有 ${outcome.queuedAhead} 条。`
+            : '🔁 已重新加入队列。',
+        );
         break;
       }
 
@@ -491,7 +538,7 @@ export function createTextCommandHandler({
           await safeReply(message, openWorkspaceBrowser({
             key,
             session,
-            userId: message.author?.id,
+            userId: actorId,
             mode: 'thread',
           }));
           return;
@@ -535,7 +582,7 @@ export function createTextCommandHandler({
           await safeReply(message, openWorkspaceBrowser({
             key,
             session,
-            userId: message.author?.id,
+            userId: actorId,
             mode: 'default',
           }));
           return;
@@ -609,6 +656,10 @@ export function createTextCommandHandler({
 
       case 'fork': {
         const language = getSessionLanguage(session);
+        if (!supportsThreads) {
+          await safeReply(message, formatThreadsUnavailable(language));
+          return;
+        }
         const provider = getSessionProvider(session);
         if (!providerSupportsNativeFork(provider)) {
           await safeReply(
@@ -633,11 +684,13 @@ export function createTextCommandHandler({
             getSession,
             commandActions,
             forkCodexThread,
+            conversationSpawn,
+            conversationPresentation: presentation,
             resolveForkWorkspace,
             enqueuePrompt,
             resolveSecurityContext,
           });
-          await safeReply(message, formatProviderForkResult(result, language));
+          await safeReply(message, formatProviderForkResult(result, language, presentation));
         } catch (err) {
           await safeReply(message, `❌ ${getProviderDisplayName(provider)} fork 失败：${safeError(err)}`);
         }
@@ -646,10 +699,14 @@ export function createTextCommandHandler({
 
       case 'side': {
         const language = getSessionLanguage(session);
+        if (!supportsThreads) {
+          await safeReply(message, formatThreadsUnavailable(language));
+          return;
+        }
         const provider = getSessionProvider(session);
         const parsed = parseSideTextInput(arg);
         if (provider !== 'codex') {
-          await safeReply(message, formatCodexSideResult({ ok: false, reason: 'provider_unsupported', provider }, language));
+          await safeReply(message, formatCodexSideResult({ ok: false, reason: 'provider_unsupported', provider }, language, presentation));
           return;
         }
         try {
@@ -659,7 +716,13 @@ export function createTextCommandHandler({
               : session.sideConversation?.status === 'open'
                 ? session.sideConversation
                 : null;
-            await safeReply(message, formatCodexSideStatus(session, language, meta ? getRuntimeSnapshot(meta.sideChannelId) : null));
+            await safeReply(message, formatCodexSideStatus(
+              session,
+              language,
+              meta ? getRuntimeSnapshot(meta.sideChannelId) : null,
+              conversationSpawn,
+              presentation,
+            ));
             return;
           }
           if (parsed.action === 'close') {
@@ -671,12 +734,13 @@ export function createTextCommandHandler({
               closeCodexSideConversation,
               cancelChannelWork,
               source: message,
+              conversationSpawn,
             });
             await safeReply(message, formatCodexSideCloseResult(result, language));
             return;
           }
           if (resolveRuntimeModeSetting(session).mode !== 'long') {
-            await safeReply(message, formatCodexSideResult({ ok: false, reason: 'unsupported_runtime' }, language));
+            await safeReply(message, formatCodexSideResult({ ok: false, reason: 'unsupported_runtime' }, language, presentation));
             return;
           }
           const result = await createCodexSideConversation({
@@ -693,8 +757,10 @@ export function createTextCommandHandler({
             closeCodexSideConversation,
             ensureWorkspace,
             getSessionLanguage,
+            conversationSpawn,
+            conversationPresentation: presentation,
           });
-          await safeReply(message, formatCodexSideResult(result, language));
+          await safeReply(message, formatCodexSideResult(result, language, presentation));
         } catch (err) {
           await safeReply(message, `❌ Codex side 失败：${safeError(err)}`);
         }
@@ -704,7 +770,10 @@ export function createTextCommandHandler({
       case 'goal': {
         const language = getSessionLanguage(session);
         const provider = getSessionProvider(session);
-        const action = parseCodexGoalTextInput(buildGoalTextInput(arg, message.attachments));
+        const action = parseCodexGoalTextInput(buildGoalTextInput(
+          arg,
+          supportsAttachments ? attachments : null,
+        ));
         try {
           const result = await executeCodexGoalAction({
             action,
@@ -839,7 +908,7 @@ export function createTextCommandHandler({
           break;
         }
         if (parsed.type === 'status') {
-          await safeReply(message, formatExtraInfoConfigReport(language, session, key, message.channel, false));
+          await safeReply(message, formatExtraInfoConfigReport(language, session, key, conversationTarget, false));
           break;
         }
         if (parsed.type === 'set_enabled') {
@@ -849,7 +918,7 @@ export function createTextCommandHandler({
         } else if (parsed.type === 'reset') {
           commandActions.resetExtraInfo(session);
         }
-        await safeReply(message, formatExtraInfoConfigReport(language, session, key, message.channel, true));
+        await safeReply(message, formatExtraInfoConfigReport(language, session, key, conversationTarget, true));
         break;
       }
 

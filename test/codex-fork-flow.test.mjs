@@ -2,11 +2,31 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  createCodexForkThread,
-  createProviderForkThread,
+  createCodexForkThread as createCodexForkThreadBase,
+  createProviderForkThread as createProviderForkThreadBase,
   formatCodexForkResult,
   parseForkTextInput,
 } from '../src/codex-fork-flow.js';
+import { createDiscordConversationSpawn } from '../src/platforms/discord/conversation-spawn.js';
+import { createDiscordConversationPresentation } from '../src/platforms/discord/conversation-presentation.js';
+
+const conversationPresentation = createDiscordConversationPresentation();
+
+function createCodexForkThread(options = {}) {
+  return createCodexForkThreadBase({
+    conversationSpawn: createDiscordConversationSpawn(),
+    conversationPresentation,
+    ...options,
+  });
+}
+
+function createProviderForkThread(options = {}) {
+  return createProviderForkThreadBase({
+    conversationSpawn: createDiscordConversationSpawn(),
+    conversationPresentation,
+    ...options,
+  });
+}
 
 function createForkSource() {
   return {
@@ -35,15 +55,22 @@ test('createCodexForkThread creates Discord thread before native fork and delete
   await assert.rejects(
     () => createCodexForkThread({
       key: 'parent-channel',
-      source: createForkSource(),
+      source: {
+        ...createForkSource(),
+        channel: {
+          id: 'parent-channel',
+          threads: {
+            async create() {
+              events.push('createThread');
+              return childThread;
+            },
+          },
+        },
+      },
       parentSessionId: 'parent-session',
       getSession: () => ({}),
       commandActions: {
         bindForkedSession() {},
-      },
-      createThread: async () => {
-        events.push('createThread');
-        return childThread;
       },
       async forkCodexThread() {
         events.push('forkCodexThread');
@@ -286,7 +313,21 @@ test('formatCodexForkResult makes prompt enqueue failure explicit', async () => 
   const childSession = {};
   const result = await createCodexForkThread({
     key: 'parent-channel',
-    source: createForkSource(),
+    source: {
+      ...createForkSource(),
+      channel: {
+        id: 'parent-channel',
+        threads: {
+          async create() {
+            return {
+              id: 'child-channel',
+              async setName() {},
+              async send() {},
+            };
+          },
+        },
+      },
+    },
     parentSessionId: 'parent-session',
     getSession: () => childSession,
     commandActions: {
@@ -295,11 +336,6 @@ test('formatCodexForkResult makes prompt enqueue failure explicit', async () => 
         return binding;
       },
     },
-    createThread: async () => ({
-      id: 'child-channel',
-      async setName() {},
-      async send() {},
-    }),
     async forkCodexThread() {
       return { threadId: 'fork-session' };
     },

@@ -8,17 +8,28 @@ import {
   estimatePromptTokenCount,
 } from './extra-info.js';
 import { formatProjectUpgradeStatusLine } from './project-upgrade.js';
+import {
+  DEFAULT_CONVERSATION_PRESENTATION,
+  assertConversationPresentation,
+} from './platforms/conversation-presentation.js';
 
 const REASONING_LEVEL_DISPLAY_ORDER = Object.freeze(['xhigh', 'high', 'medium', 'low']);
 
 export function createReportFormatters({
   botProvider = null,
+  supportsThreads = true,
+  conversationPresentation = DEFAULT_CONVERSATION_PRESENTATION,
   allowedChannelIds = null,
   allowedUserIds = null,
   progressProcessLines = 3,
   progressPlanMaxLines = 3,
   progressDoneStepsMax = 3,
   slashRef = (name) => `/${name}`,
+  formatUserMention = (userId) => {
+    const normalized = String(userId || '').trim();
+    return normalized ? `@${normalized}` : '';
+  },
+  formatConversationReference = (conversationId) => String(conversationId || '').trim(),
   getSessionLanguage = () => 'zh',
   normalizeUiLanguage = (value) => (String(value || '').trim().toLowerCase() === 'en' ? 'en' : 'zh'),
   getSessionProvider = () => 'codex',
@@ -93,6 +104,7 @@ export function createReportFormatters({
   renderProgressPlanLines = () => [],
   renderCompletedStepsLines = () => [],
 } = {}) {
+  const presentation = assertConversationPresentation(conversationPresentation);
   function formatProviderDefaultLabel(value, language = 'en') {
     const source = value?.source || 'provider';
     const model = String(value?.value || '').trim();
@@ -488,7 +500,10 @@ export function createReportFormatters({
     if (!parentSessionId) return null;
     const provider = String(session?.forkedFromProvider || 'codex').trim() || 'codex';
     const channelId = String(session?.forkedFromChannelId || '').trim();
-    const channelPart = channelId ? ` <#${channelId}>` : '';
+    const conversationReference = channelId
+      ? String(formatConversationReference(channelId) || '').trim()
+      : '';
+    const channelPart = conversationReference ? ` ${conversationReference}` : '';
     if (language === 'en') {
       return `• forked from: ${getProviderDisplayName(provider)} \`${parentSessionId}\`${channelPart}`;
     }
@@ -663,7 +678,7 @@ export function createReportFormatters({
     const queuedPromptLines = Array.isArray(runtime.queuedPrompts)
       ? runtime.queuedPrompts.slice(0, 8).map((item) => [
         `• #${item.index}`,
-        item.authorId ? `<@${item.authorId}>` : null,
+        item.authorId ? formatUserMention(item.authorId) : null,
         item.messageId ? `msg:${item.messageId}` : null,
         item.promptPreview ? `— ${item.promptPreview}` : null,
       ].filter(Boolean).join(' '))
@@ -1142,6 +1157,7 @@ export function createReportFormatters({
     const reasoningLevels = getReasoningEffortLevels(provider);
     const resumeAlias = getProviderCommandAlias(provider, 'resume');
     const sessionsAlias = getProviderCommandAlias(provider, 'sessions');
+    const childConversation = presentation.getTerm('childConversation', language);
     if (language === 'en') {
       return [
         '**📋 Commands**',
@@ -1171,8 +1187,8 @@ export function createReportFormatters({
         resumeAlias ? `• current provider alias: \`!${resumeAlias} <session_id>\`` : null,
         '• `!sessions` — list recent provider sessions from the native runtime store',
         sessionsAlias ? `• current provider alias: \`!${sessionsAlias}\`` : null,
-        (provider === 'codex' || provider === 'claude') ? `• \`${slashRef('fork')} [name]\` / \`!fork [name]\` — create a native ${getProviderDisplayName(provider)} fork in a new Discord thread` : null,
-        provider === 'codex' ? `• \`${slashRef('side')} action:<start|status|close> name:<optional>\` / \`!side [start|status|close] [name]\` — open or manage a temporary Codex side conversation` : null,
+        supportsThreads && (provider === 'codex' || provider === 'claude') ? `• \`${slashRef('fork')} [name]\` / \`!fork [name]\` — create a native ${getProviderDisplayName(provider)} fork in a new ${childConversation}` : null,
+        supportsThreads && provider === 'codex' ? `• \`${slashRef('side')} action:<start|status|close> name:<optional>\` / \`!side [start|status|close] [name]\` — open or manage a temporary Codex side conversation` : null,
         provider === 'codex' ? `• \`${slashRef('goal')} action:<status|set|pause|resume|done|clear|budget>\` / \`!goal <status|objective|pause|resume|done|clear>\` — manage the current Codex goal; active goals continue until marked complete or blocked` : null,
         !botProvider ? '• `!provider <codex|claude|antigravity|zcode|status>` — switch provider for current channel' : null,
         '',
@@ -1230,8 +1246,8 @@ export function createReportFormatters({
       resumeAlias ? `• 当前 provider 别名：\`!${resumeAlias} <session_id>\`` : null,
       '• `!sessions` — 从 provider 原生运行时存储里列出最近的 sessions',
       sessionsAlias ? `• 当前 provider 别名：\`!${sessionsAlias}\`` : null,
-      (provider === 'codex' || provider === 'claude') ? `• \`${slashRef('fork')} [name]\` / \`!fork [name]\` — 用 ${getProviderDisplayName(provider)} 原生 fork 创建新 Discord thread` : null,
-      provider === 'codex' ? `• \`${slashRef('side')} action:<start|status|close> name:<可选>\` / \`!side [start|status|close] [name]\` — 开启或管理临时 Codex side conversation` : null,
+      supportsThreads && (provider === 'codex' || provider === 'claude') ? `• \`${slashRef('fork')} [name]\` / \`!fork [name]\` — 用 ${getProviderDisplayName(provider)} 原生 fork 创建新 ${childConversation}` : null,
+      supportsThreads && provider === 'codex' ? `• \`${slashRef('side')} action:<start|status|close> name:<可选>\` / \`!side [start|status|close] [name]\` — 开启或管理临时 Codex side conversation` : null,
       provider === 'codex' ? `• \`${slashRef('goal')} action:<status|set|pause|resume|done|clear|budget>\` / \`!goal <状态|目标|暂停|恢复|完成|清除>\` — 管理当前 Codex goal；active 时应持续推进直到标记完成或报告阻塞` : null,
       !botProvider ? '• `!provider <codex|claude|antigravity|zcode|status>` — 切换当前频道 provider' : null,
       '',

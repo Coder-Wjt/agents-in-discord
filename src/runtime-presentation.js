@@ -25,10 +25,6 @@ function truncateLine(value, max) {
   return `${text.slice(0, limit - 3)}...`;
 }
 
-function sanitizeProgressDisplayText(value) {
-  return String(value || '').replace(/\|\|/g, '｜｜');
-}
-
 export function createRuntimePresentation({
   showReasoning = false,
   progressTextPreviewChars = 140,
@@ -39,6 +35,7 @@ export function createRuntimePresentation({
   getSessionId = () => null,
   getSessionProvider = () => 'codex',
   formatSessionIdLabel = (sessionId) => `\`${sessionId || '(auto — 下条消息新建)'}\``,
+  sanitizeProgressDisplayText = (value) => String(value || ''),
 } = {}) {
   function formatRuntimePhaseLabel(phase, language = 'en') {
     const value = String(phase || '').trim().toLowerCase();

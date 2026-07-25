@@ -12,6 +12,8 @@ function createFormatters(overrides = {}) {
     progressPlanMaxLines: 3,
     progressDoneStepsMax: 3,
     slashRef: (name) => `/bot-${name}`,
+    formatUserMention: (userId) => `@platform:${userId}`,
+    formatConversationReference: (conversationId) => `#platform:${conversationId}`,
     getSessionLanguage: (session) => session?.language || 'zh',
     normalizeUiLanguage: (value) => (String(value || '').trim().toLowerCase() === 'en' ? 'en' : 'zh'),
     getSessionProvider: (session) => session?.provider || 'codex',
@@ -147,6 +149,44 @@ function createFormatters(overrides = {}) {
 
   return createReportFormatters({ ...base, ...overrides });
 }
+
+test('createReportFormatters formats queued authors through the platform mention formatter', () => {
+  const formatters = createFormatters({
+    getRuntimeSnapshot: () => ({
+      running: false,
+      queued: 1,
+      queuedPrompts: [{
+        index: 1,
+        authorId: 'user-1',
+        messageId: 'msg-1',
+        promptPreview: 'check queue output',
+      }],
+      progressPlan: null,
+      completedSteps: [],
+      recentActivities: [],
+      progressText: '',
+      progressAgoMs: null,
+      messageId: null,
+      progressMessageId: null,
+    }),
+  });
+
+  assert.match(formatters.formatQueueReport('thread-1', {}, {}), /@platform:user-1/);
+});
+
+test('createReportFormatters formats fork origins through the conversation reference formatter', () => {
+  const formatters = createFormatters();
+  const report = formatters.formatStatusReport('thread-1', {
+    provider: 'codex',
+    language: 'en',
+    forkedFromProvider: 'codex',
+    forkedFromSessionId: 'parent-session-1',
+    forkedFromChannelId: 'parent-conversation-1',
+  }, { id: 'thread-1' });
+
+  assert.match(report, /forked from: Codex CLI `parent-session-1` #platform:parent-conversation-1/);
+  assert.doesNotMatch(report, /<#parent-conversation-1>/);
+});
 
 test('createReportFormatters.formatStatusReport uses provider defaults for model and effort', () => {
   const formatters = createFormatters();
@@ -499,6 +539,15 @@ test('createReportFormatters.formatHelpReport documents browse actions and provi
   assert.doesNotMatch(antigravityHelp, /!effort </);
   assert.match(antigravityHelp, /raw config passthrough/);
   assert.doesNotMatch(lockedHelp, /!provider <codex\|claude\|antigravity\|zcode\|status>/);
+});
+
+test('createReportFormatters hides thread-only commands when threads are unavailable', () => {
+  const help = createFormatters({ supportsThreads: false })
+    .formatHelpReport({ language: 'en', provider: 'codex' });
+
+  assert.doesNotMatch(help, /!fork/);
+  assert.doesNotMatch(help, /!side/);
+  assert.match(help, /!goal/);
 });
 
 test('createReportFormatters.workspace reports explain session reset and lock owner', () => {

@@ -14,6 +14,7 @@ function createPresentation(overrides = {}) {
     getSessionId: (session) => session?.runnerSessionId || null,
     getSessionProvider: (session) => session?.provider || 'codex',
     formatSessionIdLabel: (sessionId) => `\`${sessionId || 'auto'}\``,
+    sanitizeProgressDisplayText: (value) => String(value || '').replace(/\|\|/g, '｜｜'),
     ...overrides,
   });
 }

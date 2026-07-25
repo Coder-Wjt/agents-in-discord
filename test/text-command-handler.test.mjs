@@ -1,7 +1,19 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createTextCommandHandler } from '../src/text-command-handler.js';
+import { createTextCommandHandler as createTextCommandHandlerBase } from '../src/text-command-handler.js';
+import { createDiscordConversationSpawn } from '../src/platforms/discord/conversation-spawn.js';
+import { createDiscordConversationPresentation } from '../src/platforms/discord/conversation-presentation.js';
+
+const conversationPresentation = createDiscordConversationPresentation();
+
+function createTextCommandHandler(options = {}) {
+  return createTextCommandHandlerBase({
+    conversationSpawn: createDiscordConversationSpawn(),
+    conversationPresentation,
+    ...options,
+  });
+}
 
 function createMessage(overrides = {}) {
   return {
@@ -124,11 +136,30 @@ test('createTextCommandHandler switches to a fresh session without retry hint', 
   assert.deepEqual(replies, ['🆕 已切换到新会话。\n下一条普通消息会开启新的上下文。']);
 });
 
+test('createTextCommandHandler retries the requester failed prompt through text fallback', async () => {
+  const replies = [];
+  const calls = [];
+  const handleCommand = createTextCommandHandler({
+    getSession: () => ({ provider: 'codex' }),
+    retryLastPrompt: async (key, requesterUserId) => {
+      calls.push({ key, requesterUserId });
+      return { ok: true, enqueued: true, queuedAhead: 2 };
+    },
+    safeReply: async (_message, payload) => replies.push(payload),
+  });
+
+  await handleCommand(createMessage({ author: { id: 'user-7' } }), 'thread-1', '!retry');
+
+  assert.deepEqual(calls, [{ key: 'thread-1', requesterUserId: 'user-7' }]);
+  assert.deepEqual(replies, ['🔁 已重新加入队列，前面还有 2 条。']);
+});
+
 test('createTextCommandHandler dequeues queued prompts without cancelling running work', async () => {
   const replies = [];
   const dequeues = [];
   const session = { provider: 'codex' };
   let cancelCalls = 0;
+  const statuses = [];
   const removedMessage = {
     id: 'queued-message-1',
     reacted: [],
@@ -137,6 +168,11 @@ test('createTextCommandHandler dequeues queued prompts without cancelling runnin
     },
   };
   const handleCommand = createTextCommandHandler({
+    messageDelivery: {
+      async setMessageStatus(message, status) {
+        statuses.push([message.id, status]);
+      },
+    },
     getSession: () => session,
     cancelChannelWork: () => {
       cancelCalls += 1;
@@ -166,7 +202,8 @@ test('createTextCommandHandler dequeues queued prompts without cancelling runnin
       isManager: false,
     },
   }]);
-  assert.deepEqual(removedMessage.reacted, ['🗑️']);
+  assert.deepEqual(statuses, [['queued-message-1', 'dequeued']]);
+  assert.deepEqual(removedMessage.reacted, []);
   assert.match(replies[0], /已撤回 1 条排队消息/);
 });
 
@@ -202,6 +239,94 @@ test('createTextCommandHandler supports dequeue by index reply and admin all', a
   ]);
   assert.equal(calls[2].options.isManager, true);
   assert.match(replies[2], /已清空 3 条排队消息/);
+});
+
+test('createTextCommandHandler accepts normalized-only command message context', async () => {
+  const conversationTarget = { id: 'normalized-target' };
+  const conversation = {
+    id: 'normalized-conversation',
+    tenantId: 'tenant-1',
+    parentId: null,
+    isThread: false,
+    raw: conversationTarget,
+  };
+  const message = {
+    id: 'normalized-message',
+    actor: { id: 'normalized-user' },
+    conversation,
+    replyToMessageId: 'queued-message-9',
+    attachments: [{
+      id: 'attachment-1',
+      name: 'brief.png',
+      mimeType: 'image/png',
+      sizeBytes: 1234,
+      url: 'https://cdn.example/brief.png',
+    }],
+  };
+  const session = { provider: 'codex', language: 'zh', runnerSessionId: 'runner-thread-1' };
+  const sessionCalls = [];
+  const dequeueCalls = [];
+  const goalCalls = [];
+  const securityCalls = [];
+  const queuedPrompts = [];
+  const handleCommand = createTextCommandHandler({
+    getSession: (key, options) => {
+      sessionCalls.push({ key, options });
+      return session;
+    },
+    getSessionId: (currentSession) => currentSession.runnerSessionId,
+    getSessionProvider: (currentSession) => currentSession.provider,
+    getSessionLanguage: () => 'zh',
+    canManageQueue: (actorId) => actorId === 'normalized-user',
+    dequeuePrompt: (key, options) => {
+      dequeueCalls.push({ key, options });
+      return { ok: false, reason: 'not_found', removedCount: 0 };
+    },
+    async setCodexThreadGoal(options) {
+      goalCalls.push(options);
+      return {
+        goal: {
+          threadId: options.threadId,
+          objective: options.objective,
+          status: options.status,
+          tokenBudget: null,
+          tokensUsed: 0,
+          timeUsedSeconds: 0,
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      };
+    },
+    resolveSecurityContext: (target, currentSession) => {
+      securityCalls.push({ target, currentSession });
+      return { maxQueuePerChannel: 10 };
+    },
+    async enqueuePrompt(queuedMessage, key, content, security) {
+      queuedPrompts.push({ queuedMessage, key, content, security });
+      return { ok: true, enqueued: true, queuedAhead: 0 };
+    },
+    safeReply: async () => {},
+  });
+
+  await handleCommand(message, 'normalized-key', '!dq');
+  await handleCommand(message, 'normalized-key', '!goal use the attachment');
+
+  assert.deepEqual(dequeueCalls, [{
+    key: 'normalized-key',
+    options: {
+      requesterUserId: 'normalized-user',
+      selector: { type: 'message', messageId: 'queued-message-9' },
+      isManager: true,
+    },
+  }]);
+  assert.equal(sessionCalls.length, 2);
+  assert.equal(sessionCalls[0].options.conversation, conversation);
+  assert.equal(sessionCalls[1].options.conversation, conversation);
+  assert.match(goalCalls[0].objective, /use the attachment/);
+  assert.match(goalCalls[0].objective, /brief\.png/);
+  assert.equal(securityCalls[0].target, conversationTarget);
+  assert.equal(queuedPrompts[0].queuedMessage, message);
+  assert.equal(queuedPrompts[0].security.maxQueuePerChannel, 10);
 });
 
 test('createTextCommandHandler reports dequeue permission and started-task failures', async () => {
@@ -316,6 +441,35 @@ test('createTextCommandHandler shows current provider-native resume alias', asyn
   assert.match(replies[0], /!conversation_resume <session-id>/);
   assert.match(replies[0], /!conversation_sessions/);
   assert.doesNotMatch(replies[0], /!project_resume/);
+});
+
+test('createTextCommandHandler blocks thread commands when the platform has no threads', async () => {
+  const replies = [];
+  let forkCalls = 0;
+  let sideCalls = 0;
+  const handleCommand = createTextCommandHandler({
+    platformCapabilities: { threads: false, attachments: false },
+    getSession: () => ({ provider: 'codex', language: 'en' }),
+    getSessionLanguage: () => 'en',
+    getSessionProvider: () => 'codex',
+    forkCodexThread: async () => {
+      forkCalls += 1;
+    },
+    startCodexSideConversation: async () => {
+      sideCalls += 1;
+    },
+    safeReply: async (_message, payload) => replies.push(payload),
+  });
+
+  await handleCommand(createMessage(), 'thread-1', '!fork demo');
+  await handleCommand(createMessage(), 'thread-1', '!side start demo');
+
+  assert.equal(forkCalls, 0);
+  assert.equal(sideCalls, 0);
+  assert.deepEqual(replies, [
+    '❌ This platform does not support thread-based conversations.',
+    '❌ This platform does not support thread-based conversations.',
+  ]);
 });
 
 test('createTextCommandHandler creates native Codex fork from text command', async () => {
@@ -446,10 +600,11 @@ test('createTextCommandHandler opens Codex side conversation from text command',
     },
   });
 
-  await handleCommand({
-    id: 'message-1',
-    author: { id: 'user-1' },
-    channel: {
+  const sourceConversation = {
+    id: 'channel-1',
+    isThread: false,
+    parentId: null,
+    raw: {
       id: 'channel-1',
       threads: {
         async create(options) {
@@ -458,6 +613,19 @@ test('createTextCommandHandler opens Codex side conversation from text command',
         },
       },
     },
+  };
+  await handleCommand({
+    type: 'message',
+    platformId: 'test',
+    id: 'message-1',
+    actor: { id: 'user-1', displayName: 'user-1', isBot: false, raw: null },
+    conversation: sourceConversation,
+    text: '!side side notes',
+    rawText: '!side side notes',
+    attachments: [],
+    replyToMessageId: null,
+    isSystem: false,
+    targetsBot: true,
   }, 'channel-1', '!side side notes');
 
   assert.equal(parentSession.runnerSessionId, 'parent-1');

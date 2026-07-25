@@ -1,5 +1,14 @@
 import { randomUUID } from 'node:crypto';
-import { splitForDiscord } from './discord-message-splitter.js';
+import {
+  assertConversationHistory,
+  assertConversationSpawn,
+  assertSpawnedConversation,
+} from './platforms/conversation-spawn.js';
+import {
+  DEFAULT_CONVERSATION_PRESENTATION,
+  assertConversationPresentation,
+} from './platforms/conversation-presentation.js';
+import { getInboundActorId } from './platforms/inbound-event.js';
 
 const FORKABLE_PROVIDERS = new Set(['codex', 'claude']);
 
@@ -34,36 +43,17 @@ function shortenId(value) {
 }
 
 function getForkRequesterId(source) {
-  return String(source?.user?.id || source?.author?.id || '').trim() || null;
-}
-
-function getForkBotUserId(source) {
-  return String(
-    source?.client?.user?.id
-    || source?.channel?.client?.user?.id
-    || source?.guild?.client?.user?.id
-    || '',
-  ).trim() || null;
+  return getInboundActorId(source) || null;
 }
 
 function normalizeMessageContent(message) {
-  const text = String(message?.content || '').trim();
+  const text = String(message?.text || '').trim();
   return text || null;
 }
 
-function collectionToArray(value) {
-  if (!value) return [];
-  if (Array.isArray(value)) return value;
-  if (typeof value.values === 'function') return [...value.values()];
-  if (typeof value[Symbol.iterator] === 'function') return [...value].map((entry) => (
-    Array.isArray(entry) && entry.length >= 2 ? entry[1] : entry
-  ));
-  return [];
-}
-
 function compareMessageRecency(a, b) {
-  const aTime = Number(a?.createdTimestamp || 0);
-  const bTime = Number(b?.createdTimestamp || 0);
+  const aTime = Number(a?.createdAtMs || 0);
+  const bTime = Number(b?.createdAtMs || 0);
   if (aTime !== bTime) return bTime - aTime;
   try {
     const aId = BigInt(String(a?.id || '0'));
@@ -75,52 +65,47 @@ function compareMessageRecency(a, b) {
   }
 }
 
-async function fetchParentMessages(source) {
-  const fetch = source?.channel?.messages?.fetch;
-  if (typeof fetch !== 'function') return [];
-  const options = { limit: 25 };
-  const sourceId = String(source?.id || '').trim();
-  if (sourceId) options.before = sourceId;
-  return collectionToArray(await fetch.call(source.channel.messages, options));
-}
-
 function findLatestParentAgentMessage(messages, source) {
-  const botUserId = getForkBotUserId(source);
   const sourceId = String(source?.id || '').trim();
   return messages
     .filter((message) => {
       if (!message || String(message.id || '') === sourceId) return false;
       if (!normalizeMessageContent(message)) return false;
-      const authorId = String(message.author?.id || '').trim();
-      if (botUserId) return authorId === botUserId;
-      return Boolean(message.author?.bot);
+      if (typeof message.actor?.isCurrentBot === 'boolean') {
+        return message.actor.isCurrentBot;
+      }
+      return Boolean(message.actor?.isBot);
     })
     .sort(compareMessageRecency)[0] || null;
 }
 
-function formatLatestAgentReplayContent(text, language = 'zh') {
+function formatLatestAgentReplayContent(text, conversationSpawn, language = 'zh') {
   const body = String(text || '').trim();
   if (!body) return [];
   const title = language === 'en' ? 'Latest agent message:' : '最近一次 agent 输出：';
   const combined = `${title}\n\n${body}`;
-  const chunks = splitForDiscord(combined, 1900);
+  const chunks = conversationSpawn.splitText(combined, 1900);
   return chunks.length ? chunks : [combined.slice(0, 1900).trim()];
 }
 
-async function replayLatestParentAgentMessage(childThread, {
+async function replayLatestParentAgentMessage(childConversation, {
+  conversationSpawn,
   source,
   language = 'zh',
 } = {}) {
-  if (typeof childThread?.send !== 'function') {
-    return { ok: false, skipped: true, error: 'child thread cannot send messages' };
-  }
   try {
-    const latest = findLatestParentAgentMessage(await fetchParentMessages(source), source);
+    const history = assertConversationHistory(
+      await conversationSpawn.listRecentMessages(source, {
+        beforeId: source?.id,
+        limit: 25,
+      }),
+    );
+    const latest = findLatestParentAgentMessage(history, source);
     const text = normalizeMessageContent(latest);
     if (!text) return { ok: false, skipped: true, reason: 'no_parent_agent_message' };
     const messages = [];
-    for (const content of formatLatestAgentReplayContent(text, language)) {
-      messages.push(await childThread.send({ content }));
+    for (const content of formatLatestAgentReplayContent(text, conversationSpawn, language)) {
+      messages.push(await conversationSpawn.send(childConversation, { content }));
     }
     return { ok: true, sourceMessageId: latest.id || null, messages };
   } catch (err) {
@@ -143,58 +128,14 @@ export function formatForkThreadName({ forkedSessionId, parentSessionId, provide
   return `${providerLabel} fork ${forkShort} from ${parentShort}`.slice(0, 100);
 }
 
-function resolveThreadCreateChannel(channel) {
-  if (channel?.threads && typeof channel.threads.create === 'function') return channel;
-  if (typeof channel?.isThread === 'function' && channel.isThread() && channel.parent?.threads && typeof channel.parent.threads.create === 'function') {
-    return channel.parent;
-  }
-  if (channel?.parent?.threads && typeof channel.parent.threads.create === 'function') return channel.parent;
-  return null;
+export function canSpawnForkConversation(source, conversationSpawn) {
+  return Boolean(conversationSpawn?.canSpawn?.(source));
 }
 
-export function canCreateDiscordForkThread(source) {
-  return Boolean(resolveThreadCreateChannel(source?.channel));
-}
+export const canCreateDiscordForkThread = canSpawnForkConversation;
 
-async function createDiscordForkThread(source, { parentSessionId, forkedSessionId, threadName = '', provider = 'codex' } = {}) {
-  const targetChannel = resolveThreadCreateChannel(source?.channel);
-  if (!targetChannel) {
-    throw new Error('当前频道不支持创建 Discord thread，无法放置 fork。');
-  }
-  const requestedName = normalizeForkThreadName(threadName);
-  const thread = await targetChannel.threads.create({
-    name: requestedName || formatForkThreadName({ forkedSessionId, parentSessionId, provider }),
-    autoArchiveDuration: 1440,
-    reason: `${normalizeForkProvider(provider)} fork from ${parentSessionId}`,
-  });
-  try {
-    await thread.join?.();
-  } catch {
-  }
-  return thread;
-}
-
-export function createSyntheticForkMessage(source, childThread) {
-  const author = source?.user || source?.author || {};
-  const client = source?.client || source?.channel?.client || childThread?.client || null;
-  const reactions = {
-    cache: {
-      get: () => ({ users: { remove: async () => {} } }),
-    },
-  };
-  return {
-    id: String(source?.id || `fork-${Date.now()}`),
-    channelId: childThread?.id,
-    channel: childThread,
-    author,
-    client,
-    system: false,
-    content: '',
-    attachments: { size: 0 },
-    reactions,
-    react: async () => {},
-    reply: async (payload) => childThread.send(payload),
-  };
+export function createSyntheticForkMessage(source, childConversation, conversationSpawn) {
+  return assertConversationSpawn(conversationSpawn).createPromptMessage(source, childConversation);
 }
 
 function formatForkProviderLabel(provider) {
@@ -204,40 +145,46 @@ function formatForkProviderLabel(provider) {
   return 'Codex';
 }
 
-function formatForkOriginNotice({ userId, provider, parentSessionId, forkedSessionId, language = 'zh' } = {}) {
-  const mention = userId ? `<@${userId}> ` : '';
+function formatForkOriginNotice({
+  userMention,
+  provider,
+  parentSessionId,
+  forkedSessionId,
+  language = 'zh',
+  conversationPresentation = DEFAULT_CONVERSATION_PRESENTATION,
+} = {}) {
+  const presentation = assertConversationPresentation(conversationPresentation);
+  const mention = userMention ? `${userMention} ` : '';
   const providerLabel = formatForkProviderLabel(provider);
   if (language === 'en') {
-    return `${mention}This thread was forked from ${providerLabel} session \`${parentSessionId}\`. Fork session: \`${forkedSessionId}\`.`;
+    return `${mention}This ${presentation.getTerm('childConversationShort', 'en')} was forked from ${providerLabel} session \`${parentSessionId}\`. Fork session: \`${forkedSessionId}\`.`;
   }
   return `${mention}这是从 ${providerLabel} session \`${parentSessionId}\` fork 过来的。fork session：\`${forkedSessionId}\`。`;
 }
 
-async function sendForkOriginNotice(childThread, {
+async function sendForkOriginNotice(childConversation, {
+  conversationSpawn,
+  conversationPresentation,
   source,
   provider,
   parentSessionId,
   forkedSessionId,
   language,
 } = {}) {
-  if (typeof childThread?.send !== 'function') {
-    return { ok: false, skipped: true, error: 'child thread cannot send messages' };
-  }
   const userId = getForkRequesterId(source);
-  const payload = {
-    content: formatForkOriginNotice({
-      userId,
-      provider,
-      parentSessionId,
-      forkedSessionId,
-      language,
-    }),
-  };
-  if (userId) {
-    payload.allowedMentions = { users: [userId] };
-  }
+  const content = formatForkOriginNotice({
+    userMention: conversationSpawn.formatUserMention(userId),
+    provider,
+    parentSessionId,
+    forkedSessionId,
+    language,
+    conversationPresentation,
+  });
   try {
-    const message = await childThread.send(payload);
+    const message = await conversationSpawn.send(childConversation, {
+      content,
+      mentionUserIds: userId ? [userId] : [],
+    });
     return { ok: true, message, userId };
   } catch (err) {
     return {
@@ -272,11 +219,13 @@ export async function createProviderForkThread({
   forkCodexThread,
   enqueuePrompt,
   resolveSecurityContext,
-  createThread = createDiscordForkThread,
+  conversationSpawn,
+  conversationPresentation = DEFAULT_CONVERSATION_PRESENTATION,
   generateSessionId = randomUUID,
   resolveForkWorkspace = () => null,
 } = {}) {
   const normalizedProvider = normalizeForkProvider(provider);
+  const presentation = assertConversationPresentation(conversationPresentation);
   const normalizedParentSessionId = normalizeForkSessionId(parentSessionId);
   if (!normalizedParentSessionId) {
     return { ok: false, reason: 'missing_parent_session' };
@@ -284,11 +233,12 @@ export async function createProviderForkThread({
   if (!providerSupportsNativeFork(normalizedProvider)) {
     return { ok: false, reason: 'fork_unsupported', provider: normalizedProvider };
   }
+  const conversationPort = assertConversationSpawn(conversationSpawn);
   const runtime = getRuntimeSnapshot(key) || {};
   if (runtime.running) {
     return { ok: false, reason: 'parent_running' };
   }
-  if (!canCreateDiscordForkThread(source)) {
+  if (!canSpawnForkConversation(source, conversationPort)) {
     return { ok: false, reason: 'thread_unavailable' };
   }
   if (normalizedProvider === 'codex' && typeof forkCodexThread !== 'function') {
@@ -324,15 +274,26 @@ export async function createProviderForkThread({
     };
   }
 
-  const childThread = await createThread(source, {
-    parentSessionId: normalizedParentSessionId,
-    forkedSessionId: plannedForkedSessionId,
-    threadName,
-    provider: normalizedProvider,
-  });
-  if (!childThread?.id) {
-    throw new Error('Discord thread creation did not return a thread id');
+  const requestedName = normalizeForkThreadName(threadName);
+  const childConversation = assertSpawnedConversation(await conversationPort.spawn(source, {
+    name: requestedName || formatForkThreadName({
+      parentSessionId: normalizedParentSessionId,
+      forkedSessionId: plannedForkedSessionId,
+      provider: normalizedProvider,
+    }),
+    reason: `${normalizedProvider} fork from ${normalizedParentSessionId}`,
+  }));
+  const childThread = childConversation.raw;
+  if (!childConversation.id) {
+    throw new Error(`${presentation.getTerm('childConversation', 'en')} creation did not return a ${presentation.getTerm('childConversationId', 'en')}`);
   }
+  const removeChildConversation = async (reason) => {
+    try {
+      return await conversationPort.remove(childConversation, { reason });
+    } catch {
+      return null;
+    }
+  };
 
   let forkResult = null;
   let forkedSessionId = plannedForkedSessionId;
@@ -342,33 +303,27 @@ export async function createProviderForkThread({
         threadId: normalizedParentSessionId,
       });
     } catch (err) {
-      try {
-        await childThread.delete?.('Codex fork failed before session binding');
-      } catch {
-      }
+      await removeChildConversation('Codex fork failed before session binding');
       throw err;
     }
     forkedSessionId = normalizeForkSessionId(forkResult?.threadId || forkResult?.thread?.id);
     if (!forkedSessionId) {
-      try {
-        await childThread.delete?.('Codex fork did not return a session id');
-      } catch {
-      }
+      await removeChildConversation('Codex fork did not return a session id');
       throw new Error('Codex fork did not return a session id');
     }
   }
-  if (!normalizeForkThreadName(threadName) && typeof childThread.setName === 'function') {
-    try {
-      await childThread.setName(
-        formatForkThreadName({ parentSessionId: normalizedParentSessionId, forkedSessionId, provider: normalizedProvider }),
-        `${normalizedProvider} fork session assigned`,
-      );
-    } catch {
-    }
+  if (!requestedName) {
+    await conversationPort.rename(childConversation, {
+      name: formatForkThreadName({
+        parentSessionId: normalizedParentSessionId,
+        forkedSessionId,
+        provider: normalizedProvider,
+      }),
+      reason: `${normalizedProvider} fork session assigned`,
+    });
   }
 
-  const childSession = getSession(childThread.id, {
-    channel: childThread,
+  const childSession = getSession(childConversation.id, {
     parentChannelId: key,
   });
   if (forkWorkspaceDir) {
@@ -382,14 +337,17 @@ export async function createProviderForkThread({
     pendingForkFromSessionId: normalizedProvider === 'claude' ? normalizedParentSessionId : null,
     workspaceDir: forkWorkspaceDir,
   });
-  const notice = await sendForkOriginNotice(childThread, {
+  const notice = await sendForkOriginNotice(childConversation, {
+    conversationSpawn: conversationPort,
+    conversationPresentation: presentation,
     source,
     provider: normalizedProvider,
     parentSessionId: normalizedParentSessionId,
     forkedSessionId,
     language: session?.language || childSession?.language || 'zh',
   });
-  const latestAgentReplay = await replayLatestParentAgentMessage(childThread, {
+  const latestAgentReplay = await replayLatestParentAgentMessage(childConversation, {
+    conversationSpawn: conversationPort,
     source,
     language: session?.language || childSession?.language || 'zh',
   });
@@ -401,11 +359,11 @@ export async function createProviderForkThread({
       promptQueue = { ok: false, enqueued: false, error: 'enqueuePrompt is unavailable' };
     } else {
       try {
-        const syntheticMessage = createSyntheticForkMessage(source, childThread);
+        const syntheticMessage = createSyntheticForkMessage(source, childConversation, conversationPort);
         const securityContext = typeof resolveSecurityContext === 'function'
           ? resolveSecurityContext(childThread, childSession)
           : null;
-        promptQueue = await enqueuePrompt(syntheticMessage, childThread.id, normalizedPrompt, securityContext);
+        promptQueue = await enqueuePrompt(syntheticMessage, childConversation.id, normalizedPrompt, securityContext);
       } catch (err) {
         promptQueue = {
           ok: false,
@@ -422,6 +380,8 @@ export async function createProviderForkThread({
     parentSessionId: normalizedParentSessionId,
     forkedSessionId,
     forkedFromId: normalizeForkSessionId(forkResult?.forkedFromId) || normalizedParentSessionId,
+    childConversation,
+    childConversationReference: conversationPort.formatConversationReference(childConversation.id),
     childThread,
     childSession,
     binding,
@@ -431,22 +391,31 @@ export async function createProviderForkThread({
   };
 }
 
-export function formatCodexForkResult(result, language = 'zh') {
-  return formatProviderForkResult(result, language);
+export function formatCodexForkResult(
+  result,
+  language = 'zh',
+  conversationPresentation = DEFAULT_CONVERSATION_PRESENTATION,
+) {
+  return formatProviderForkResult(result, language, conversationPresentation);
 }
 
-export function formatProviderForkResult(result, language = 'zh') {
+export function formatProviderForkResult(
+  result,
+  language = 'zh',
+  conversationPresentation = DEFAULT_CONVERSATION_PRESENTATION,
+) {
+  const presentation = assertConversationPresentation(conversationPresentation);
   const providerLabel = formatForkProviderLabel(result?.provider || 'codex');
   if (!result?.ok) {
     if (result?.reason === 'missing_parent_session') {
       return language === 'en'
         ? `❌ No ${providerLabel} session is bound here yet. Run one task first.`
-        : `❌ 当前频道还没有绑定 ${providerLabel} session。先跑一轮。`;
+        : `❌ ${presentation.getTerm('currentSourceConversation', 'zh')}还没有绑定 ${providerLabel} session。先跑一轮。`;
     }
     if (result?.reason === 'parent_running') {
       return language === 'en'
-        ? '⏳ The parent channel is running. Fork after the current task finishes.'
-        : '⏳ 父频道正在运行任务，等这轮结束后再 fork。';
+        ? `⏳ The ${presentation.getTerm('parentSourceConversation', 'en')} is running. Fork after the current task finishes.`
+        : `⏳ ${presentation.getTerm('parentSourceConversation', 'zh')}正在运行任务，等这轮结束后再 fork。`;
     }
     if (result?.reason === 'fork_unsupported') {
       return language === 'en'
@@ -465,13 +434,16 @@ export function formatProviderForkResult(result, language = 'zh') {
     }
     if (result?.reason === 'thread_unavailable') {
       return language === 'en'
-        ? '❌ This Discord channel cannot create a fork thread.'
-        : '❌ 当前 Discord 频道不能创建 fork thread。';
+        ? `❌ This ${presentation.getTerm('sourceConversation', 'en')} cannot create a fork ${presentation.getTerm('childConversationShort', 'en')}.`
+        : `❌ 当前 ${presentation.getTerm('sourceConversation', 'zh')}不能创建 fork ${presentation.getTerm('childConversationShort', 'zh')}。`;
     }
     return language === 'en' ? `❌ ${providerLabel} fork failed.` : `❌ ${providerLabel} fork 失败。`;
   }
 
-  const channelLabel = result.childThread?.id ? `<#${result.childThread.id}>` : result.childThread?.name || '(new thread)';
+  const channelLabel = result.childConversationReference
+    || result.childConversation?.id
+    || result.childThread?.name
+    || `(new ${presentation.getTerm('childConversationShort', 'en')})`;
   const promptQueued = result.promptQueue?.enqueued;
   const queuedAhead = Number(result.promptQueue?.queuedAhead || 0);
   const promptError = String(result.promptQueue?.error || '').trim();
