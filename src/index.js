@@ -125,16 +125,13 @@ import {
   parseWorkspaceCommandAction,
 } from './session-settings.js';
 import {
-  DEFAULT_EXTRA_INFO_TEMPLATE,
   normalizeExtraInfoEnabled,
   normalizeExtraInfoTemplate,
 } from './extra-info.js';
+import { DISCORD_DEFAULT_EXTRA_INFO_TEMPLATE } from './platforms/discord/extra-info.js';
 import {
   parseCommandActionButtonId,
 } from './slash-command-router.js';
-import {
-  registerSlashCommands,
-} from './slash-command-surface.js';
 import * as discordMessageInput from './discord-message-input.js';
 import {
   configureRuntimeProxy,
@@ -278,7 +275,7 @@ const CONFIG_POLICY = parseConfigAllowlist(
 );
 const EXTRA_INFO_ENABLED = normalizeExtraInfoEnabled(resolveProviderScopedEnv('EXTRA_INFO_ENABLED', BOT_PROVIDER, process.env));
 const EXTRA_INFO_TEXT = normalizeExtraInfoTemplate(resolveProviderScopedEnv('EXTRA_INFO_TEXT', BOT_PROVIDER, process.env))
-  || DEFAULT_EXTRA_INFO_TEMPLATE;
+  || DISCORD_DEFAULT_EXTRA_INFO_TEMPLATE;
 const WORKSPACE_ROOT = process.env.WORKSPACE_ROOT || path.join(ROOT, 'workspaces');
 const WORKSPACE_LOCK_ROOT = path.join(DATA_DIR, 'workspace-locks');
 const SHARED_CHILD_THREAD_WORKSPACE_MODE = process.env.CHILD_THREAD_WORKSPACE_MODE;
@@ -500,6 +497,22 @@ const createClient = () => createDiscordClient({
   restProxyAgent,
 });
 const appContext = createAppContext({
+  commandRegistryRendererOptions: {
+    SlashCommandBuilder,
+    slashPrefix: SLASH_PREFIX,
+  },
+  commandViewRendererOptions: {
+    ActionRowBuilder,
+    ButtonBuilder,
+    ButtonStyle,
+    StringSelectMenuBuilder,
+    ModalBuilder,
+    TextInputBuilder,
+    TextInputStyle,
+  },
+  notificationDeliveryOptions: {
+    getClient: getActiveDiscordClient,
+  },
   identityOptions: {
     defaultProvider: DEFAULT_PROVIDER,
   },
@@ -703,11 +716,9 @@ const appContext = createAppContext({
     },
   },
   commandSurfaceOptions: {
-    slashPrefix: SLASH_PREFIX,
     botProvider: BOT_PROVIDER,
     defaultUiLanguage: DEFAULT_UI_LANGUAGE,
     enableConfigCmd: ENABLE_CONFIG_CMD,
-    SlashCommandBuilder,
     onboardingOptions: {
       onboardingEnabledByDefault: ONBOARDING_ENABLED_BY_DEFAULT,
       defaultUiLanguage: DEFAULT_UI_LANGUAGE,
@@ -717,9 +728,6 @@ const appContext = createAppContext({
       allowedChannelIds: ALLOWED_CHANNEL_IDS,
       allowedGuildIds: ALLOWED_GUILD_IDS,
       allowedUserIds: ALLOWED_USER_IDS,
-      ActionRowBuilder,
-      ButtonBuilder,
-      ButtonStyle,
       getCliHealth,
       normalizeUiLanguage,
       getProviderDisplayName,
@@ -731,13 +739,6 @@ const appContext = createAppContext({
       parseTimeoutConfigAction,
     },
     settingsPanelOptions: {
-      ActionRowBuilder,
-      ButtonBuilder,
-      ButtonStyle,
-      StringSelectMenuBuilder,
-      ModalBuilder,
-      TextInputBuilder,
-      TextInputStyle,
       getProviderDisplayName,
       getSupportedReasoningEffortLevels,
       getModelCatalog: (provider) => {
@@ -785,10 +786,6 @@ const appContext = createAppContext({
       truncate,
     },
     workspaceBrowserOptions: {
-      ActionRowBuilder,
-      ButtonBuilder,
-      ButtonStyle,
-      StringSelectMenuBuilder,
       ensureDir,
       workspaceRoot: WORKSPACE_ROOT,
       resolveProviderDefaultWorkspace,
@@ -796,9 +793,6 @@ const appContext = createAppContext({
       setChildThreadWorkspaceMode,
     },
     slashRouterOptions: {
-      ActionRowBuilder,
-      ButtonBuilder,
-      ButtonStyle,
       getProviderDisplayName,
       formatProviderSessionLabel,
       isReasoningEffortSupported,
@@ -936,7 +930,6 @@ const appContext = createAppContext({
   },
   entryHandlerOptions: {
     logger: console,
-    registerSlashCommands,
     REST,
     Routes,
     discordToken: DISCORD_TOKEN,
@@ -973,8 +966,8 @@ const projectUpgradeScheduler = createProjectUpgradeScheduler({
   manager: projectUpgradeManager,
   intervalMs: PROJECT_UPGRADE_CHECK_INTERVAL_MS,
   initialDelayMs: PROJECT_UPGRADE_INITIAL_DELAY_MS,
-  notifyChannelIds: [...PROJECT_UPGRADE_NOTIFY_CHANNEL_IDS],
-  getClient: getActiveDiscordClient,
+  notifyConversationIds: [...PROJECT_UPGRADE_NOTIFY_CHANNEL_IDS],
+  notificationDelivery: appContext.notificationDelivery,
   getRuntimeSnapshots: () => appContext.promptRuntime.getAllRuntimeSnapshots(),
   requestRestart: () => projectUpgradeManager.requestRestart(),
   stateFile: path.join(DATA_DIR, 'project-upgrade-notices.json'),
