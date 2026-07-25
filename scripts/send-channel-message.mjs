@@ -64,7 +64,9 @@ async function main() {
   }
 
   const response = await rest.post(Routes.channelMessages(options.channelId), {
-    body: { content },
+    body: options.nonce
+      ? { content, nonce: options.nonce, enforce_nonce: true }
+      : { content },
   });
 
   if (options.json) {
@@ -73,6 +75,7 @@ async function main() {
       messageId: response.id,
       provider: botProvider || 'shared',
       contentLength: content.length,
+      nonce: options.nonce || null,
     }, null, 2));
     return;
   }
