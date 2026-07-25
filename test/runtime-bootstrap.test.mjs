@@ -247,8 +247,10 @@ test('readCodexModelCatalog reports CLI catalog errors', () => {
 });
 
 test('readClaudeModelCatalog reads aliases and effort levels from Claude CLI help', () => {
+  const homeDir = path.join(makeTempRoot(), 'home');
   const catalog = readClaudeModelCatalog({
     claudeBin: 'claude-test',
+    env: { HOME: homeDir },
     now: () => 3000,
     execFileSyncFn(bin, args) {
       assert.equal(bin, 'claude-test');
@@ -289,6 +291,52 @@ test('readClaudeModelCatalog reads aliases and effort levels from Claude CLI hel
     ],
     error: null,
   });
+});
+
+test('readClaudeModelCatalog reads wrapped Claude help and configured local model names', () => {
+  const rootDir = makeTempRoot();
+  const homeDir = path.join(rootDir, 'home');
+  const settingsDir = path.join(homeDir, '.claude');
+  fs.mkdirSync(settingsDir, { recursive: true });
+  fs.writeFileSync(path.join(settingsDir, 'settings.json'), JSON.stringify({
+    model: null,
+    env: {
+      ANTHROPIC_DEFAULT_OPUS_MODEL: 'claude-opus-4-8',
+      ANTHROPIC_DEFAULT_OPUS_MODEL_NAME: 'claude-opus-5',
+      ANTHROPIC_DEFAULT_SONNET_MODEL: 'claude-sonnet-4-6',
+    },
+  }));
+
+  const catalog = readClaudeModelCatalog({
+    claudeBin: 'claude-test-wrapped',
+    env: { HOME: homeDir },
+    now: () => 3100,
+    execFileSyncFn() {
+      return [
+        '  --effort <level>                      Effort level for the current session',
+        '                                        (low, medium, high, xhigh, max)',
+        '  --model <model>                       Model for the current session. Provide',
+        '                                        an alias for the latest model (e.g.',
+        "                                        'fable', 'opus', or 'sonnet') or a",
+        '                                        model\'s full name (e.g.',
+        "                                        'claude-fable-5').",
+        '  -n, --name <name>                     Set a display name for this session',
+      ].join('\n');
+    },
+  });
+
+  assert.deepEqual(catalog.models.map((model) => model.slug), [
+    'fable',
+    'opus',
+    'sonnet',
+    'claude-fable-5',
+    'claude-opus-4-8',
+    'claude-opus-5',
+    'claude-sonnet-4-6',
+  ]);
+  assert.deepEqual(catalog.models[0].supportedReasoningLevels, ['low', 'medium', 'high', 'xhigh', 'max']);
+  assert.equal(catalog.models.find((model) => model.slug === 'claude-opus-5')?.visibility, 'settings');
+  assert.equal(catalog.error, null);
 });
 
 test('readClaudeDefaults reads ~/.claude/settings.json and reports malformed settings', () => {
