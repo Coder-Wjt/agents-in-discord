@@ -4,57 +4,43 @@
 
 本项目目前以 Discord 作为消息入口，但核心能力——会话状态、Provider runner、频道队列、工作区绑定、跨进程锁、设置与安全策略——并不应绑定到单一聊天平台。
 
-本方案的目标是在保留 Discord 现有行为的前提下，引入稳定的平台抽象层，随后逐步支持 Slack 和飞书/Lark。第一阶段只完成平台契约、Discord Adapter 和回归验证，不添加 Slack/Lark SDK、配置或业务逻辑。
+本方案的目标是在保留 Discord 现有行为的前提下，引入稳定的平台抽象层，随后逐步支持 Slack 和飞书/Lark。截至 `03efc7c`，平台契约、Discord Adapter、核心平台边界和统一 Foundation 组合已经落地；当前不添加 Slack/Lark SDK、配置或业务逻辑，下一步先完成第二平台接入前的边界清理与契约加固。
 
 ## 实施状态
 
-- 阶段 1 已完成：平台契约、capability、会话键工具、Discord Adapter、应用组合与 Discord 回归测试已落地。
-- 阶段 2 进行中：统一 `messageDelivery` 端口已覆盖 reply、send、edit、typing、文本分片、用户提及和任务状态标记；Discord 已接入该端口。
-- 阶段 2 进行中：统一 inbound message envelope 已覆盖 actor、conversation、正文、附件和 bot 定向信息；Discord 消息入口已先规范化再路由。
-- 阶段 2 进行中：command view model 和 Discord renderer 已建立；首跑引导、workspace busy 操作、失败重试、workspace browser 和 settings panel 的按钮、选择菜单及 modal 已完成迁移与回归验证。
-- command 核心模块已不再直接引用 Discord Builder/Style；Discord Builder 只保留在 Discord 组合根、Discord renderer 和过渡期兼容 facade，并由边界测试持续约束核心边界。
-- 阶段 2 已完成 interaction 普通响应抽象：核心只提交 `content`、`rows`、`visibility` 和 modal view，统一 `interactionResponse` 端口负责 respond、update、showModal、defer；Discord 实现在 Adapter 内渲染并处理 reply/editReply/followUp。
-- Discord `messageDelivery` 现在也能渲染平台无关 command message view，因此 workspace busy 等同时用于普通消息和 interaction 的视图无需提前生成 Discord components。
-- goal 缺少 objective 时继续沿用现有直接报错行为；未被调用的 Discord goal modal 构造代码已移除，已有 modal submit 兼容入口保留。
-- 阶段 2 已完成 slash command 注册表抽象：核心命令只声明平台无关 command spec，Discord registry renderer 负责命令前缀、别名、`SlashCommandBuilder` 和选项渲染，Discord registration 负责 REST 注册。
-- `createCommandSurface()`、`createAppContext()` 和 Discord Adapter 现在传递 `commandSpecs` 与 `commandRegistryRenderer`，核心不再提前构造 Discord slash command。
-- `slash-command-surface.js` 暂时保留为 Discord 兼容 facade，便于现有调用和测试平滑迁移；生产组合根已不再通过它注册命令。
-- 阶段 2 已完成 inbound interaction envelope：command、button、select 和 modal 在 Discord 入口统一规范化，command option、actor、conversation、component values 和 modal fields 均通过平台无关结构读取。
-- slash router、onboarding、workspace busy、workspace browser 和 settings panel 已不再读取 Discord 原始 interaction 字段；边界测试持续禁止这些核心模块重新引用 `commandName`、`channelId`、`user`、`options`、`customId`、`fields` 或 `values`。
-- Discord `interactionResponse` 与 `messageDelivery` 通过 envelope 的 `responseTarget` 解包原始 Discord interaction；原始对象只保留在 Adapter/平台边界，用于 Discord SDK 调用、准入策略和错误兜底。
-- 阶段 2 已完成 capability-aware command/UI policy：命令注册、命令引用、按钮、选择菜单和 modal 会依据平台能力选择原生交互或文本降级，AppContext 与 Adapter 重复组合时不会重复包装。
-- capability 新增 `selectMenus`；`fork`、`side` 通过 `requiredCapabilities: ['threads']` 声明线程依赖，不支持线程的平台不会注册这些原生命令。
-- 无 slash command 时命令引用降级为 `!command`；无按钮或选择菜单时移除控件并追加可执行/可读文本提示；无 modal 时改发 fallback message。
-- Retry 与 Progress Reporter 已平台无关化：核心不再直接构造 Discord `components`，Retry 新增 `!retry` 文本入口，进度消息统一使用 command message view。
-- 阶段 2 已完成运行时 capability policy：`threads`、`messageEdits`、`reactions`、`attachments` 已覆盖 Adapter 组合、消息入口和核心执行路径。
-- 无 `threads` 时除过滤原生命令外，文本/slash 执行入口、帮助文档和 Discord thread listener 也会同步关闭，避免绕过注册层调用 `fork`/`side`。
-- 无 `messageEdits` 时 delivery edit 变为安全 no-op、interaction update 改发新响应，并关闭持续进度卡；用户仍可通过 `!progress` 按需查看运行状态。
-- 无 `reactions` 时语义状态操作统一 no-op；queue、dequeue 和消息错误处理不再直接调用原始 message reaction，`dequeued` 已纳入统一状态集合。
-- 无 `attachments` 时 inbound policy 会在进入核心前移除附件；prompt、goal 和原生图片处理统一读取 normalized message context 中的附件。
-- 阶段 2 已完成 conversation spawn/thread operations 抽象：`fork`/`side` 只调用统一 `conversationSpawn` 端口，Discord thread 的创建、加入、改名、删除、锁定、归档、消息发送、历史回放、mention/reference 和 synthetic prompt message 均已下沉到 Discord Adapter。
-- `createAppContext()`、slash/text router 与 Discord Adapter 复用同一个 conversation spawn 实例；Adapter 契约已将其列为必填组件，并保留 `childThread`、`discordCleanup`、`discordArchive` 兼容返回字段。
-- 阶段 2 已完成 session conversation topology 收敛：session-store 的父子会话识别只读取标准化 `conversation.isThread` / `conversation.parentId` 或显式 `parentChannelId`，不再调用 Discord `channel.isThread()` 或读取原始 channel parent API。
-- Discord message/interaction 入口、queue、prompt、slash/text router、onboarding、settings 和 workspace 组件均把同一个 inbound conversation envelope 传给 session-store；现有 `parentChannelId` 持久化字段与 workspace 继承行为保持不变。
-- 阶段 2 已完成项目升级通知投递抽象：scheduler 只调用统一 `notificationDelivery.sendNotification(conversationId, { content })`，不再获取 Discord client、fetch channel 或直接调用 `channel.send()`。
-- Discord notification delivery 通过动态 client getter 解析通知会话并发送文本；既有 `AGENTS_IN_DISCORD_UPGRADE_NOTIFY_CHANNEL_IDS` 配置语义、notify-once 状态、失败重试、自动升级前后通知和重启请求保持不变。
-- 阶段 2 已完成 prompt/message presentation 第一批收敛：prompt runtime 强制使用完整 `messageDelivery`，不再保留 `message.channel.send`、`safeChannelSend`、Discord 分片器或 `<@user>` 核心 fallback。
-- queue report 的用户 mention 由平台 formatter 生成；Settings 过程消息和 slash synthetic prompt reply 也统一走 message delivery，不再直接读取原始 channel send。
-- extra-info 核心默认使用 `conversation={conversation}` 和 normalized conversation topology，同时兼容已有 `{thread}` / `{discord_thread}` 自定义占位符；Discord 组合根显式选择旧 `discord_thread={thread}` 默认模板，保持现有 provider prompt 不变。
-- 阶段 2 已完成 conversation presentation/terminology 收敛：新增 `conversationPresentation.getTerm(key, language)` 端口，核心 command spec、帮助、fork/side flow 只消费来源会话、子会话和父会话等语义术语。
-- Discord Adapter 提供旧 `Discord channel/thread` 词汇表；slash command 描述、帮助文档、fork/side 通知、错误提示、状态报告和 side runtime 指令均有精确字符串回归，现有 Discord 用户可见文案保持不变。
-- 阶段 2 已完成 normalized message accessor 收敛：actor、conversation、conversation target、conversation ID、attachments 和 reply reference 统一从 inbound message 契约读取，并为过渡期原始 Discord message 保留集中式兼容 fallback。
-- `message-input.js` 现在承载平台无关附件 prompt 构造；`discord-message-input.js` 仅保留 Discord bot 定向判断并兼容重导出旧 helper，现有生产导入和行为不变。
-- queue、prompt orchestrator、text command 和 native image 核心不再直接读取 `message.author/channel/attachments/reference`；新增边界测试持续阻止 Discord message 形状重新泄漏。
-- 阶段 2 已完成 runtime/history message 收敛：runtime snapshot 与 extra-info 统一使用 inbound accessor；conversation history 新增 `id/text/createdAtMs/actor` 契约，fork replay 不再读取 Discord history message 的 `author/content/createdTimestamp`。
-- Discord conversation spawn 将历史消息映射为统一 `actor`，同时暂时保留同对象的 `author` 兼容别名；核心 requester ID 也统一通过通用 inbound actor accessor 解析。
-- 阶段 2 已完成 slash synthetic prompt message 下沉：goal continuation 与手动 compact 由 `conversationSpawn.createPromptMessage()` 创建 normalized message context，slash router 不再拼装 `channel/author/reactions/reply` 等 Discord 形状。
-- Discord synthetic prompt 同时提供 normalized actor/conversation/attachments 和旧字段别名；reply 继续可通过 message delivery 的 conversation send 语义发送，保持既有网络投递路径。
-- 阶段 2 已完成 fork/side requester actor 收敛：两个核心 flow 统一通过 inbound actor accessor 解析请求者，不再理解 Discord message `author` 或 interaction `user` 字段。
-- 阶段 2 已完成 conversation security 抽象：核心 security policy 只消费平台无关的会话可见性描述，Discord 的 DM、thread parent、Guild、`@everyone` 与 `ViewChannel` 权限推断已下沉到 Adapter。
-- 阶段 2 已完成 text presentation 与 conversation reference 收敛：实时进度文本的特殊语法转义由 Adapter 提供，fork 来源报告也通过平台 conversation reference formatter 渲染，不再在核心生成 Discord spoiler/channel mention。
-- 阶段 2 已完成 platform foundation 组合边界：`createAppContext()` 通过一个 foundation 获取全部 pre-core 平台端口，并由同一个 foundation 创建最终 Adapter；第二平台无需逐个覆盖 Discord factory。
-- 阶段 2 下一步只继续收敛平台边界和回归保护；当前仍不进入 Slack/Lark 业务实现。
-- Slack 和飞书/Lark Adapter 尚未开始，继续遵守“不添加 SDK 和业务代码”的当前边界。
+本节以本地提交 `30e1df5..03efc7c` 为同步基线。原先统一归在“阶段 2 进行中”的工作，现按实际依赖关系重排如下：
+
+| 阶段 | 状态 | 对应提交 | 当前结果 |
+| --- | --- | --- | --- |
+| 阶段 0：方案与边界基线 | 已完成 | `30e1df5` | 明确 Adapter 目标架构、能力模型、会话迁移约束及“不提前引入 Slack/Lark”的范围。 |
+| 阶段 1：平台契约与 Discord 端口 | 已完成 | `55903a3`、`8af2e8a` | 平台契约、capability policy、Foundation、统一输入/输出端口及 Discord 实现已建立。 |
+| 阶段 2：核心平台无关化 | 已完成 | `ee2a4d9`、`27380e7`、`34c3b8f`、`c212fb8`、`18414af` | command/UI、inbound context、runtime delivery、conversation lifecycle/presentation 和 security 已改为消费平台端口。 |
+| 阶段 3：Foundation 统一组合与 Discord 回归 | 已完成 | `03efc7c` | `createAppContext()` 通过单一 Foundation 获取平台服务并创建 Adapter，Discord 启动、配置、session 与用户可见行为保持兼容。 |
+| 阶段 4：第二平台准入准备 | 下一阶段 | 尚无对应提交 | 清理兼容 facade/别名、把 Discord 默认组合进一步收口到启动边界、补齐可复用 Adapter 契约套件与接入门槛。 |
+| 阶段 5：Slack Adapter | 未开始 | — | 等阶段 4 验收后再引入 SDK、配置和业务入口。 |
+| 阶段 6：飞书/Lark Adapter | 未开始 | — | 在 Slack 契约实践稳定后接入，避免并行复制未定型的平台假设。 |
+| 阶段 7：多平台迁移与统一运维 | 未开始 | — | 最后启用平台限定会话键、多实例配置、迁移工具与统一健康指标。 |
+
+当前已完成能力包括：
+
+- 统一 command spec/view、interaction response、message/notification delivery、inbound message/interaction envelope、conversation spawn/presentation/security 和 text presentation 契约。
+- command、prompt、queue、settings、workspace、fork/side、session topology 和 project upgrade scheduler 已通过平台端口工作；Discord 原始对象只在入口、投递、安全推断和兼容 accessor 等边界使用。
+- `threads`、`slashCommands`、`buttons`、`selectMenus`、`modals`、`messageEdits`、`reactions`、`attachments` 已有显式 capability 和降级策略。
+- 生产组合根已使用 Discord Foundation；现有 Discord session key、`sessions.json`、环境变量、命令 JSON、启动方式和主要用户可见文案保持不变。
+- `slash-command-surface.js`、raw message fallback、`childThread` / `discordCleanup` / `discordArchive` 等只作为迁移期兼容面保留，不再代表核心架构方向。
+- `src/platforms/` 当前仍只有 Discord 实现，未新增 Slack/Lark SDK、配置、目录或业务入口。
+
+### 2026-07-25 本地提交同步验证
+
+- `npm run test:platform-foundation`：11/11 通过。
+- `npm run test:platform-security`：20/20 通过。
+- `npm run test:platform-inputs`：182/182 通过。
+- `npm run test:platform-presentation`：192/192 通过。
+- `npm run test:platform-notifications`：16/16 通过。
+- `npm run check:reply-fallback` 与 `git diff --check` 通过。
+- 本轮采用平台聚焦回归确认阶段状态；下列 2026-07-24 记录继续保留每次增量实现时的完整回归证据。
+
+## 增量实现验证记录
 
 ### 2026-07-24 验证记录
 
@@ -204,8 +190,8 @@
 - 核心运行时继续复用，不为每个平台复制 session、queue、runner 或 workspace lock。
 - 平台差异集中在 Adapter 内，包括鉴权、事件接入、交互响应、消息投递和客户端生命周期。
 - 平台能力显式声明。上层功能按 capability 降级，不能假设每个平台都支持 Discord 的线程、按钮或 modal。
-- Discord 零迁移。第一阶段保持现有频道 ID session key、`sessions.json`、环境变量和启动方式不变。
-- 渐进式拆分。先形成组合边界，再逐步把 `prompt-orchestrator`、回复工具和命令 UI 中的 Discord 细节下沉到平台实现。
+- Discord 零迁移。当前基线保持现有频道 ID session key、`sessions.json`、环境变量和启动方式不变。
+- 渐进式拆分。已形成组合边界并完成主要核心迁移；下一步继续清理兼容面，再进入第二平台实现。
 - 长连接优先。后续 Slack 默认采用 Socket Mode，飞书/Lark 默认采用 WebSocket 长连接，降低部署公网回调地址的门槛。
 
 ## 目标架构
@@ -296,11 +282,11 @@ Discord resolver 负责识别 DM、把 thread 权限判断落到父频道，并�
 | 会话容器 | Channel/Thread | Channel/DM | Chat |
 | 用户 | User | User | User/Open ID |
 
-第一阶段复用 `createDiscordAccessPolicy()`，不改变原有 allowlist 语义。
+当前 Discord 基线复用 `createDiscordAccessPolicy()`，不改变原有 allowlist 语义。
 
 ### Entry handlers
 
-负责把平台事件转换为项目现有的命令或 prompt 调用，并把平台对象保留为投递上下文。第一阶段复用 `createDiscordEntryHandlers()`，后续 Adapter 应统一提供以下入口能力：
+负责把平台事件转换为项目现有的命令或 prompt 调用，并把平台对象保留为投递上下文。当前 Discord 基线复用 `createDiscordEntryHandlers()`，后续 Adapter 应统一提供以下入口能力：
 
 - 普通消息和附件输入；
 - 文本命令与平台原生命令；
@@ -423,40 +409,54 @@ platform:v1:<platformId>:<tenantId>:<conversationId>:<threadId>
 | Slack | team ID | channel ID | thread_ts（无线程则空） |
 | 飞书/Lark | tenant key | chat ID | root message ID（按产品策略启用） |
 
-第一阶段只提供构建和解析工具，Discord 仍继续使用原始 `message.channel.id`。在真正启用第二个平台之前，再提供显式、可回滚的数据迁移工具；不得静默改写已有 `sessions.json`。
+当前阶段只提供构建和解析工具，Discord 仍继续使用原始 `message.channel.id`。在真正启用第二个平台之前，再提供显式、可回滚的数据迁移工具；不得静默改写已有 `sessions.json`。
 
 ## 分阶段实施
 
-### 阶段 1：平台抽象层与 Discord 回归（本次范围）
+### 阶段 0：方案与边界基线（已完成）
 
-- 新增平台 capability、Adapter 契约和未来会话键工具。
-- 新增 Discord Adapter，包装现有 access policy、entry handlers 和 lifecycle。
-- `createAppContext()` 改为通过 Adapter 组合。
-- 保留 `createDiscordAccessPolicyFn`、`createDiscordEntryHandlersFn`、`createDiscordLifecycleFn` 注入方式及顶层返回字段。
-- 返回新增的 `platformAdapter`，为后续平台启动和诊断提供统一入口。
-- 补充契约、会话键、Discord Adapter 和 app context 回归测试。
-- 不改 Discord 消息处理、回复、命令、session key、配置和依赖。
+- 明确平台抽象目标、设计原则、目标目录、契约范围和会话键迁移策略。
+- 明确当前交付只建立 Discord 基线，不提前添加 Slack/Lark SDK、配置或业务入口。
 
-验收标准：现有 Discord 测试全部通过；新增 Adapter 测试通过；运行时行为和持久化格式无变化。
+验收证据：`30e1df5` 建立本方案文档，并给出平台能力、风险和非目标边界。
 
-### 阶段 2：平台无关消息与投递端口
+### 阶段 1：平台契约与 Discord 端口（已完成）
 
-- 定义标准化 inbound event、actor、conversation 和 attachment 数据结构。
-- 抽取 `send`、`reply`、`edit`、`typing`、分片、重试和交互确认端口。
-- 将 `prompt-orchestrator` 中的 `message.channel.sendTyping()`、`splitForDiscord()` 和 Discord 网络重试替换为注入端口。
-- 为命令结果定义平台无关 view model，各 Adapter 负责渲染为 Discord components、Slack Block Kit 或飞书卡片。
-- 将 slash command 和 interaction 的普通响应抽象为平台无关 payload，移除核心中的 Discord ephemeral flag 和原始 response payload。
-- 将 slash command 注册表下沉到平台层，由核心 command spec 和平台 renderer/registration 组成。
-- 增加 capability-aware command/UI policy；命令可声明 `requiredCapabilities`，不支持原生控件的平台必须保留文本路径。
-- 增加 runtime capability policy；线程入口、消息编辑、reaction 和附件读取必须遵循 Adapter capability。
-- 使用 normalized message context 连接 inbound envelope 与 prompt/command/queue，核心不再把原始 Discord attachment 或 reaction 当作必需接口。
-- 抽取 conversation spawn/thread operations 端口，核心 fork/side 不再创建或维护 Discord thread。
-- session topology 只依赖 normalized conversation envelope，不从平台原始 channel 推断父子关系。
-- 抽取 conversation presentation/terminology 端口，核心命令和 fork/side flow 不再硬编码 Discord 会话术语。
+- 定义 capability、Adapter/Foundation、未来会话键及 command、interaction、delivery、conversation、presentation、security 等契约。
+- 实现 Discord command registry/view renderer、inbound normalizer、response/delivery、conversation 和 Foundation 组件。
+- 为无原生线程、命令、控件、消息编辑、reaction 或附件的平台提供统一降级策略。
 
-验收标准：核心 prompt 流程测试无需构造 Discord SDK 对象；Discord 行为仍保持一致。
+验收证据：`55903a3`、`8af2e8a`；契约、Discord 实现和 capability policy 聚焦测试通过。
 
-### 阶段 3：Slack Adapter
+### 阶段 2：核心平台无关化（已完成）
+
+- command spec、settings、workspace、onboarding、retry 和 progress 只生成平台无关 view。
+- message/interaction 在入口规范化；prompt、queue、session、附件和 history 统一读取 normalized context。
+- runtime 投递、项目升级通知、fork/side conversation lifecycle、conversation presentation 和 security policy 全部改走平台端口。
+- 使用边界测试阻止 Discord Builder、原始 interaction/message 字段、thread API、mention/reaction 和直接网络投递重新泄漏到核心。
+
+验收证据：`ee2a4d9`、`27380e7`、`34c3b8f`、`c212fb8`、`18414af`；本页“增量实现验证记录”覆盖每次迁移的行为与边界回归。
+
+### 阶段 3：Foundation 统一组合与 Discord 回归（已完成）
+
+- `createAppContext()` 从单一 Foundation 获取 pre-core 平台服务，并由同一 Foundation 创建最终 Adapter。
+- `src/index.js` 使用 Discord Foundation 完成生产组合；启动生命周期继续只消费统一 Adapter。
+- 保留原 factory 注入和结果别名作为兼容面，避免一次性破坏现有测试及调用方。
+- 保持 Discord session key、持久化 schema、环境变量、命令注册 JSON、启动方式和用户可见行为不变。
+
+验收证据：`03efc7c`；`test:platform-foundation`、`test:platform-inputs`、`test:platform-security`、`test:platform-presentation` 和 `test:platform-notifications` 当前均通过。
+
+### 阶段 4：第二平台准入准备（下一阶段）
+
+- 把 Discord 默认 factory 和兼容参数进一步收口到 Discord 启动/组合边界，使平台无关 AppContext 不需要了解具体平台构造器。
+- 盘点并分批移除生产路径不再需要的 `slash-command-surface.js` facade、raw message fallback 和 `childThread` / `discordCleanup` / `discordArchive` 别名；删除前先迁移调用方并保留回归保护。
+- 将现有平台契约测试整理为可供任意 Adapter 复用的 conformance suite，至少覆盖消息、命令、取消、附件、能力降级、子会话和错误恢复。
+- 决定第二平台启用时的 session 数据隔离、Node.js 22 基线、平台配置选择和限定会话键迁移门槛。
+- 完成一次不依赖 Discord SDK 对象的核心 smoke fixture，作为进入 Slack 实现的硬性验收门。
+
+验收标准：新增平台只需提供 Foundation/Adapter 和启动配置，不修改 prompt、queue、session、command、settings、workspace 或 fork/side 核心；Discord 全量回归继续通过。
+
+### 阶段 5：Slack Adapter（未开始）
 
 - 引入并隔离 Slack SDK，默认使用 Socket Mode。
 - 支持 app mention、DM、频道消息、slash command、Block Kit action 和 modal。
@@ -464,7 +464,7 @@ platform:v1:<platformId>:<tenantId>:<conversationId>:<threadId>
 - 实现 Slack 消息长度、更新频率、ack 时限、重试和事件去重策略。
 - 补充 Slack manifest、最小权限文档和独立集成测试。
 
-### 阶段 4：飞书/Lark Adapter
+### 阶段 6：飞书/Lark Adapter（未开始）
 
 - 引入并隔离官方 Node SDK，默认使用 WebSocket 长连接。
 - 同时兼容飞书与 Lark 域名/区域配置。
@@ -473,7 +473,7 @@ platform:v1:<platformId>:<tenantId>:<conversationId>:<threadId>
 - 实现事件验签/解密（若启用回调模式）、事件去重、卡片更新和频控策略。
 - 补充应用权限清单、事件订阅文档和独立集成测试。
 
-### 阶段 5：迁移与统一运维
+### 阶段 7：迁移与统一运维（未开始）
 
 - 增加 `BOT_PLATFORM=discord|slack|lark` 或等价的实例级配置。
 - 支持同一代码库启动多个平台实例，并保持锁文件、数据文件和日志标识隔离。
@@ -520,4 +520,4 @@ allowlist 也应使用平台限定配置，避免相同裸 ID 在不同平台间
 - 不新增 Slack/Lark 环境变量、事件、命令、卡片或部署入口。
 - 不重命名项目，不批量移动现有 Discord 文件。
 - 不修改 Discord session key 或已有持久化数据。
-- 不在本阶段全面改写 `prompt-orchestrator` 和 Discord 回复工具。
+- 不为平台抽象重写 provider runner、session、queue 或 workspace lock 核心语义。

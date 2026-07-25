@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 The format is based on Keep a Changelog and this project follows Semantic Versioning.
 
+## [Unreleased]
+
+### Added
+
+- Added platform Adapter/Foundation contracts, capability policies, normalized inbound event models, platform-neutral command views, delivery ports, conversation services, and their Discord implementations.
+
+### Changed
+
+- Routed command UI, message and interaction input, runtime delivery, project-upgrade notifications, fork/side conversation lifecycle, presentation, and conversation security through platform-neutral boundaries.
+- Composed the existing Discord runtime through one platform Foundation while preserving Discord command registration, session keys, persisted data, configuration, startup modes, and user-visible behavior.
+- Reorganized the multi-platform development plan into completed foundation, core decoupling, and Discord composition milestones, followed by a separate second-platform readiness stage before Slack or Lark implementation begins.
+
+### Verified
+
+- Added and ran focused contract, boundary, Discord Adapter, input, presentation, security, notification, and AppContext regressions for the platform abstraction work.
+
 ## [0.13.0] - 2026-07-21
 
 ### Added
