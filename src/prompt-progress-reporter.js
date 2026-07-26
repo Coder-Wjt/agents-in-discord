@@ -1,5 +1,6 @@
 import { getSupportedReasoningEffortLevels } from './provider-metadata.js';
 import {
+  extractCodexAgentMessageForNarration,
   extractUnphasedCodexAgentMessage,
   isCodexTurnTerminalEvent,
   isCodexWorkEvent,
@@ -791,6 +792,9 @@ export function createPromptProgressReporterFactory({
       : [];
     const pendingStreamActivities = [];
     const pendingCodexAgentMessages = [];
+    // Holds the newest `final_answer` so a later one can retire it into the
+    // process stream. Reset per run, alongside the other per-run buffers.
+    const codexFinalAnswerState = { pendingFinalAnswer: '' };
     let lastActivityPushAt = 0;
     let activityPushPromise = null;
     let failedStreamActivity = null;
@@ -1030,6 +1034,23 @@ export function createPromptProgressReporterFactory({
         const unphasedAgentMessage = extractUnphasedCodexAgentMessage(event);
         if (unphasedAgentMessage) {
           appendPendingCodexAgentMessage(unphasedAgentMessage);
+          return;
+        }
+        // Phased agent messages need no buffering: the phase already says
+        // whether this is narration, so stream it as soon as it arrives.
+        const phasedNarration = extractCodexAgentMessageForNarration(
+          event,
+          codexFinalAnswerState,
+        );
+        if (phasedNarration) {
+          const safe = sanitizeProgressDisplayText(phasedNarration);
+          if (safe && appendActivity(safe)) {
+            events += 1;
+            if (lastActivityPushAt === 0) void pushOneStreamActivity({ force: true });
+            else void pushOneStreamActivity();
+            syncActiveRun();
+            void emit(false);
+          }
           return;
         }
       }

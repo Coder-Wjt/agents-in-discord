@@ -1058,10 +1058,10 @@ test('createRunnerExecutor extends Codex goal completion grace while final outpu
 
   assert.equal(killed, true);
   assert.equal(result.ok, true);
-  assert.deepEqual(result.finalAnswerMessages, [
-    '第一段总结已经出来。',
-    '第二段验证结果也完整出来。',
-  ]);
+  // The grace period still let both segments arrive; the newest is the reply
+  // and the one it superseded is kept as progress.
+  assert.deepEqual(result.finalAnswerMessages, ['第二段验证结果也完整出来。']);
+  assert.ok(result.messages.includes('第一段总结已经出来。'));
 });
 
 test('createRunnerExecutor lets Codex finish a blocker final answer before stopping', async () => {
@@ -1145,8 +1145,9 @@ test('createRunnerExecutor lets Codex finish a blocker final answer before stopp
 
   assert.equal(killed, true);
   assert.equal(result.ok, true);
+  // Here the second message extends the first, so keeping only the newest also
+  // avoids emitting the truncated version alongside the complete one.
   assert.deepEqual(result.finalAnswerMessages, [
-    '目标未完成。实体手机 60 秒真实 JSON 仍缺，不能关闭 goal。',
     '目标未完成。实体手机 60 秒真实 JSON 仍缺，不能关闭 goal。还需要补上这份验收记录后再交付。',
   ]);
 });

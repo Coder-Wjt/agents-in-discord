@@ -141,7 +141,7 @@ export function handleCodexRunnerEvent(event, state, ensureSessionBridge, {
         appendPendingCodexAgentMessage(state, unphasedText);
         break;
       }
-      if (isFinalAnswerLikeAgentMessage(item)) appendUniqueText(state.finalAnswerMessages, text);
+      if (isFinalAnswerLikeAgentMessage(item)) appendCodexFinalAnswer(state, text);
       else appendUniqueText(state.messages, text);
       break;
     }
@@ -156,16 +156,22 @@ export function handleCodexRunnerEvent(event, state, ensureSessionBridge, {
     case 'agent_message':
     case 'assistant_message':
     case 'message': {
+      // `response_item/message` replays the whole conversation, user turns
+      // included (observed: 127 user + 8 developer entries in one session).
+      // Only assistant turns are the agent speaking; without this the reply
+      // could end up being the user's own prompt echoed back.
+      const role = String(event?.role || '').trim().toLowerCase();
+      if (role && role !== 'assistant') break;
       const text = extractAgentMessageText(event);
       if (!text) break;
-      if (isFinalAnswerLikeAgentMessage(event)) appendUniqueText(state.finalAnswerMessages, text);
+      if (isFinalAnswerLikeAgentMessage(event)) appendCodexFinalAnswer(state, text);
       else appendUniqueText(state.messages, text);
       break;
     }
     case 'task_complete': {
       const text = String(event.last_agent_message || '').trim();
       if (matchesAnyComparableText(state.messages, text)) break;
-      if (text) appendUniqueText(state.finalAnswerMessages, text);
+      if (text) appendCodexFinalAnswer(state, text);
       break;
     }
     case 'reasoning.delta':
@@ -277,6 +283,25 @@ function appendUniqueText(list, text) {
   const previous = String(list?.[list.length - 1] || '').trim();
   if (normalizeComparableText(previous) === normalizeComparableText(next)) return;
   list.push(next);
+}
+
+// Long `codex exec resume` sessions label nearly every agent_message
+// `phase: "final_answer"` — 118 of them in one observed 1h21m run. Appending
+// each one built a 69k-character reply that concatenated the whole session
+// transcript. Only the newest is the actual answer; the ones it supersedes were
+// mid-task updates, so they move to `messages` (progress) instead.
+function appendCodexFinalAnswer(state, text) {
+  const next = String(text || '').trim();
+  if (!next) return;
+  const list = Array.isArray(state.finalAnswerMessages) ? state.finalAnswerMessages : [];
+  const previous = String(list[list.length - 1] || '').trim();
+  if (previous && normalizeComparableText(previous) === normalizeComparableText(next)) return;
+  if (previous) {
+    list.pop();
+    appendUniqueText(state.messages, previous);
+  }
+  list.push(next);
+  state.finalAnswerMessages = list;
 }
 
 function appendPendingCodexAgentMessage(state, text) {

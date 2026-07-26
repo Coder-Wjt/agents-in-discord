@@ -1135,3 +1135,36 @@ test('createPromptProgressReporterFactory sanitizes Discord spoiler markers in s
   assert.match(finalCard, /command ｜｜ true/);
   assert.match(finalCard, /verified ｜｜ done/);
 });
+
+test('createPromptProgressReporterFactory streams phased Codex final_answer narration', async () => {
+  const harness = createHarness({
+    factoryOptions: { presentation: createRealPresentation() },
+  });
+
+  await harness.reporter.start();
+  harness.channelState.activeRun.phase = 'exec';
+
+  const send = (message) => harness.reporter.onEvent({
+    type: 'item.completed',
+    item: { id: `m_${message}`, type: 'agent_message', phase: 'final_answer', message },
+  });
+
+  // Observed in a real 1h21m `codex exec resume` run: 116 of 121 agent messages
+  // were labelled final_answer, so treating each as final left the card empty.
+  send('第一阶段：读完了配置。');
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(harness.streamed, []);
+
+  send('第二阶段：改完了代码。');
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(harness.streamed, ['第一阶段：读完了配置。']);
+
+  // Pushes are throttled, so the retired message queues until the window opens.
+  harness.advance(1_500);
+  send('全部完成。');
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(harness.streamed, ['第一阶段：读完了配置。', '第二阶段：改完了代码。']);
+
+  // The newest stays out of the stream so the reply is not duplicated.
+  assert.ok(!harness.streamed.includes('全部完成。'));
+});

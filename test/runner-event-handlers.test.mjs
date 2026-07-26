@@ -243,12 +243,14 @@ test('handleCodexRunnerEvent captures final answer from bridged session events',
     isFinalAnswerLikeAgentMessage,
   });
 
-  assert.deepEqual(state.finalAnswerMessages, [
+  // Each superseded final answer is demoted to progress, so the reply is the
+  // newest one rather than every phase concatenated. Accumulating them all
+  // produced a 69k-character reply on a real 1h21m session.
+  assert.deepEqual(state.finalAnswerMessages, ['task complete 最终总结。']);
+  assert.deepEqual(state.messages, [
     '桥接来的最终总结。',
     'response item 最终总结。',
-    'task complete 最终总结。',
   ]);
-  assert.deepEqual(state.messages, []);
 });
 
 test('handleCodexRunnerEvent does not promote task_complete commentary to final answer', () => {
