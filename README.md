@@ -94,6 +94,78 @@ npm start
 
 `/cx_goal action:set objective:<目标>` 或 `!goal <目标>` 会把当前 Codex session 的目标设为 active，并在 runner 空闲时继续执行。目标需要带图片或文件时，用普通消息 `!goal <目标>` 发送，附件会一起进入 goal 上下文。`/cx_status` 和 `!status` 会显示当前 goal；只查 goal 可以用 `/cx_goal action:status` 或 `!goal status`。`pause` 会停止续跑，`resume` 会恢复续跑，`clear` 会清除 goal。
 
+## 微信入口（可选）
+
+微信入口是独立进程，不修改 Discord bot 的启动路径、token、频道 session 或交互组件。两边复用同一套 Codex runner，并共享 workspace 文件锁，所以同一个项目正在 Discord 中执行时，微信任务会等待而不是并发修改。
+
+先在 `.env` 配置允许的 workspace。扫码登录所使用的微信账号默认加入白名单，也可以显式增加 iLink user ID。
+
+```env
+WECHAT_WORKSPACE_ROOTS=~/GitHub,~/Lark_Project
+WECHAT_DEFAULT_WORKSPACE_DIR=~/GitHub
+WECHAT_ALLOWED_USER_IDS=
+WECHAT_CODEX_RUNTIME_MODE=long
+WECHAT_ALLOW_DANGEROUS=false
+```
+
+启动微信入口：
+
+```bash
+npm run start:wechat
+```
+
+首次启动会在终端显示二维码。微信入口当前支持文本和语音转写，不接收图片或文件。常用命令：
+
+```text
+/sessions                 浏览本机 Codex 历史会话
+/resume 2                 绑定列表中的第 2 条会话
+/resume <thread-id>       绑定指定 Codex thread
+/session                  查看当前绑定
+/new                      下一条消息新建会话
+/status                   查看 workspace、model、effort 和运行状态
+/cancel                   取消当前任务
+/dir <路径>               切换 workspace，同时解除旧 session
+```
+
+微信 session 映射和 iLink 凭据分别保存在 `data/wechat/`，不会写入 Discord 的 `data/sessions*.json`。真实 Codex 会话仍来自同一个 `~/.codex/sessions`。
+
+iLink 登录和消息协议实现参考了 MIT 项目 [sgaofen/cli-in-wechat](https://github.com/sgaofen/cli-in-wechat)，但没有采用它的 CLI adapter 或 `resume --last` 会话模型。
+
+### macOS 长期运行 Discord 和微信
+
+两个入口使用独立的 `launchd` 服务，登录后自动启动，异常退出后自动拉起：
+
+```bash
+# 1. 先配置 .env，至少填写 CODEX__DISCORD_TOKEN
+cp .env.example .env
+
+# 2. 微信首次前台扫码，看到 Agents in WeChat started 后按 Ctrl-C
+npm run start:wechat
+
+# 3. 安装并启动两个后台服务
+npm run services:install
+```
+
+常用维护命令：
+
+```bash
+npm run services:status
+npm run services:logs
+npm run services:restart
+npm run services:stop
+npm run services:start
+npm run services:uninstall
+```
+
+只操作一个入口时，直接调用管理脚本并传 `discord` 或 `wechat`：
+
+```bash
+bash scripts/manage-channel-services-macos.sh restart wechat
+bash scripts/manage-channel-services-macos.sh logs discord
+```
+
+Discord 日志写入 `logs/discord.service*.log`，微信日志写入 `logs/wechat.service*.log`。微信凭据保存在本机忽略提交的 `data/wechat/credentials.json`；如果凭据过期，先停止微信服务，再前台运行 `npm run start:wechat` 重新扫码。
+
 ## 设置面板
 
 推荐优先用 `/cx_settings`。它比记命令更稳，也会显示当前值来自哪里。

@@ -72,6 +72,38 @@ Git hooks note:
 
 Then in your Discord server, invite the bot. For a normal first run, start with `/cx_onboarding`, choose language/provider/workspace, then send the first task.
 
+### Optional WeChat entry
+
+The WeChat entry runs as a separate process, so the existing Discord startup path, tokens, channel sessions, and components remain unchanged. Both entries reuse the Codex runner and the same workspace lock directory.
+
+```env
+WECHAT_WORKSPACE_ROOTS=~/GitHub,~/Lark_Project
+WECHAT_DEFAULT_WORKSPACE_DIR=~/GitHub
+WECHAT_CODEX_RUNTIME_MODE=long
+WECHAT_ALLOW_DANGEROUS=false
+```
+
+Start it with `npm run start:wechat` and scan the terminal QR code. Use `/sessions`, `/resume <number|thread-id>`, `/session`, `/new`, `/status`, `/cancel`, and `/dir <path>` in WeChat. The first version accepts text and voice transcription, but not image or file inputs.
+
+### Run Discord and WeChat continuously on macOS
+
+The two entries use independent `launchd` services. They start at login and restart after an unexpected exit:
+
+```bash
+# 1. Configure .env and at least set CODEX__DISCORD_TOKEN
+cp .env.example .env
+
+# 2. Complete the initial WeChat QR login in the foreground, then press Ctrl-C
+npm run start:wechat
+
+# 3. Install and start both background services
+npm run services:install
+```
+
+Use `npm run services:status`, `npm run services:logs`, and `npm run services:restart` for routine operations. Pass `discord` or `wechat` directly to `scripts/manage-channel-services-macos.sh` to operate on only one entry.
+
+WeChat credentials and channel bindings live under `data/wechat/`, separately from Discord state. The iLink protocol implementation was informed by the MIT-licensed [sgaofen/cli-in-wechat](https://github.com/sgaofen/cli-in-wechat); its CLI adapter and `resume --last` session model are not used.
+
 Examples below use the default Codex/shared prefix `cx_`; a dedicated Claude bot defaults to `cc_`, a dedicated Antigravity bot defaults to `ag_`, and a dedicated ZCode bot defaults to `zc_`. All can be overridden with `SLASH_PREFIX` or the matching provider-scoped `__SLASH_PREFIX` key:
 
 - `/cx_status` — show current thread config

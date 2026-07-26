@@ -27,6 +27,9 @@ resolve_label() {
     omp|"${PROJECT_LABEL_PREFIX}.omp")
       printf '%s\n' "${PROJECT_LABEL_PREFIX}.omp"
       ;;
+    wechat|"${PROJECT_LABEL_PREFIX}.wechat")
+      printf '%s\n' "${PROJECT_LABEL_PREFIX}.wechat"
+      ;;
     *)
       return 1
       ;;
@@ -56,23 +59,17 @@ restart_label() {
 main() {
   local raw="${1:-}"
   if [[ -z "${raw}" ]]; then
-    printf 'usage: %s <codex|claude|antigravity|zcode|pi|omp|all|label>\n' "$0" >&2
+    printf 'usage: %s <codex|claude|antigravity|zcode|pi|omp|wechat|all|label>\n' "$0" >&2
     exit 64
   fi
 
   if [[ "${raw}" == "all" ]]; then
-    restart_label "${PROJECT_LABEL_PREFIX}"
-    restart_label "${PROJECT_LABEL_PREFIX}.claude"
-    restart_label "${PROJECT_LABEL_PREFIX}.antigravity"
-    if [[ -f "${USER_AGENTS_DIR}/${PROJECT_LABEL_PREFIX}.zcode.plist" ]]; then
-      restart_label "${PROJECT_LABEL_PREFIX}.zcode"
-    fi
-    if [[ -f "${USER_AGENTS_DIR}/${PROJECT_LABEL_PREFIX}.pi.plist" ]]; then
-      restart_label "${PROJECT_LABEL_PREFIX}.pi"
-    fi
-    if [[ -f "${USER_AGENTS_DIR}/${PROJECT_LABEL_PREFIX}.omp.plist" ]]; then
-      restart_label "${PROJECT_LABEL_PREFIX}.omp"
-    fi
+    local suffix
+    for suffix in "" ".claude" ".antigravity" ".zcode" ".pi" ".omp" ".wechat"; do
+      if [[ -f "${USER_AGENTS_DIR}/${PROJECT_LABEL_PREFIX}${suffix}.plist" ]]; then
+        restart_label "${PROJECT_LABEL_PREFIX}${suffix}"
+      fi
+    done
     exit 0
   fi
 
