@@ -23,6 +23,7 @@
     "setup-hooks": "git config core.hooksPath .githooks",
     "check:atomic": "node scripts/check-atomic-commit.mjs --staged",
     "check:lark": "node scripts/check-lark-readiness.mjs",
+    "smoke:lark-dm": "node scripts/run-lark-dm-smoke.mjs",
     "sync:lark-commands": "node scripts/sync-lark-slash-commands.mjs",
     "check:reply-fallback": "node scripts/check-safe-reply.mjs",
     "test:platform-notifications": "node --test test/notification-delivery-contract.test.mjs test/discord-notification-delivery.test.mjs test/lark-message-delivery.test.mjs test/project-upgrade-notification-boundaries.test.mjs test/project-upgrade.test.mjs",
