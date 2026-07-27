@@ -333,6 +333,12 @@ function createPanel({
   });
 }
 
+test('settings panel component and modal ids accept Lark open ids', () => {
+  const panel = createPanel({ session: { provider: 'codex', language: 'zh' } });
+  assert.equal(panel.isSettingsPanelComponentId('stg:act:model:custom:ou_lark_user'), true);
+  assert.equal(panel.isSettingsPanelModalId('stgm:model:ou_lark_user'), true);
+});
+
 test('createSettingsPanel opens an overview payload with key channel settings', () => {
   const session = {
     provider: 'codex',

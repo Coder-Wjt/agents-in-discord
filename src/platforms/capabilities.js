@@ -47,3 +47,14 @@ export const DISCORD_PLATFORM_CAPABILITIES = createPlatformCapabilities({
   reactions: true,
   attachments: true,
 });
+
+export const LARK_PLATFORM_CAPABILITIES = createPlatformCapabilities({
+  threads: true,
+  slashCommands: true,
+  buttons: true,
+  selectMenus: true,
+  modals: true,
+  messageEdits: true,
+  reactions: true,
+  attachments: true,
+});

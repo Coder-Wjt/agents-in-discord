@@ -230,7 +230,7 @@ export function createOnboardingFlow({
     if (!['goto', 'refresh', 'done', 'set_lang', 'set_provider', 'workspace_default', 'workspace_browse'].includes(action)) {
       return null;
     }
-    if (!/^[0-9]{5,32}$/.test(String(userId || ''))) return null;
+    if (!/^[a-z0-9_-]{1,64}$/i.test(String(userId || ''))) return null;
     return {
       action,
       step: normalizeOnboardingStep(rawStep),

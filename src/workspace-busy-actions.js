@@ -20,7 +20,7 @@ export function buildWorkspaceBusyComponentId(action, userId) {
 }
 
 export function parseWorkspaceBusyComponentId(customId) {
-  const match = /^wbusy:([a-z_]+):([0-9]{5,32})$/i.exec(String(customId || '').trim());
+  const match = /^wbusy:([a-z_]+):([a-z0-9_-]{1,64})$/i.exec(String(customId || '').trim());
   if (!match) return null;
   const action = String(match[1] || '').trim().toLowerCase();
   if (!['isolate', 'auto', 'default'].includes(action)) return null;

@@ -207,7 +207,7 @@ function buildSettingsModalId(target, userId, generation = '') {
 }
 
 function parseSettingsComponentId(customId) {
-  const match = /^stg:(nav|set|act):([a-z_]+):([a-z0-9_-]+):([0-9]{5,32})(?::([a-z0-9_-]{1,16}))?$/i.exec(String(customId || '').trim());
+  const match = /^stg:(nav|set|act):([a-z_]+):([a-z0-9_-]+):([a-z0-9_-]{1,64})(?::([a-z0-9_-]{1,16}))?$/i.exec(String(customId || '').trim());
   if (!match) return null;
   return {
     kind: String(match[1] || '').trim().toLowerCase(),
@@ -219,7 +219,7 @@ function parseSettingsComponentId(customId) {
 }
 
 function parseSettingsModalId(customId) {
-  const match = /^stgm:([a-z_]+):([0-9]{5,32})(?::([a-z0-9_-]{1,16}))?$/i.exec(String(customId || '').trim());
+  const match = /^stgm:([a-z_]+):([a-z0-9_-]{1,64})(?::([a-z0-9_-]{1,16}))?$/i.exec(String(customId || '').trim());
   if (!match) return null;
   return {
     target: String(match[1] || '').trim().toLowerCase(),

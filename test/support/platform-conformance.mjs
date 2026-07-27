@@ -42,29 +42,37 @@ export function definePlatformAdapterConformance({ platformName, createDriver } 
     assertInboundMessageEvent(result.event);
     assert.equal(result.event.platformId, result.adapterId);
     assert.equal(result.event.actor.id, 'user-1');
-    assert.equal(result.event.conversation.id, 'conversation-1');
+    assert.equal(result.event.conversation.id, result.expectedConversationId || 'conversation-1');
     assert.equal(result.event.text, 'hello adapter');
     assert.equal(result.dispatch.kind, 'prompt');
     assert.equal(result.dispatch.actorId, 'user-1');
-    assert.equal(result.dispatch.conversationId, 'conversation-1');
+    assert.equal(result.dispatch.conversationId, result.expectedConversationId || 'conversation-1');
     assert.equal(result.dispatch.content, 'hello adapter');
   });
 
-  test(`${label} Adapter conformance: native commands normalize and route`, async () => {
-    const result = await getDriver().command();
-    assertInboundInteractionEvent(result.event);
-    assert.equal(result.event.kind, 'command');
-    assert.equal(result.event.command.name, 'status');
-    assert.equal(result.event.command.getOption('detail'), 'full');
+  test(`${label} Adapter conformance: commands normalize and route`, async () => {
+    const driver = getDriver();
+    const result = await driver.command();
+    if (result.event) {
+      assertInboundInteractionEvent(result.event);
+      assert.equal(result.event.kind, 'command');
+      assert.equal(result.event.command.name, 'status');
+      assert.equal(result.event.command.getOption('detail'), 'full');
+    } else {
+      assert.equal(
+        result.route.mode,
+        driver.adapter.capabilities.slashCommands ? 'native_text' : 'text',
+      );
+    }
     assert.equal(result.route.commandName, 'status');
     assert.equal(result.route.actorId, 'user-1');
-    assert.equal(result.route.conversationId, 'conversation-1');
+    assert.equal(result.route.conversationId, result.expectedConversationId || 'conversation-1');
   });
 
   test(`${label} Adapter conformance: cancel reaches the shared command core`, async () => {
     const result = await getDriver().cancel();
     assert.deepEqual(result.cancel, {
-      conversationId: 'conversation-1',
+      conversationId: result.expectedConversationId || 'conversation-1',
       reason: 'text_command:!cancel',
     });
     assert.equal(result.promptCount, 0);
@@ -102,21 +110,30 @@ export function definePlatformAdapterConformance({ platformName, createDriver } 
   });
 
   test(`${label} Adapter conformance: child conversations preserve normalized topology`, async () => {
-    const result = await getDriver().childConversation();
-    assert.equal(result.spawnedId, 'child-conversation-1');
+    const driver = getDriver();
+    const result = await driver.childConversation();
+    if (result.unsupported) {
+      assert.equal(driver.adapter.capabilities.threads, false);
+      assert.equal(driver.adapter.conversationSpawn.canSpawn(result.source), false);
+      return;
+    }
+    assert.equal(result.spawnedId, result.expectedSpawnedId || 'child-conversation-1');
     assert.equal(result.joined, true);
     assert.equal(result.requestedName, 'Child conversation');
     assert.equal(result.prompt.actor.id, 'user-1');
-    assert.equal(result.prompt.conversation.id, 'child-conversation-1');
-    assert.equal(result.prompt.conversation.parentId, 'conversation-1');
+    assert.equal(result.prompt.conversation.id, result.expectedSpawnedId || 'child-conversation-1');
+    assert.equal(result.prompt.conversation.parentId, result.expectedParentId || 'conversation-1');
     assert.equal(result.prompt.conversation.isThread, true);
     assert.equal(result.notice, 'child ready');
   });
 
   test(`${label} Adapter conformance: entry failures are visible and lifecycle recovery remains wired`, async () => {
     const result = await getDriver().errorRecovery();
-    assert.deepEqual(result.statuses, ['failed']);
+    assert.deepEqual(result.statuses, result.expectedStatuses || ['failed']);
     assert.match(result.reply, /adapter boom/);
-    assert.deepEqual(result.selfHealReasons, ['shard_disconnect:2:code=1006']);
+    assert.deepEqual(
+      result.selfHealReasons,
+      result.expectedSelfHealReasons || ['shard_disconnect:2:code=1006'],
+    );
   });
 }

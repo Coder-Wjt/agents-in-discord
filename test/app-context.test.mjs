@@ -97,6 +97,7 @@ test('createAppContext wires factories and cross-links composition dependencies'
   const entryHandlers = { bindClientHandlers: () => 'bound' };
   const lifecycle = {
     getClient: () => ({ user: { id: 'bot-user-1' } }),
+    getHealthSnapshot: () => ({ state: 'connected' }),
   };
   const messageDelivery = {
     reply() {},
@@ -106,6 +107,7 @@ test('createAppContext wires factories and cross-links composition dependencies'
     splitText() {},
     formatUserMention() {},
     setMessageStatus() {},
+    getMetricsSnapshot: () => ({ succeeded: 7, failed: 1, inFlight: 0 }),
   };
   const notificationDelivery = {
     sendNotification() {},
@@ -378,6 +380,13 @@ test('createAppContext wires factories and cross-links composition dependencies'
   assert.equal(calls.commandSurface.conversationPresentation, conversationPresentation);
   assert.equal(calls.commandSurface.platformCapabilities, appContext.platformAdapter.capabilities);
   assert.equal(calls.commandSurface.reportOptions.getSessionId, identity.getSessionId);
+  const platformHealth = calls.commandSurface.reportOptions.getPlatformHealth();
+  assert.deepEqual(platformHealth, {
+    platformId: 'example',
+    observedAt: platformHealth.observedAt,
+    connection: { state: 'connected' },
+    delivery: { succeeded: 7, failed: 1, inFlight: 0 },
+  });
   assert.equal(calls.commandSurface.settingsPanelOptions.resolveCompactThresholdSetting, sessionSettings.resolveCompactThresholdSetting);
   assert.equal(calls.commandSurface.settingsPanelOptions.resolveReplyDeliverySetting, sessionSettings.resolveReplyDeliverySetting);
   assert.equal(calls.commandSurface.workspaceBrowserOptions.commandActions, commandActions);

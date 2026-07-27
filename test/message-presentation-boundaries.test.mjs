@@ -20,9 +20,9 @@ test('prompt and command presentation core do not use Discord-native send or men
   assert.doesNotMatch(slashSource, /channel\?*\.send|channel\.send/);
 });
 
-test('Discord composition explicitly keeps the legacy extra info default', () => {
+test('platform composition keeps the Discord legacy default and uses the neutral default elsewhere', () => {
   const indexSource = readSource('index.js');
 
   assert.match(indexSource, /DISCORD_DEFAULT_EXTRA_INFO_TEMPLATE/);
-  assert.match(indexSource, /EXTRA_INFO_TEXT[\s\S]*\|\| DISCORD_DEFAULT_EXTRA_INFO_TEMPLATE/);
+  assert.match(indexSource, /EXTRA_INFO_TEXT[\s\S]*BOT_PLATFORM === 'discord'[\s\S]*DISCORD_DEFAULT_EXTRA_INFO_TEMPLATE[\s\S]*DEFAULT_EXTRA_INFO_TEMPLATE/);
 });

@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "updatedAt": "2026-07-26",
+  "platform": "lark",
+  "defaultTransport": "websocket",
+  "transports": [
+    "websocket",
+    "webhook"
+  ],
+  "capabilities": [
+    "bot"
+  ],
+  "features": {
+    "botMenu": true,
+    "nativeSlashCommands": true
+  },
+  "botMenuEventKeys": [
+    "status",
+    "settings",
+    "progress",
+    "queue",
+    "cancel",
+    "new",
+    "onboarding"
+  ],
+  "tenantScopes": [
+    "im:message.group_at_msg:readonly",
+    "im:message.p2p_msg:readonly",
+    "im:message:readonly",
+    "im:message:send_as_bot",
+    "im:message:update",
+    "im:message:recall",
+    "im:resource",
+    "im:message.reactions:read",
+    "im:message.reactions:write_only"
+  ],
+  "provisioningTenantScopes": [
+    "application:app_slash_command:read",
+    "application:app_slash_command:write"
+  ],
+  "events": [
+    "im.message.receive_v1",
+    "application.bot.menu_v6"
+  ],
+  "callbacks": [
+    "card.action.trigger"
+  ]
+}

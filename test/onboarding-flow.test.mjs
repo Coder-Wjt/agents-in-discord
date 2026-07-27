@@ -180,6 +180,34 @@ test('createOnboardingFlow updates session language through button interaction',
   assert.equal(updates[0].components.length, 2);
 });
 
+test('createOnboardingFlow accepts Lark open ids in user-bound buttons', async () => {
+  const session = { language: 'en', provider: 'codex', onboardingEnabled: true };
+  const updates = [];
+  const flow = createFlow({
+    session,
+    commandActions: {
+      setLanguage(currentSession, language) {
+        currentSession.language = language;
+        return { language };
+      },
+    },
+  });
+
+  await flow.handleOnboardingButtonInteraction({
+    customId: 'onb:set_lang:1:ou_lark_user:zh',
+    channelId: 'chat-1',
+    user: { id: 'ou_lark_user' },
+    channel: { id: 'chat-1' },
+    async update(payload) {
+      updates.push(payload);
+    },
+    async reply() {},
+  });
+
+  assert.equal(session.language, 'zh');
+  assert.equal(updates.length, 1);
+});
+
 test('createOnboardingFlow builds provider buttons in shared mode', () => {
   const session = { language: 'zh', provider: 'claude', onboardingEnabled: true };
   const flow = createFlow({ session });

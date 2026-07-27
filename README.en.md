@@ -1,8 +1,8 @@
 # Agents in Discord
 
-A standalone Discord bot that lets you direct **Codex CLI**, **Claude Code**, **Antigravity CLI**, and **ZCode CLI** from inside Discord.
+A standalone bridge that lets you direct **Codex CLI**, **Claude Code**, **Antigravity CLI**, and **ZCode CLI** from Discord or Feishu/Lark.
 
-> This project is a standalone Discord bot / bridge. It is **not** an OpenClaw plugin, and it does **not** depend on OpenClaw to run.
+> This project is a standalone chat bridge. It is **not** an OpenClaw plugin, and it does **not** depend on OpenClaw to run.
 
 [简体中文](./README.md)
 
@@ -10,11 +10,11 @@ A standalone Discord bot that lets you direct **Codex CLI**, **Claude Code**, **
 
 ZCode CLI support is available starting with [v0.13.0](https://github.com/atou42/agents-in-discord/releases/tag/v0.13.0).
 
-**Design:** 1 Discord **thread/channel = 1 CLI session** (auto resume for the active provider).
+**Design:** 1 platform conversation (a Discord thread/channel or Lark chat/reply chain) = 1 CLI session (auto resume for the active provider).
 
 ## Features
 
-- Slash commands (no `!` required)
+- Native Discord and provider-prefixed Lark slash commands, with text-command fallbacks
 - Thread-level session persistence (restart-safe)
 - Flexible workspace model: thread override, provider default, plus legacy per-thread fallback
 - Provider-aware runtime surface:
@@ -41,6 +41,8 @@ ZCode CLI support is available starting with [v0.13.0](https://github.com/atou42
   - per-thread security profile override (`auto|solo|team|public`)
   - per-thread runner timeout override (`ms|off|status`)
 
+Discord keeps its full slash-command surface. Lark is message-first but also supports registered provider-prefixed native slash commands, text commands, native card buttons, selects, and Card 2.0 forms.
+
 ## Prerequisites
 
 - Node.js 18+
@@ -50,9 +52,13 @@ ZCode CLI support is available starting with [v0.13.0](https://github.com/atou42
   - Antigravity: `agy` available in shell, or set `ANTIGRAVITY_BIN=/absolute/path/to/agy`
   - ZCode: `zcode` available in shell, or set `ZCODE_BIN=/absolute/path/to/zcode`
 - If the CLI itself needs login, complete that in the CLI first; this project does not manage provider auth in `.env`
-- One or two Discord Application/Bot tokens
-  - Shared mode: one bot token is enough
-  - Dedicated mode: use separate tokens for Codex, Claude, Antigravity, and ZCode bots
+- Discord Application/Bot token(s), or Feishu/Lark authentication
+  - Discord shared mode needs one bot token
+  - Discord dedicated mode can use separate tokens for Codex, Claude, Antigravity, and ZCode bots
+  - Local Lark CLI mode can reuse the encrypted persistent `lark-cli` login
+  - Lark SDK/Webhook mode needs an app ID and app secret
+
+The Lark integration is verified on Node.js `v18.17.1`; it does not require a Node.js 22 upgrade.
 
 ## Quickstart
 
@@ -113,6 +119,81 @@ Provider-native session aliases:
 - ZCode: `/zc_zcode_sessions`, `/zc_zcode_resume`
 - The canonical `/cx_sessions`, `/cx_resume`, `!sessions`, and `!resume` still work; dedicated bots narrow the help text to the current provider's native terminology
 
+## Feishu/Lark integration
+
+The Lark integration supports two WebSocket transports and one HTTP webhook transport on Node.js 18:
+
+- `LARK_TRANSPORT=cli` reuses encrypted credentials persisted by the official `lark-cli`, which is convenient for local use and keeps the App Secret out of the project `.env`.
+- `LARK_TRANSPORT=sdk` uses the official `@larksuiteoapi/node-sdk` with environment credentials, which is suitable for servers and external secret stores.
+- `LARK_TRANSPORT=webhook` uses the official SDK dispatcher for HTTPS callbacks. It always checks the verification token and, when an encrypt key is configured, also verifies signatures and decrypts encrypted events.
+
+`LARK_TRANSPORT=auto` is the default: it selects SDK WebSocket when both `LARK_APP_ID` and `LARK_APP_SECRET` are configured, otherwise it selects the CLI. Webhook mode must be selected explicitly. One-time CLI setup:
+
+```bash
+npm install -g @larksuite/cli
+lark-cli config init --new
+lark-cli auth login --recommend
+lark-cli auth status --verify --json
+```
+
+Run the read-only preflight before starting. The default command checks effective configuration and the local SDK/CLI only. With `--verify-credentials`, CLI mode verifies the selected profile, while SDK/webhook mode obtains a tenant token and reads bot info. Neither form starts event consumers, opens the webhook listener, sends messages, or prints credential values:
+
+```bash
+npm run check:lark
+npm run check:lark -- --verify-credentials
+npm run sync:lark-commands
+npm run sync:lark-commands -- --dry-run
+# Only after reviewing the read-only drift:
+# npm run sync:lark-commands -- --apply
+```
+
+Then start the runtime:
+
+```bash
+npm run start:lark
+```
+
+For SDK WebSocket or webhook mode, enable the bot capability in the developer console, subscribe to `im.message.receive_v1` (and `application.bot.menu_v6` when using native bot menus) plus the `card.action.trigger` callback, grant the permissions needed to receive messages, send/update/recall as the bot, read message resources, and read/write reactions, then configure:
+
+See [`docs/lark-deployment-checklist.md`](docs/lark-deployment-checklist.md) for the versioned scope/event baseline and the real-credential smoke procedure. `check:lark -- --verify-credentials` also reads the published bot version, WebSocket/webhook delivery mode, published events, required bot-menu `event_key` values, and native slash-command registry without starting a consumer or sending messages, and requires at least one chat, tenant, or user allowlist. An empty allowlist does not skip the remaining remote checks, but the final readiness result cannot pass. An enabled menu with missing command keys or an unreadable required native slash-command registry also fails readiness. If the application API omits the card-callback subscription list, the report keeps that item as an explicit manual check instead of claiming it passed. `sync:lark-commands` is read-only by default and checks both slash-command provisioning scopes; `--dry-run` validates every planned create/update request without writing. Explicit `--apply` runs the same complete validation pass first, then creates missing commands, updates outdated descriptions, and never deletes extra commands. A missing read scope is never misreported as an empty registry, while pending dry-run/apply work is rejected before execution when the write scope is absent. Before writing, the tool also checks the 100-command per-app limit and refuses a partial sync when the registry has insufficient capacity.
+
+```env
+LARK_TRANSPORT=sdk
+LARK_APP_ID=cli_xxx
+LARK_APP_SECRET=...
+LARK_DOMAIN=feishu
+LARK_ALLOWED_CHAT_IDS=
+LARK_ALLOWED_TENANT_IDS=
+LARK_ALLOWED_USER_IDS=
+LARK_MENTION_ONLY_CHAT_IDS=
+```
+
+For webhook mode, point both the event subscription and card callback at the same public HTTPS URL. The process listens on loopback by default so a reverse proxy can terminate TLS:
+
+```env
+LARK_TRANSPORT=webhook
+LARK_APP_ID=cli_xxx
+LARK_APP_SECRET=...
+LARK_WEBHOOK_VERIFICATION_TOKEN=...
+LARK_WEBHOOK_ENCRYPT_KEY=...
+LARK_WEBHOOK_HOST=127.0.0.1
+LARK_WEBHOOK_PORT=3000
+LARK_WEBHOOK_PATH=/lark/events
+LARK_WEBHOOK_HEALTH_PATH=/healthz
+LARK_WEBHOOK_MAX_BODY_BYTES=1048576
+LARK_WEBHOOK_HEADERS_TIMEOUT_MS=10000
+LARK_WEBHOOK_REQUEST_TIMEOUT_MS=15000
+LARK_WEBHOOK_KEEP_ALIVE_TIMEOUT_MS=5000
+```
+
+The reverse proxy must preserve the raw request body and `x-lark-*` headers. The listener separately bounds header receipt, complete request receipt, and idle keep-alive time so slow clients cannot occupy sockets indefinitely; the header timeout cannot exceed the complete request timeout. The deployment checklist covers public TLS, URL challenge verification, invalid signatures, body-size limits, and timeouts.
+
+Use `LARK_CLI_PROFILE` to select a profile when the CLI has multiple apps, and `LARK_CLI_BIN` to override the executable path. Use `LARK_DOMAIN=feishu` for mainland Feishu and `LARK_DOMAIN=lark` for international Lark; these domain settings apply to SDK WebSocket and webhook mode, while CLI mode follows the selected profile's brand.
+
+The integration supports group mentions, DMs, ordinary messages, text commands such as `!status`, `!progress`, and `!cancel`, attachment metadata, native Codex image downloads, progress-message edits, task-status reactions, bounded event deduplication, and transport self-healing. Messages, card actions, and bot-menu events are deduplicated by stable event identity so webhook or CLI redelivery cannot execute the same task twice; tune the retention window and memory bound with `LARK_EVENT_DEDUP_WINDOW_MS` and `LARK_EVENT_DEDUP_MAX_ENTRIES`. Webhook mode also exposes a read-only GET health probe on a path separate from the callback POST endpoint. On `SIGTERM` or `SIGINT`, active work is cancelled and the SDK, CLI, or webhook channel is disconnected even when `SELF_HEAL_ENABLED=false`; shutdown failures cannot schedule a self-heal restart. `!status` reports the selected transport's connection state, retry/self-heal counts, and message-delivery successes, failures, in-flight operations, and the latest failure. Settings, onboarding, workspace browsing, workspace-conflict actions, and retry controls can use native Lark cards with buttons and selects. Shared modals for model, Codex profile, and compact-threshold input are rendered as inline Card 2.0 forms; opening and submitting them updates the current card in place. Reply chains are isolated by `root_id`; local state and locks are isolated by `BOT_PLATFORM` and `BOT_INSTANCE_ID`.
+
+SDK, CLI, and webhook transports support card actions. CLI mode consumes `im.message.receive_v1`, `card.action.trigger`, and `application.bot.menu_v6`; webhook mode dispatches them through the same verified HTTP endpoint. Lark does not reuse Discord's popup modal UI; Card 2.0 forms provide the equivalent input flow. Non-form `ephemeral` responses triggered from a group card are sent to the operator's bot DM instead of replacing the shared card. The private card carries the qualified source chat or reply-chain context, so its buttons, selects, and forms continue to operate on the original session even after a process restart, while card updates remain private. Card 2.0 forms still open and submit in place on the current card to preserve validation, correction, and retry behavior. Event-style custom bot menus can use shared command names as their `event_key` (for example `status`, `settings`, `progress`, `queue`, `cancel`, `new`, or `onboarding`); results are delivered to the operator's bot DM and updated in place. Native slash commands follow the provider-aware prefix used on Discord, for example `/cx_status`, `/cc_status`, `/ag_status`, or `/zc_status`; their ordinary message deliveries reuse the existing text-command parser and arguments. In group chats, `fork` and Codex `side` create a new root message and isolate subsequent work in its reply chain; closing a side conversation marks that root as closed. DMs cannot create these child conversations. Apps must register commands and enable the matching events/callbacks for native entries to work.
+
 If you want **separate Discord bots** for Codex, Claude, Antigravity, and ZCode, keep everything in one `.env`, but group provider-specific values with clear prefixes:
 
 ```bash
@@ -128,12 +209,25 @@ npm run start:zcode
 
 Use plain keys for shared Discord/runtime settings, then put dedicated bot settings under `CODEX__*`, `CLAUDE__*`, `ANTIGRAVITY__*`, and `ZCODE__*` sections in the same file. In practice, you usually only need `DISCORD_TOKEN`, optional `DEFAULT_MODEL`, optional `DEFAULT_MODE`, and optional CLI path overrides. ZCode maps safe mode to `edit` and dangerous mode to `yolo`. Antigravity currently has no public `--model` launch flag, so this bridge applies Antigravity model choices through `~/.gemini/antigravity-cli/settings.json`; the model menu merges the current settings value, Antigravity's documented reasoning models, and models observed in local CLI logs. Each locked instance uses its own provider-scoped state file and process lock, so channel/session context does not mix across bots.
 
+Lark can also be combined with `BOT_PROVIDER=codex|claude|antigravity|zcode`; for example, `CODEX__LARK_TRANSPORT`, `CODEX__LARK_CLI_PROFILE`, or `CODEX__LARK_APP_ID` / `CODEX__LARK_APP_SECRET` override the shared Lark settings, and the other provider prefixes work the same way.
+
 ## Configuration (.env)
 
 See `.env.example`.
 
 Important knobs:
 
+- `BOT_PLATFORM`: `discord` (default) or `lark`; `npm run start:lark` sets `lark`
+- `BOT_INSTANCE_ID`: stable instance name used to isolate session files and process/workspace locks
+- `LARK_TRANSPORT`: `auto` (default), `cli`, `sdk`, or `webhook`; auto selects CLI when SDK credentials are absent and never selects webhook implicitly
+- `LARK_CLI_BIN` / `LARK_CLI_PROFILE`: CLI executable and optional persistent credential profile
+- `LARK_APP_ID` / `LARK_APP_SECRET` / `LARK_DOMAIN`: SDK credentials and `feishu|lark` region selection
+- `LARK_WEBHOOK_VERIFICATION_TOKEN` / `LARK_WEBHOOK_ENCRYPT_KEY`: webhook verification and optional encrypted-event key
+- `LARK_WEBHOOK_HOST` / `LARK_WEBHOOK_PORT` / `LARK_WEBHOOK_PATH` / `LARK_WEBHOOK_HEALTH_PATH` / `LARK_WEBHOOK_MAX_BODY_BYTES`: local webhook listener, separate GET health probe, and request-size limit
+- `LARK_WEBHOOK_HEADERS_TIMEOUT_MS` / `LARK_WEBHOOK_REQUEST_TIMEOUT_MS` / `LARK_WEBHOOK_KEEP_ALIVE_TIMEOUT_MS`: slow-header, complete-request, and idle keep-alive bounds for the webhook HTTP server
+- `LARK_EVENT_DEDUP_WINDOW_MS` / `LARK_EVENT_DEDUP_MAX_ENTRIES`: duplicate event retention and bounded in-memory cache size
+- `LARK_ALLOWED_CHAT_IDS` / `LARK_ALLOWED_TENANT_IDS` / `LARK_ALLOWED_USER_IDS`: Lark access control; falls back to the corresponding shared allowlist when unset
+- `LARK_MENTION_ONLY_CHAT_IDS`: Lark chats that require a bot mention for normal prompts
 - `ALLOWED_CHANNEL_IDS` / `ALLOWED_USER_IDS`: lock the bot down (recommended); dedicated bots can also use `CODEX__ALLOWED_*` / `CLAUDE__ALLOWED_*` / `ANTIGRAVITY__ALLOWED_*` / `ZCODE__ALLOWED_*`
 - Shared `.env` keys: Discord/runtime settings only (`ALLOWED_*`, `WORKSPACE_ROOT`, `DEFAULT_WORKSPACE_DIR`, proxy, etc.)
 - `CODEX__*`: Codex bot section in the same `.env` (normally `CODEX__DISCORD_TOKEN`, plus optional `CODEX__DEFAULT_MODEL`, `CODEX__DEFAULT_MODE`, `CODEX__DEFAULT_WORKSPACE_DIR`, `CODEX__MAX_INPUT_TOKENS_BEFORE_COMPACT`, `CODEX__CODEX_BIN`)
@@ -182,7 +276,7 @@ Important knobs:
 - `PROGRESS_MESSAGE_MAX_CHARS`: max rendered chars per progress message (default `1800`)
 - `SELF_HEAL_ENABLED`: enable runtime self-healing (default `true`)
 - `SELF_HEAL_RESTART_DELAY_MS`: delay before self-heal restart (default `5000`)
-- `SELF_HEAL_MAX_LOGIN_BACKOFF_MS`: max retry backoff for Discord login (default `60000`)
+- `SELF_HEAL_MAX_LOGIN_BACKOFF_MS`: max retry backoff for Discord login or Lark channel connection (default `60000`)
 - `MAX_INPUT_TOKENS_BEFORE_COMPACT`: compact threshold
 - `COMPACT_STRATEGY`: `hard | native | off`
   - `hard`: bot summarizes then switches to a new session

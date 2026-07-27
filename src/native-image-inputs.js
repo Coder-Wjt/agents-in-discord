@@ -74,7 +74,11 @@ export async function stageNativeImageAttachments(message, {
     };
   }
 
-  if (typeof fetchImpl !== 'function') {
+  const hasCustomDownloader = attachments.some((attachment) => (
+    typeof attachment?.download === 'function'
+    || typeof attachment?.raw?.download === 'function'
+  ));
+  if (typeof fetchImpl !== 'function' && !hasCustomDownloader) {
     return {
       inputImages: [],
       notes: ['图片原生输入不可用：当前运行时没有 fetch，已回退到附件 URL。'],
@@ -91,17 +95,27 @@ export async function stageNativeImageAttachments(message, {
     const attachment = attachments[index];
     const raw = attachment?.raw || attachment;
     const url = normalizeText(attachment?.url || raw?.url || raw?.proxyURL || '');
-    if (!url) {
+    const download = typeof attachment?.download === 'function'
+      ? attachment.download
+      : typeof raw?.download === 'function'
+        ? raw.download
+        : null;
+    if (!url && !download) {
       notes.push(`图片附件 ${attachment?.name || index + 1} 缺少 URL，已回退到附件文本。`);
       continue;
     }
 
     try {
-      const response = await fetchImpl(url);
-      if (!response?.ok) {
-        throw new Error(`HTTP ${response?.status || 'error'}`);
+      let bytes;
+      if (download) {
+        bytes = Buffer.from(await download());
+      } else {
+        const response = await fetchImpl(url);
+        if (!response?.ok) {
+          throw new Error(`HTTP ${response?.status || 'error'}`);
+        }
+        bytes = Buffer.from(await response.arrayBuffer());
       }
-      const bytes = Buffer.from(await response.arrayBuffer());
       const baseName = sanitizeFilename(path.basename(normalizeText(attachment?.name || `image-${index + 1}`)), `image-${index + 1}`);
       const ext = pickImageExtension(attachment);
       const fileName = baseName.toLowerCase().endsWith(ext) ? baseName : `${baseName}${ext}`;

@@ -84,6 +84,7 @@ test('parseWorkspaceBusyComponentId decodes busy action buttons', () => {
   assert.deepEqual(parseWorkspaceBusyComponentId('wbusy:isolate:12345'), { action: 'isolate', userId: '12345' });
   assert.deepEqual(parseWorkspaceBusyComponentId('wbusy:auto:12345'), { action: 'auto', userId: '12345' });
   assert.deepEqual(parseWorkspaceBusyComponentId('wbusy:default:12345'), { action: 'default', userId: '12345' });
+  assert.deepEqual(parseWorkspaceBusyComponentId('wbusy:isolate:ou_lark_user'), { action: 'isolate', userId: 'ou_lark_user' });
   assert.equal(parseWorkspaceBusyComponentId('wbusy:unknown:12345'), null);
 });
 

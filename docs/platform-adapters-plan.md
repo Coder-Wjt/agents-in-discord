@@ -4,11 +4,11 @@
 
 本项目目前以 Discord 作为消息入口，但核心能力——会话状态、Provider runner、频道队列、工作区绑定、跨进程锁、设置与安全策略——并不应绑定到单一聊天平台。
 
-本方案的目标是在保留 Discord 现有行为的前提下，引入稳定的平台抽象层，随后逐步支持 Slack 和飞书/Lark。截至本次阶段 4 实现，平台契约、Discord Adapter、核心平台边界、统一 Foundation 组合、可复用 conformance suite 和第二平台准入门槛已经落地；当前仍不添加 Slack/Lark SDK、配置或业务逻辑。
+本方案的目标是在保留 Discord 现有行为的前提下，引入稳定的平台抽象层，随后逐步支持 Slack 和飞书/Lark。截至 2026-07-27，平台契约、Discord Adapter、核心平台边界、统一 Foundation 组合和可复用 conformance suite 已落地；飞书/Lark 的功能实现、自动化回归、真实凭证 readiness 和部分隔离私聊 smoke 已完成。当前工作重点已从功能开发转为完整生产验收、运维收口和提交发布，Slack 仍是独立后续阶段。
 
 ## 实施状态
 
-本节以本地提交 `30e1df5..a35b9ce` 及本次阶段 4 实现为同步基线。原先统一归在“阶段 2 进行中”的工作，现按实际依赖关系重排如下：
+本节以本地提交 `30e1df5..97ebfb7` 及 2026-07-27 飞书/Lark 阶段性提交为同步基线。原先统一归在“阶段 2 进行中”的工作，现按实际依赖关系重排如下：
 
 | 阶段 | 状态 | 对应提交 | 当前结果 |
 | --- | --- | --- | --- |
@@ -16,20 +16,131 @@
 | 阶段 1：平台契约与 Discord 端口 | 已完成 | `55903a3`、`8af2e8a` | 平台契约、capability policy、Foundation、统一输入/输出端口及 Discord 实现已建立。 |
 | 阶段 2：核心平台无关化 | 已完成 | `ee2a4d9`、`27380e7`、`34c3b8f`、`c212fb8`、`18414af` | command/UI、inbound context、runtime delivery、conversation lifecycle/presentation 和 security 已改为消费平台端口。 |
 | 阶段 3：Foundation 统一组合与 Discord 回归 | 已完成 | `03efc7c` | `createAppContext()` 通过单一 Foundation 获取平台服务并创建 Adapter，Discord 启动、配置、session 与用户可见行为保持兼容。 |
-| 阶段 4：第二平台准入准备 | 已完成 | 本次提交 | 已清理过渡 facade/别名和 raw fallback，把 Discord 组合收口到启动边界，并补齐可复用 Adapter conformance suite、无 Discord SDK 核心 smoke 与准入决策。 |
-| 阶段 5：Slack Adapter | 未开始 | — | 等阶段 4 验收后再引入 SDK、配置和业务入口。 |
-| 阶段 6：飞书/Lark Adapter | 未开始 | — | 在 Slack 契约实践稳定后接入，避免并行复制未定型的平台假设。 |
-| 阶段 7：多平台迁移与统一运维 | 未开始 | — | 最后启用平台限定会话键、多实例配置、迁移工具与统一健康指标。 |
+| 阶段 4：第二平台准入准备 | 已完成 | `97ebfb7` | 已清理过渡 facade/别名和 raw fallback，把 Discord 组合收口到启动边界，并补齐可复用 Adapter conformance suite、无 Discord SDK 核心 smoke 与准入决策。 |
+| 阶段 5：Slack Adapter | 未开始 | — | Slack 仍是独立后续阶段，其 Node.js 基线单独决策。 |
+| 阶段 6：飞书/Lark Adapter | 功能完成，验收中 | 本阶段提交 | Node.js 18 消息、原生命令、机器人菜单、卡片/表单、私密响应、reaction、健康指标、reply-chain fork/side 和 Webhook 已完成；readiness 与部分真实私聊 smoke 已通过，完整隔离场景验收待完成。 |
+| 阶段 7：多平台迁移与统一运维 | 进行中 | 本阶段提交 | 已启用平台选择、限定会话键、平台/实例数据隔离及平台中立健康读取；Lark 已接入连接/投递指标，Discord key 迁移与其他平台指标仍待实现。 |
 
 当前已完成能力包括：
 
 - 统一 command spec/view、interaction response、message/notification delivery、inbound message/interaction envelope、conversation spawn/presentation/security 和 text presentation 契约。
 - command、prompt、queue、settings、workspace、fork/side、session topology 和 project upgrade scheduler 已通过平台端口工作；Discord 原始对象只在入口、投递、安全推断和 Adapter 内的平台操作边界使用。
 - `threads`、`slashCommands`、`buttons`、`selectMenus`、`modals`、`messageEdits`、`reactions`、`attachments` 已有显式 capability 和降级策略。
-- 生产组合根已使用 Discord Foundation；现有 Discord session key、`sessions.json`、环境变量、命令 JSON、启动方式和主要用户可见文案保持不变。
+- 生产组合根可按 `BOT_PLATFORM=discord|lark` 选择 Foundation；现有 Discord session key、默认 `sessions.json`、环境变量、命令 JSON、启动方式和主要用户可见文案保持不变。
 - `slash-command-surface.js`、raw message fallback、conversation history `author` 别名以及 `childThread` / `discordCleanup` / `discordArchive` 等迁移期兼容面已移除，边界测试阻止其回流。
-- `src/platforms/` 当前仍只有 Discord 实现，未新增 Slack/Lark SDK、配置、目录或业务入口。
-- 任意新 Adapter 可复用同一 conformance suite 验证消息、命令、取消、附件、能力降级、子会话和错误恢复；synthetic Foundation smoke 明确证明 AppContext 组合不需要 Discord SDK 对象。
+- `src/platforms/lark/` 已实现 Foundation/Adapter、消息输入输出、访问控制、安全描述、通知、生命周期和文本能力降级；官方 SDK 支持 WebSocket 长连接和验证后的 Webhook 回调。
+- Settings、Onboarding、Workspace Browser、workspace 冲突与 Retry command view 已映射为 Lark 原生交互卡片；SDK/CLI 均接收 `card.action.trigger` 并路由回共享 component handlers。
+- 共享 modal view 已映射为 Card 2.0 `form` + `input` + submit button；SDK raw event 与 CLI `form_value` 均规范化为共享 modal interaction，并路由回 Settings/Goal modal handlers。
+- `application.bot.menu_v6` 已接入双 transport；菜单 `event_key` 规范化为共享 command name，先解析操作者私聊 chat，再复用 command router 和原位卡片响应。
+- 版本化应用基线声明 `status`、`settings`、`progress`、`queue`、`cancel`、`new`、`onboarding` 七个机器人菜单事件键；readiness 会逐项检查已发布版本，避免任意空壳或错误命令菜单被误判为可用。
+- 群聊卡片产生的非表单 `ephemeral` 响应已映射为操作者私聊卡片；卡片内嵌原 chat/reply-chain 的限定上下文，进程重启丢失内存 target cache 后仍能恢复原 session，且共享卡片不会被私密结果或权限拒绝覆盖。Card 2.0 表单仍在当前卡片原位处理。
+- `npm run check:lark` 复用生产配置解析执行 secret-free 部署预检；可选 `--verify-credentials` 只读验证 CLI profile 或 SDK tenant token、bot info 和版本化 tenant-scope 基线，不启动消费者或发送消息。2026-07-27 当前环境的默认 CLI profile 已通过凭证与 bot identity 检查，权限基线为 9/9，并配置了当前应用作用域内的限制性用户 allowlist。
+- 真实凭证预检要求 chat/tenant/user allowlist 至少配置一项；空 allowlist 不会截断 tenant scopes、线上版本、事件、菜单和 slash command 的只读审计，但最终 readiness 必定失败，避免开放访问被误判为可部署。
+- 版本信息可读取但原生 slash command 注册表不可读取时，readiness 现在明确失败并指出 `application:app_slash_command:read`，不再把缺失的自动证据降级为人工确认。
+- `npm run sync:lark-commands` 默认只读比较 provider 对应的原生命令并核对 read/write provisioning scopes；`--dry-run` 使用当前 `lark-cli` 逐条验证整批 create/update 请求，`--apply` 只有在权限、100 条容量预检和全部请求预演通过后才写入，并且永不自动删除额外命令。
+- 当前应用的 slash-command provisioning scopes 为 2/2；42 条命令已显式执行 `--apply`，随后只读复核为 42/42 matched，missing/outdated/extra 均为 0，剩余容量 58/100。
+- AppContext 通过延迟健康读取器组合 Adapter lifecycle 与 message delivery 指标；Lark SDK/CLI/Webhook 都提供统一连接快照，`status` 显示连接状态、重试、自愈重启、投递成功/失败/进行中和最近失败。
+- 本机模式可用 `LARK_TRANSPORT=cli` 复用官方 `lark-cli` 的加密持久凭证和事件总线；`auto` 在未提供 App ID/Secret 时自动选择 CLI，服务器仍可显式选择 SDK。
+- 服务器可显式选择 `LARK_TRANSPORT=webhook`，通过官方 dispatcher 验证 verification token；配置 encrypt key 后再验证签名并解密 encrypted payload。本地 listener 默认绑定 loopback，支持固定 path、body limit，以及请求头、完整请求和 keep-alive 超时边界。
+- Webhook transport 提供与回调 POST 路径分离的 `GET /healthz` 运维探针，只返回连接状态和平台/transport 标识，不暴露凭证或事件内容。
+- SDK safety pipeline 与平台入口共同按 message/event ID 做有界去重；CLI、Webhook 重投以及机器人菜单重试不会重复进入 command/prompt 核心。
+- Lark 会话从首版使用 `platform:v1:lark:<tenant>:<chat>:<thread>`；reply chain 以 canonical `root_id` 作为子会话键，即使事件同时提供 `thread_id` 也保持稳定。session、进程锁、workspace lock 和 project-upgrade 状态均按平台与实例隔离。
+- 群聊已启用 `threads` capability，将共享 Codex/Claude fork 和 Codex side lifecycle 映射为新根消息下的 reply chain；私聊明确降级为不可创建子会话。
+- 任意新 Adapter 可复用同一 conformance suite 验证消息、命令、取消、附件、能力降级、子会话和错误恢复；Discord 与 Lark driver 均已接入，synthetic Foundation smoke 明确证明 AppContext 组合不需要 Discord SDK 对象。
+
+### 2026-07-25 Lark Node.js 18 消息 MVP
+
+- 使用官方 `@larksuiteoapi/node-sdk@1.71.1` 的 `createLarkChannel()` 和 WebSocket transport，在 Node.js `v18.17.1` 完成安装、导入与无网络 SDK 组合验证。
+- 支持群聊 @、私聊、普通消息、文本命令、回复链会话、消息编辑、通知投递、附件资源下载、Codex 原生图片输入及长连接自愈。
+- 首版当时已启用原生 button、select、message edit、reaction 和 attachment；后续阶段又补齐 Card 2.0 modal 等价能力、群聊 reply-chain 子会话及原生 slash command 注册与普通消息路由。
+- 已增加 Lark 专用 foundation、conformance、input、delivery、security、lifecycle、entry handler 和平台实例隔离测试；真实应用凭证 smoke 仍待部署环境执行。
+- 最终回归：`npm run test:lark` 25/25、`test:platform-foundation` 13/13、`test:platform-conformance` 14/14、`test:platform-inputs` 188/188、`test:platform-security` 24/24、`test:platform-notifications` 19/19、`test:platform-topology` 45/45、`npm run test:progress` 705/705。
+- `npm run check:reply-fallback`、全部 `src/`/`scripts/`/`test/` JavaScript 语法检查和 `git diff --check` 通过；使用 dummy 凭证的完整启动组合能进入 Lark SDK 鉴权并按预期失败，未执行真实凭证连接 smoke。
+
+### 2026-07-26 Lark 原生卡片交互
+
+- command message view 已映射为飞书交互卡片，支持 button、`select_static`、禁用控件过滤及原卡片更新；Settings、Onboarding、Workspace Browser、workspace 冲突和 Retry 共用现有核心 handler。
+- SDK transport 直接消费 `cardAction`，CLI transport 同时消费 `im.message.receive_v1` 与 `card.action.trigger`；两者都规范化为统一 button/select interaction envelope。
+- message delivery 已支持卡片发送/更新，并把 processing、succeeded、cancelled、failed、dequeued 映射到飞书 reaction；CLI transport 补齐对应 raw API 操作。
+- 新增 `docs/lark-app-config.v1.json` 权限/事件基线和真实凭证 smoke checklist；真实应用连接 smoke 仍待部署环境执行。
+- 当前回归：`npm run test:lark` 105/105、`test:platform-foundation` 14/14、`test:platform-conformance` 14/14、`test:platform-inputs` 200/200、`test:platform-security` 25/25、`test:platform-notifications` 26/26、`test:platform-topology` 53/53、`test:platform-presentation` 196/196、`npm run test:progress` 381/381。
+
+### 2026-07-26 Lark Card 2.0 表单交互
+
+- Lark `modals` capability 已启用，但平台呈现为原消息内嵌 Card 2.0 表单，而不是 Discord 弹窗；共享 `createCommandModalView()` 无需复制业务逻辑。
+- 表单按钮通过 `name` 携带 modal ID，`form_value` 规范化为 `modal.getField()`；Settings model/profile/compact threshold 和 Goal modal submit 复用现有共享 handlers。
+- 打开表单与提交结果都更新原卡片；表单 schema 已通过当前 `lark-cli` dry-run，SDK/CLI 两条回调路径均有自动化覆盖。
+- 修复 Settings、Onboarding、Workspace Browser、workspace busy 和 Retry 等 user-bound component ID 只接受 Discord 数字 ID 的问题，现支持飞书 `ou_...` open ID。
+
+### 2026-07-26 Lark 机器人菜单命令入口
+
+- SDK transport 在官方 channel dispatcher 上补充 `application.bot.menu_v6`，CLI transport 增加同名 event consumer；两端输出统一为 bot-menu event。
+- 由于飞书菜单事件不携带 chat ID，Adapter 先按操作者 `open_id` 发送处理中卡片，并读取返回消息所属私聊 chat，再建立与普通私聊一致的 conversation key。
+- 菜单 `event_key` 直接使用共享命令名，命令结果更新原处理中卡片；未知命令、会话 allowlist 拒绝和执行错误都会显示在同一张卡片上。
+- `npm run check:reply-fallback`、全部 JavaScript 语法检查、`git diff --check` 及 `lark-cli` interactive-card dry-run 通过。
+
+### 2026-07-26 Lark 平台健康与投递指标
+
+- 平台中立健康读取器在不扩大 Foundation/Adapter 必选契约的前提下，延迟读取最终 lifecycle 与 message delivery 快照；未提供指标的 Discord 组合保持原 `status` 输出。
+- SDK transport 读取官方 `getConnectionStatus()`，CLI transport 暴露同构的 idle/connecting/connected/reconnecting/failed 状态、consumer 数量和重连计数。
+- Lark lifecycle 记录连接尝试、退避重试、自愈重启、下次重试和最近错误；`SIGTERM`/`SIGINT` 的优雅断开与自愈开关解耦，退出会取消待执行重试并禁止反向自愈。message delivery 记录 send/reply/edit/reaction 的成功、失败、进行中及最近失败。
+- `status` 中英文报告已显示平台连接和消息投递摘要；最新专项和进度回归结果见后面的 reply-chain/Webhook 验证记录。
+
+### 2026-07-26 Lark reply-chain fork/side 子会话
+
+- `threads` capability 已启用；群聊中的共享 Codex/Claude fork 和 Codex side flow 会先发送新的根消息，再把后续消息投递到以该 `root_id` 标识的 reply chain。
+- inbound 事件同时含 `root_id` 和 `thread_id` 时优先使用 canonical `root_id`，避免创建根消息时尚未知的 `omt_...` 导致 session key 漂移。
+- 根消息编辑承担 rename 等价语义；fork/side 绑定前失败会 recall 根消息，side close 则编辑根消息写入关闭标记。
+- 卡片 action 会从发送期 target cache 或消息查询恢复 root/thread 上下文，避免在子会话中点击设置时误修改父会话。
+- 私聊 `canSpawn=false`，不会伪造平台不存在的子会话；群聊 fork 与 side 创建/绑定/关闭均有 Lark 专项集成覆盖。
+
+### 2026-07-26 Lark Webhook 回调
+
+- 新增 `LARK_TRANSPORT=webhook`，复用官方 SDK dispatcher 处理事件、机器人菜单和卡片 action；`auto` 不会隐式选择 Webhook。
+- HTTP 入口固定 path、仅接受 POST、限制 body 大小并默认监听 `127.0.0.1`；部署时由反向代理提供公网 TLS。
+- dispatcher 始终验证 verification token；配置 encrypt key 时验证 `x-lark-signature` 并使用 AES-256-CBC 解密 encrypted payload。URL verification challenge 由同一入口返回。
+- 消息、卡片 action 和机器人菜单按稳定事件 ID 使用 12 小时、最多 5000 项的默认内存窗口去重，并可通过环境变量调整。
+- 验签、token、解密、challenge、错误请求泛化和 body limit 均有自动化测试；真实公网代理和开放平台回调仍属于真实凭证 smoke。
+
+### 2026-07-26 Lark 私密交互响应
+
+- 群聊卡片产生的非表单 `ephemeral` 响应不再覆盖共享卡片，而是发送到操作者与 bot 的私聊；权限和访问控制拒绝也使用同一私密投递语义。
+- 私聊卡片的 button、select 和 Card 2.0 submit action 内嵌原群聊/reply-chain 的限定会话上下文，发送期 target cache 丢失或进程重启后仍能恢复原 session；后续卡片更新继续作用于实际私聊消息。
+- Card 2.0 表单继续在当前卡片原位打开和提交，保留字段校验、修正及重试流程；从私聊卡片打开的表单仍携带原会话上下文。
+- 上下文恢复只接受自洽的 Lark 限定 key；malformed JSON、Discord key 以及 tenant/chat/root 冲突值会被忽略并安全降级到实际交互所在私聊。
+- 自动化覆盖共享卡片不被私密响应或权限拒绝覆盖、无内存 cache 的 button/modal 上下文恢复及非法上下文降级；当前完整回归数字见本页“Lark 原生卡片交互”记录。
+
+### 2026-07-26 Lark 部署预检
+
+- `src/lark-runtime-config.js` 成为生产启动和预检共用的配置解析源；选中 transport 的 placeholder 凭证、domain、Webhook callback/health path、port/body limit 及各安全/投递数值会在启动前给出明确错误，不再静默回退。
+- `npm run check:lark` 只检查有效配置和本地 SDK/CLI；`--verify-credentials` 对 CLI 执行 `auth status --verify --json` 并读取 tenant scopes，对 SDK/Webhook 获取 tenant token 后读取 bot info 与 tenant scopes，全程不启动事件消费者、Webhook listener 或消息发送。
+- JSON 和文本报告只输出 transport、布尔凭证状态、非敏感 endpoint、数值边界与 allowlist 数量；API token、App Secret、App ID、bot/user ID 和 CLI profile 名称不会进入报告或错误文本。
+- 该阶段首次检查时，默认 CLI profile 的只读凭证、bot capability 和 bot open ID 可用性已通过，但 tenant-scope 基线为 8/9，缺少失败补偿所需的 `im:message:recall`，且 allowlist 为空。后续已补齐权限和限制性用户 allowlist；2026-07-27 的再次核验为 9/9 且 readiness 全部通过。
+- 配置、readiness、凭证脱敏、provider override、生产组合边界和默认文本分片限制均有自动化覆盖；真实凭证预检还会只读核对线上版本、接入方式、发布事件和机器人菜单，开放平台未返回的 card callback 列表会保留为显式人工检查；完整回归数字见本页“Lark 原生卡片交互”记录。
+
+### 2026-07-27 飞书/Lark 阶段性提交与验收快照
+
+本次阶段性提交收口以下功能边界：
+
+- 平台组合：`BOT_PLATFORM=lark` 可创建 Lark Foundation/Adapter；平台与实例共同隔离 session、single-instance lock、workspace lock、project-upgrade 状态和健康标识，Discord 默认文件名与行为保持不变。
+- 接入方式：支持官方 SDK WebSocket、复用加密持久凭证的 `lark-cli` WebSocket，以及显式启用的 Webhook dispatcher；三种 transport 共用消息、卡片 action、机器人菜单、去重、生命周期和投递语义。
+- 消息与命令：支持私聊、群聊 @、普通 prompt、文本命令、42 条 provider 前缀原生 slash commands、事件型机器人菜单、消息回复/编辑、长文本分片和通知投递。
+- 原生交互：共享 command view 可渲染为按钮、下拉和 Card 2.0 表单；支持原位更新、操作者私聊中的非表单私密响应、跨重启恢复来源会话上下文，以及权限拒绝不覆盖群聊共享卡片。
+- 会话与附件：使用 tenant/chat/root message 限定会话键，支持群聊 reply-chain fork/side、附件资源下载和 Codex 原生图片输入；私聊对不支持的子会话能力显式降级。
+- 可靠性与安全：支持访问 allowlist、mention-only 策略、机器人消息过滤、陈旧事件窗口、有界去重、发送重试、断线重连/自愈、优雅退出、Webhook token/签名/加密验证、body limit 和 HTTP 超时。
+- 运维工具：提供 secret-free `check:lark`、只读真实凭证/已发布应用核验、原生命令 drift 审计及显式同步工具；报告不输出凭证、应用 ID、命令 ID、profile 名称或用户标识。
+
+本次提交前的验证结果：
+
+- `npm run test:lark`：105/105 通过。
+- `npm run test:progress`：381/381 通过。
+- `test:platform-foundation` 与 `test:platform-conformance`：分别 14/14、14/14 通过。
+- `test:platform-inputs`、`test:platform-security`、`test:platform-presentation`、`test:platform-topology`：分别 201/201、25/25、196/196、54/54 通过。
+- `npm run check:lark -- --verify-credentials --json`：通过；tenant scopes 9/9、事件 2/2、卡片回调 1/1、机器人菜单事件键 7/7、原生 slash commands 42/42，且无 errors/warnings。
+- 真实隔离私聊已覆盖 `!status` 收发、Settings 卡片及原位更新、select/Card 2.0 回调、机器人菜单、`/cx_status` 和无效 Codex profile 校验路径。
+- `git diff --check` 通过；提交范围不包含 App Secret、token、测试 chat ID 或用户 ID。
+
+阶段边界：上述结果证明当前实现具备试运行条件，但不等同于完整生产验收。群聊权限/mention-only、私密响应跨重启、成功表单保存、带参数原生命令、图片、取消/reaction、断网重连、投递指标、reply-chain fork/side、真实公网 Webhook 和 SIGTERM 等仍按部署检查清单逐项验收。
 
 ### 2026-07-25 阶段 4 验证
 
@@ -178,7 +289,7 @@
 - `createAppContext()` 与 Discord Adapter 复用同一个 resolver；未改变环境变量、session key、`sessions.json` 或启动入口。
 - `test:platform-security`：20/20 通过；`test:platform-inputs`：182/182 通过。
 - 排除仓库既有 `test/runner-executor.test.mjs` 挂起问题后的全量项目回归：681/681 通过。
-- `npm run check:reply-fallback`、全部 `src/**/*.js` 语法检查和 `git diff --check` 均通过；`src/platforms/` 仍只有 Discord 平台实现。
+- `npm run check:reply-fallback`、全部 `src/**/*.js` 语法检查和 `git diff --check` 均通过；该阶段当时尚未加入第二个平台实现。
 
 ### 2026-07-24 text presentation 与 platform foundation 验证记录
 
@@ -188,7 +299,7 @@
 - `createAppContext()` 只从 foundation 获取 pre-core 平台服务，并调用同一 foundation 的 `createAdapter()` 完成 access、entry 与 lifecycle 组合；仍保留原 factory 注入兼容面。
 - `test:platform-foundation`：11/11、`test:platform-presentation`：192/192、`test:platform-security`：20/20、`test:platform-inputs`：182/182 通过。
 - 排除仓库既有 `test/runner-executor.test.mjs` 挂起问题后的全量项目回归：689/689 通过。
-- 未新增 Slack/Lark SDK、配置、目录或业务入口；Discord session key、持久化格式、环境变量和启动方式保持不变。
+- 该阶段当时未新增第二平台 SDK 或入口；Discord session key、持久化格式、环境变量和启动方式保持不变。
 
 ## 设计原则
 
@@ -196,7 +307,7 @@
 - 平台差异集中在 Adapter 内，包括鉴权、事件接入、交互响应、消息投递和客户端生命周期。
 - 平台能力显式声明。上层功能按 capability 降级，不能假设每个平台都支持 Discord 的线程、按钮或 modal。
 - Discord 零迁移。当前基线保持现有频道 ID session key、`sessions.json`、环境变量和启动方式不变。
-- 渐进式拆分。组合边界、主要核心迁移和第二平台准入加固已完成；下一阶段才开始 Slack Adapter 实现。
+- 渐进式拆分。组合边界、主要核心迁移和第二平台准入加固已完成；Lark 已从消息 MVP 演进到原生卡片控件、表单、reply-chain 子会话与 Webhook，Slack 继续按独立阶段演进。
 - 长连接优先。后续 Slack 默认采用 Socket Mode，飞书/Lark 默认采用 WebSocket 长连接，降低部署公网回调地址的门槛。
 
 ## 目标架构
@@ -239,8 +350,12 @@ src/
       text-presentation.js
     slack/                 # 后续阶段
       adapter.js
-    lark/                  # 后续阶段
+    lark/                  # 已实现
       adapter.js
+      foundation.js
+      inbound-event.js
+      message-delivery.js
+      conversation-spawn.js
 ```
 
 Platform foundation 在创建核心 runtime 前提供 capability、命令/UI renderer、投递、conversation 与 presentation 端口，并暴露 `createAdapter()` 完成 access policy、entry handler 和 lifecycle 的后半段组合。`createAppContext()` 只消费显式传入的 Foundation；Discord Foundation 只在 `src/index.js` 启动组合根创建。
@@ -358,7 +473,7 @@ extra-info 核心默认模板为 `conversation={conversation}`，并优先读取
 - 读取并规范化父会话最近消息为 `id/text/createdAtMs/actor` history contract，用于回放最近一次 agent 输出；
 - 平台文本分片、用户 mention、conversation reference 和队列 synthetic prompt message。
 
-Discord 实现继续使用 thread，并返回 `{ id, raw }` 标准结构。核心内部只使用 `childConversation` 和平台无关的清理/归档结果，不再暴露 `childThread`、`discordCleanup` 或 `discordArchive` 别名。未来 Slack/Lark Adapter 可将该语义映射到 thread、reply chain 或平台允许的其他子会话载体。
+Discord 实现继续使用 thread，并返回 `{ id, raw }` 标准结构。核心内部只使用 `childConversation` 和平台无关的清理/归档结果，不再暴露 `childThread`、`discordCleanup` 或 `discordArchive` 别名。Lark 已将该语义映射到群聊 reply chain；未来 Slack 可映射到 thread 或平台允许的其他子会话载体。
 
 ### Conversation presentation
 
@@ -414,14 +529,14 @@ platform:v1:<platformId>:<tenantId>:<conversationId>:<threadId>
 | Slack | team ID | channel ID | thread_ts（无线程则空） |
 | 飞书/Lark | tenant key | chat ID | root message ID（按产品策略启用） |
 
-当前阶段只提供构建和解析工具，Discord 仍继续使用原始 `message.channel.id`。在真正启用第二个平台之前，再提供显式、可回滚的数据迁移工具；不得静默改写已有 `sessions.json`。
+Lark 从首个可运行版本起使用上述限定键，Discord 仍继续使用原始 `message.channel.id` 以保持零迁移。若后续统一 Discord 会话键，必须提供显式、可回滚的数据迁移工具；不得静默改写已有 `sessions.json`。
 
 ## 分阶段实施
 
 ### 阶段 0：方案与边界基线（已完成）
 
 - 明确平台抽象目标、设计原则、目标目录、契约范围和会话键迁移策略。
-- 明确当前交付只建立 Discord 基线，不提前添加 Slack/Lark SDK、配置或业务入口。
+- 明确阶段 0 当时只建立 Discord 基线，不在契约尚未稳定时提前加入第二平台业务入口。
 
 验收证据：`30e1df5` 建立本方案文档，并给出平台能力、风险和非目标边界。
 
@@ -456,17 +571,17 @@ platform:v1:<platformId>:<tenantId>:<conversationId>:<threadId>
 - Discord 默认 factory、capability policy 和 Foundation 创建已收口到 `src/index.js` 与 Discord Adapter/Foundation；平台无关 AppContext 只接受显式 `platformFoundation`。
 - 已删除生产路径不再需要的 `slash-command-surface.js` facade、raw message fallback、conversation history `author` 别名和 `childThread` / `discordCleanup` / `discordArchive` 结果别名。
 - `test/support/platform-conformance.mjs` 提供任意 Adapter 可复用的 conformance suite，Discord driver 已覆盖消息、命令、取消、附件、能力降级、子会话和错误恢复。
-- 已确定第二平台启用时的 session 数据隔离、Node.js 22 基线、平台配置选择和限定会话键迁移门槛，见下方“第二平台准入决策”。
+- 已确定第二平台启用时的 session 数据隔离、平台配置选择和限定会话键迁移门槛；Node.js 基线改为按平台依赖分别决策，见下方“第二平台准入决策”。
 - `test/core-platform-smoke.test.mjs` 使用 synthetic Foundation 调用真实 `createAppContext()`，全程不构造 Discord SDK 对象。
 
 验收标准：新增平台只需提供 Foundation/Adapter 和启动配置，不修改 prompt、queue、session、command、settings、workspace 或 fork/side 核心；Discord 全量回归继续通过。
 
 #### 第二平台准入决策
 
-- **Node.js 基线**：当前 Discord 生产路径与本地回归继续兼容现有 Node.js 18 环境，本次验证环境为 `v18.17.1`。进入 Slack Adapter 阶段前，生产、CI 和部署镜像必须统一提升至 Node.js 22 LTS；在升级链路准备好之前不设置会阻断当前测试环境的强制 `engines` 门槛。
+- **Node.js 基线**：Discord 与 Lark 接入均继续兼容 Node.js 18，本次 Lark 验证环境为 `v18.17.1`，官方 SDK `1.71.1` 可安装、导入并组合 WebSocket channel。Slack Adapter 的 SDK 版本和生产基线单独评估；若采用要求 Node.js 20+ 的 Slack Bolt 版本，可再统一升级到 Node.js 22 LTS，但这不再阻塞 Lark。
 - **会话键**：第二平台从首个版本起必须使用 `buildConversationKey()` 生成 `platform:v1:<platform>:<tenant>:<conversation>:<thread>` 限定键，不允许先写裸 channel/chat ID 再补迁移。现有 Discord 继续使用裸 channel ID，保持零迁移；任何 Discord 限定键迁移都必须提供 dry-run、备份、显式执行和回滚，不得静默发生。
 - **数据与运行隔离**：第二平台及后续多实例的 session 数据文件、single-instance lock、workspace lock 命名空间和日志实例标识必须同时包含 `platformId` 与稳定 `instanceId`。不同平台或实例不得共用可写 session 文件、进程锁或无法区分来源的日志标签。
-- **平台选择配置**：阶段 4 不新增 `BOT_PLATFORM`，Discord 启动方式保持不变。只有第二个 Adapter 真正接入时才启用实例级平台选择，并要求选择结果同时驱动 Foundation、凭证命名空间、数据/锁路径和日志标识，禁止只切换 SDK 入口。
+- **平台选择配置**：已启用 `BOT_PLATFORM=discord|lark` 和 `BOT_INSTANCE_ID`。选择结果同时驱动 Foundation、凭证、数据/锁路径、project-upgrade 状态和日志标识；Discord 默认实例继续保留原文件名与启动方式。
 - **准入门槛**：第二 Adapter 合并前必须通过同一 conformance suite 和 synthetic core smoke，并证明无需修改 prompt、queue、session、command、settings、workspace 或 fork/side 核心模块。
 
 ### 阶段 5：Slack Adapter（未开始）
@@ -477,28 +592,76 @@ platform:v1:<platformId>:<tenantId>:<conversationId>:<threadId>
 - 实现 Slack 消息长度、更新频率、ack 时限、重试和事件去重策略。
 - 补充 Slack manifest、最小权限文档和独立集成测试。
 
-### 阶段 6：飞书/Lark Adapter（未开始）
+### 阶段 6：飞书/Lark Adapter（功能完成，验收中）
 
-- 引入并隔离官方 Node SDK，默认使用 WebSocket 长连接。
-- 同时兼容飞书与 Lark 域名/区域配置。
-- 支持群聊 @、私聊、消息、附件、命令替代入口和卡片 action。
-- 使用 tenant/chat/root message 建立稳定会话标识。
-- 实现事件验签/解密（若启用回调模式）、事件去重、卡片更新和频控策略。
-- 补充应用权限清单、事件订阅文档和独立集成测试。
+已完成：
 
-### 阶段 7：迁移与统一运维（未开始）
+- 引入并隔离官方 Node SDK，默认使用 WebSocket 长连接，同时兼容 `feishu` 与 `lark` domain。
+- 支持群聊 @、私聊、普通消息、文本命令、消息回复/编辑、通知和附件资源下载。
+- 使用 tenant/chat/root message 建立稳定限定会话标识；平台与实例数据/锁隔离已接入组合根。
+- 接入 SDK safety queue、陈旧消息窗口、发送重试、生命周期重连/自愈及独立于自愈开关的 SIGTERM/SIGINT 优雅断开。
+- 支持原生交互卡片、button、select、卡片原位更新和任务状态 reaction；SDK 与 CLI transport 都能消费 `card.action.trigger`。
+- 支持将共享 modal view 映射为 Card 2.0 表单，并把 SDK/CLI 的表单提交规范化到共享 modal handlers。
+- 支持事件型机器人自定义菜单，将 `application.bot.menu_v6` 的 `event_key` 路由到共享 command router。
+- 支持飞书原生 app slash command：按 provider 前缀渲染共享 command spec，`/command args` 通过普通消息事件复用文本命令核心；readiness 只读核对注册表，独立同步命令默认检查、显式 `--apply` 才创建或更新且不删除额外命令。
+- 当前绑定应用的 42 条原生 slash commands 已显式 apply 并只读复核为 42/42 matched；provisioning scopes 2/2，missing/outdated/extra 均为 0，剩余容量 58/100。
+- 支持 SDK/CLI/Webhook 连接健康、生命周期重试/自愈和消息投递指标，并在共享 `status` 报告中展示。
+- 支持群聊 reply-chain 子会话，将 Codex/Claude fork 和 Codex side 的创建、rename、失败补偿、消息回放及关闭归档映射为根消息操作；私聊明确不支持创建子会话。
+- 支持可选 Webhook transport：verification token、签名验证、encrypted payload 解密、URL challenge、固定 path、POST-only、body limit 和慢连接 HTTP 超时边界。
+- 支持消息、卡片 action 和机器人菜单的有界事件去重，统一 SDK safety pipeline 与 CLI/Webhook 入口的重投语义。
+- 支持群聊非表单 `ephemeral` 响应的私聊等价实现；私聊卡片保留原 chat/reply-chain session 上下文并在重启后恢复，权限拒绝不会覆盖共享卡片，Card 2.0 表单仍原位处理。
+- 支持复用生产配置解析的 Lark 部署预检，检查 transport、凭证占位符、domain、Webhook endpoint、数值边界、本地依赖和 allowlist，并可只读验证凭证、bot identity 与版本化 tenant-scope 基线。
+- `docs/lark-app-config.v1.json` 固化消息、资源、卡片回调、reaction 权限及 WebSocket/Webhook 基线，`docs/lark-deployment-checklist.md` 固化真实凭证和 Webhook 部署 smoke 步骤。
+- 增加 Lark Foundation/Adapter conformance、输入、投递、安全、reply-chain fork/side、Webhook 和 Node.js 18 SDK smoke 测试。
 
-- 增加 `BOT_PLATFORM=discord|slack|lark` 或等价的实例级配置。
-- 支持同一代码库启动多个平台实例，并保持锁文件、数据文件和日志标识隔离。
-- 提供旧 Discord key 到新限定 key 的 dry-run、备份、迁移和回滚工具。
-- 增加各平台健康检查、连接状态、速率限制和投递失败指标。
+验收进度：
+
+- 当前应用的 credential-verified readiness 已通过：tenant scopes 9/9、事件 2/2、卡片回调 1/1、机器人菜单 7/7、原生 slash commands 42/42，且已配置当前应用作用域内的单用户 allowlist。
+- 隔离私聊已验证主动消息、`!status` 收发、`!settings` 卡片及原位更新、select/Card 2.0 回调、机器人菜单事件和 `/cx_status` 关联回复；不存在的 Codex profile 也正确进入表单校验错误路径。
+- 尚需完成成功表单保存、群聊 mention/access、私密响应跨重启、带参数原生命令、附件、取消/reaction、断网重连、投递指标、reply-chain fork/side、真实公网 Webhook 和优雅退出 smoke。完成这些项目后，阶段 6 才从“验收中”更新为“已完成”。
+
+### 阶段 7：迁移与统一运维（进行中）
+
+- 已增加 `BOT_PLATFORM=discord|lark` 与 `BOT_INSTANCE_ID`；Slack 在 Adapter 实现时再加入枚举。
+- 已支持同一代码库启动不同平台/实例，并保持 session、进程锁、workspace lock、project-upgrade 状态和日志标识隔离。
+- 待提供旧 Discord key 到新限定 key 的 dry-run、备份、迁移和回滚工具；在工具和回滚验证完成前保持 Discord 裸 channel ID，不进行静默迁移。
+- 平台中立健康读取和 Lark 连接/投递指标已完成；Discord 及未来 Adapter 的连接、速率限制和投递指标继续按同一快照形状补齐。
+
+## 后续开发计划
+
+### P0：完成飞书生产验收并发布
+
+- 按 `docs/lark-deployment-checklist.md` 完成剩余隔离私聊、群聊、reply-chain、附件、取消、重连、指标、Webhook 和信号退出 smoke，并记录应用版本、region、transport、时间和非敏感结果。
+- 对 smoke 发现的问题只做飞书 Adapter、transport 或平台契约内的修复；若需要修改共享核心，先补跨 Discord/Lark 的边界与回归测试。
+- 复核 README、环境变量示例、权限/事件基线和运维清单与实际发布应用一致，随后准备版本号、发布说明和可回滚部署步骤。
+
+完成标准：自动化回归通过，readiness 无 error/warning，17 项真实凭证 smoke 全部完成或有明确不适用说明，且单消费者部署、限制性 allowlist、优雅退出和恢复路径均有记录。
+
+### P1：统一运维与可观测性
+
+- 为 Discord 补齐与 Lark 同形的连接、重试、速率限制和消息投递健康快照，保持未配置指标时的兼容输出。
+- 增加平台/实例维度的结构化日志字段和运维排障说明，但不记录消息正文、token、App Secret、签名或解密事件体。
+- 评估持久化事件去重或外部共享去重存储；在多副本消费前明确单消费者约束与故障切换流程。
+
+### P2：会话键迁移工具
+
+- 设计 Discord 裸 channel ID 到限定 key 的只读扫描和冲突报告。
+- 实现 dry-run、备份、显式执行、校验与回滚；覆盖 session、workspace binding、锁和 project-upgrade 状态边界。
+- 只有在真实数据副本演练通过后才考虑启用，默认继续保持 Discord 零迁移。
+
+### P3：Slack Adapter
+
+- 在飞书阶段完成生产验收后再选择 Slack SDK 与 Node.js 基线，优先评估 Socket Mode、ack 时限、Block Kit/modal、速率限制和事件重投。
+- 复用现有 Foundation、conformance suite、限定会话键和健康快照，不复制 session、queue、runner、settings、workspace 或 fork/side 核心逻辑。
+- 先交付消息/命令 MVP，再依次补齐原生交互、子会话语义、运维预检和真实凭证 smoke。
 
 ## 配置规划
 
-配置按平台命名空间隔离，敏感凭证只从环境变量或外部 secret store 读取。建议后续变量：
+配置按平台命名空间隔离；SDK 敏感凭证从环境变量或外部 secret store 读取，CLI 模式则复用 `lark-cli` 的加密本机凭证。当前与规划变量如下，其中 Slack 变量尚未启用：
 
 ```text
-BOT_PLATFORM=discord|slack|lark
+BOT_PLATFORM=discord|lark
+BOT_INSTANCE_ID=default
 
 SLACK_BOT_TOKEN=
 SLACK_APP_TOKEN=
@@ -507,6 +670,25 @@ SLACK_SIGNING_SECRET=       # 仅 HTTP 回调模式需要
 LARK_APP_ID=
 LARK_APP_SECRET=
 LARK_DOMAIN=feishu|lark
+LARK_TRANSPORT=auto|sdk|cli|webhook
+LARK_CLI_BIN=lark-cli
+LARK_CLI_PROFILE=
+LARK_WEBHOOK_VERIFICATION_TOKEN=
+LARK_WEBHOOK_ENCRYPT_KEY=
+LARK_WEBHOOK_HOST=127.0.0.1
+LARK_WEBHOOK_PORT=3000
+LARK_WEBHOOK_PATH=/lark/events
+LARK_WEBHOOK_HEALTH_PATH=/healthz
+LARK_WEBHOOK_MAX_BODY_BYTES=1048576
+LARK_WEBHOOK_HEADERS_TIMEOUT_MS=10000
+LARK_WEBHOOK_REQUEST_TIMEOUT_MS=15000
+LARK_WEBHOOK_KEEP_ALIVE_TIMEOUT_MS=5000
+LARK_EVENT_DEDUP_WINDOW_MS=43200000
+LARK_EVENT_DEDUP_MAX_ENTRIES=5000
+LARK_ALLOWED_CHAT_IDS=
+LARK_ALLOWED_TENANT_IDS=
+LARK_ALLOWED_USER_IDS=
+LARK_MENTION_ONLY_CHAT_IDS=
 ```
 
 allowlist 也应使用平台限定配置，避免相同裸 ID 在不同平台间误匹配。多实例部署时，session 数据文件、single-instance lock、workspace lock 命名空间和日志实例标识必须同时按平台与实例名隔离。
@@ -522,15 +704,15 @@ allowlist 也应使用平台限定配置，避免相同裸 ID 在不同平台间
 
 ## 风险与约束
 
-- prompt 主流程、command UI、interaction response、command registry、interaction 输入、运行时 capability、session topology 和 fork/side conversation lifecycle 已建立平台边界；Discord entry handler 的准入、超时日志与错误兜底仍合理保留 Discord SDK 语义。进入新平台前仍需分别设计 Slack/Lark 的身份、权限、事件确认、限流和 thread/reply-chain 映射，不能直接复用 Discord SDK 假设。
+- prompt 主流程、command UI、interaction response、command registry、interaction 输入、运行时 capability、session topology 和 fork/side conversation lifecycle 已建立平台边界；Discord 与 Lark 分别维护自己的身份、权限、事件、投递和生命周期逻辑。Slack 仍需独立设计，不能直接复用现有 SDK 假设。
 - Slack 的 `ack` 时限、消息更新频控与 Discord 不同；飞书/Lark 的卡片、用户 ID 类型和权限模型也不同，不能用字段重命名代替适配。
 - 跨平台线程语义不同，需要以 conversation/thread 映射策略为准，不能强制所有平台模拟 Discord thread。
-- 启用 Slack/Lark SDK 前必须将生产、CI 和部署 Node.js 基线升级到 22 LTS。当前 Slack Bolt 5 系列至少要求 Node.js 20；阶段 4 保持 Node 18 可回归，不修改版本门槛或依赖。
+- Lark 官方 SDK 当前在 Node.js 18 上可用；Slack Bolt 5 系列至少要求 Node.js 20，因此 Slack 阶段可能推动 Node.js 22 LTS 升级，但该升级与 Lark 解耦。
 
 ## 当前明确不做
 
-- 不添加 Slack 或飞书/Lark SDK。
-- 不新增 Slack/Lark 环境变量、事件、命令、卡片或部署入口。
+- 不添加 Slack SDK、配置或业务入口。
+- Discord 弹窗 modal 在 Lark 由 Card 2.0 表单等价实现；群聊支持 reply-chain 子会话，私聊不模拟不存在的子会话能力。
 - 不重命名项目，不批量移动现有 Discord 文件。
 - 不修改 Discord session key 或已有持久化数据。
 - 不为平台抽象重写 provider runner、session、queue 或 workspace lock 核心语义。

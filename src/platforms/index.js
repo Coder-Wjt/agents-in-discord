@@ -1,5 +1,6 @@
 export {
   DISCORD_PLATFORM_CAPABILITIES,
+  LARK_PLATFORM_CAPABILITIES,
   PLATFORM_CAPABILITY_NAMES,
   assertPlatformCapabilities,
   createPlatformCapabilities,
@@ -9,6 +10,16 @@ export { assertPlatformFoundation } from './foundation.js';
 export { buildConversationKey, parseConversationKey } from './conversation-key.js';
 export { createDiscordPlatformAdapter } from './discord/adapter.js';
 export { createDiscordPlatformFoundation } from './discord/foundation.js';
+export { createLarkPlatformAdapter } from './lark/adapter.js';
+export { createLarkPlatformFoundation } from './lark/foundation.js';
+export { createLarkInboundEventNormalizer } from './lark/inbound-event.js';
+export { createLarkMessageDelivery, splitForLark } from './lark/message-delivery.js';
+export { createPlatformHealthReader } from './health.js';
+export { createLarkNotificationDelivery } from './lark/notification-delivery.js';
+export { createLarkConversationSpawn } from './lark/conversation-spawn.js';
+export { createLarkConversationPresentation } from './lark/conversation-presentation.js';
+export { createLarkConversationSecurity } from './lark/conversation-security.js';
+export { createLarkTextPresentation } from './lark/text-presentation.js';
 export { createDiscordMessageDelivery } from './discord/message-delivery.js';
 export { createDiscordNotificationDelivery } from './discord/notification-delivery.js';
 export { createDiscordConversationSpawn } from './discord/conversation-spawn.js';

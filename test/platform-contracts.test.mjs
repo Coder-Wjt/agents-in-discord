@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   DISCORD_PLATFORM_CAPABILITIES,
+  LARK_PLATFORM_CAPABILITIES,
   assertPlatformAdapter,
   createPlatformCapabilities,
 } from '../src/platforms/index.js';
@@ -110,6 +111,20 @@ test('createPlatformCapabilities supplies boolean defaults and freezes the resul
 
 test('Discord declares the currently supported interaction capabilities', () => {
   assert.deepEqual(DISCORD_PLATFORM_CAPABILITIES, {
+    threads: true,
+    slashCommands: true,
+    buttons: true,
+    selectMenus: true,
+    modals: true,
+    messageEdits: true,
+    reactions: true,
+    attachments: true,
+  });
+});
+
+test('Lark declares reply-chain threads, native card controls, forms, message edits, reactions, and attachments', () => {
+  assert.equal(LARK_PLATFORM_CAPABILITIES.threads, true);
+  assert.deepEqual(LARK_PLATFORM_CAPABILITIES, {
     threads: true,
     slashCommands: true,
     buttons: true,

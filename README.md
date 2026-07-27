@@ -1,6 +1,6 @@
 # Agents in Discord
 
-在 Discord 线程里运行 Codex CLI、Claude Code、Antigravity CLI 和 ZCode CLI 的 bot。
+在 Discord 频道/线程或飞书/Lark 聊天里运行 Codex CLI、Claude Code、Antigravity CLI 和 ZCode CLI 的 bot。
 
 它是一个独立 bridge，不是 OpenClaw 插件，也不需要 OpenClaw。
 
@@ -12,9 +12,11 @@ ZCode CLI 支持从 [v0.13.0](https://github.com/atou42/agents-in-discord/releas
 
 ## 核心模型
 
-一个 Discord 频道或线程，对应一条 provider 会话。
+一个平台会话（Discord 频道/线程，或飞书/Lark chat/reply chain）对应一条 provider 会话。
 
 你可以在同一个 Discord 服务器里使用共享 bot，也可以把 Codex、Claude、Antigravity、ZCode 拆成四个独立 bot。每个 provider 有自己的 session、workspace、模型和运行配置，不会混在一起。ZCode 使用 headless JSON runner，支持附件、按 session id 恢复和 workspace 绑定。Antigravity 的模型菜单会优先显示 `~/.gemini/antigravity-cli/settings.json` 当前模型，再补充 Antigravity 官方 reasoning model 列表和本机 CLI 日志里出现过的模型；面板里选中的模型会在下一次启动前写回 Antigravity 设置。
+
+Discord 继续提供完整 slash command 和交互面板；飞书/Lark 采用消息优先接入，同时支持已注册的 provider 前缀原生 slash command、文本命令、原生卡片按钮/下拉和 Card 2.0 表单。
 
 长任务不会一直刷屏。bot 会更新进度卡，也可以按频道设置成持续发送过程消息。最终回复是否 @ 发起人，也可以在设置里选。
 
@@ -22,17 +24,17 @@ Codex 的安全模式现在使用 workspace-write 沙盒，并把需要审批的
 
 ## 你能做什么
 
-- 在 Discord 里发任务，让 CLI agent 在指定 workspace 里工作
+- 在 Discord 或飞书/Lark 里发任务，让 CLI agent 在指定 workspace 里工作
 - 按频道保存会话，下次继续同一条上下文
-- 用设置面板切换 provider、model、effort、fast、compact、reply、workspace
+- 在 Discord 用设置面板切换 provider、model、effort、fast、compact、reply、workspace；Lark 可使用对应原生卡片控件和文本命令
 - 查看实时进度、队列、运行状态、quota、账号和当前配置来源
 - 对同一个 workspace 做串行保护，避免多个频道同时改同一份代码
-- 通过 `/cancel` 或文本命令中断当前任务并清空队列
+- 通过 Discord `/cancel` 或平台文本命令中断当前任务并清空队列
 - 在长任务里选择只看进度卡，或让过程消息持续流出
 
 ## 准备
 
-需要 Node.js 18+，一个 Discord Bot Token，以及你要使用的 CLI。
+需要 Node.js 18+、你要使用的 CLI，以及 Discord Bot Token 或飞书/Lark 鉴权配置。Lark 本机模式可复用 `lark-cli` 的加密持久登录，SDK/Webhook 模式使用应用凭证；接入已在 Node.js `v18.17.1` 验证，不要求先升级到 Node.js 22。
 
 本项目不管理 Codex、Claude、Antigravity、ZCode 自己的登录状态。请先在本机 CLI 里完成登录，并确认命令能直接运行。
 
@@ -65,6 +67,8 @@ npm start
 
 `npm run setup-hooks` 只需要在 clone 后执行一次。它会启用本仓库的提交前检查。
 
+默认 `npm start` 启动 Discord。飞书/Lark 使用下面单独的平台入口。
+
 ## Discord 里怎么用
 
 默认 shared bot 的 slash 前缀是 `cx_`。独立 Claude bot 默认是 `cc_`，独立 Antigravity bot 默认是 `ag_`，独立 ZCode bot 默认是 `zc_`。
@@ -89,6 +93,80 @@ npm start
 文本命令主要作为兜底。常用的是 `!cancel`、`!c`、`!progress`、`!status`、`!resume`、`!sessions`、`!goal status`。
 
 `/cx_goal action:set objective:<目标>` 或 `!goal <目标>` 会把当前 Codex session 的目标设为 active，并在 runner 空闲时继续执行。目标需要带图片或文件时，用普通消息 `!goal <目标>` 发送，附件会一起进入 goal 上下文。`/cx_status` 和 `!status` 会显示当前 goal；只查 goal 可以用 `/cx_goal action:status` 或 `!goal status`。`pause` 会停止续跑，`resume` 会恢复续跑，`clear` 会清除 goal。
+
+## 飞书/Lark 接入
+
+当前 Lark 接入支持两种 WebSocket 长连接和一种 HTTP Webhook 回调，可直接运行在 Node.js 18：
+
+- `LARK_TRANSPORT=cli`：复用官方 `lark-cli` 持久化的加密凭证，适合本机使用，不需要把 App Secret 复制到项目 `.env`。
+- `LARK_TRANSPORT=sdk`：直接使用官方 `@larksuiteoapi/node-sdk` 和环境变量凭证，适合服务器或外部 secret store。
+- `LARK_TRANSPORT=webhook`：使用官方 SDK dispatcher 接收 HTTPS 回调，校验 verification token；配置 encrypt key 后同时验证签名并解密加密事件，适合已有公网回调入口的部署。
+
+`LARK_TRANSPORT=auto` 是默认值：配置了 `LARK_APP_ID` 和 `LARK_APP_SECRET` 时使用 SDK WebSocket，否则自动使用 CLI；Webhook 必须显式选择。CLI 模式一次性设置：
+
+```bash
+npm install -g @larksuite/cli
+lark-cli config init --new
+lark-cli auth login --recommend
+lark-cli auth status --verify --json
+```
+
+启动前建议先运行只读预检。默认命令只检查有效配置和本地 SDK/CLI；增加 `--verify-credentials` 后，CLI 模式会验证所选 profile，SDK/Webhook 模式会获取 tenant token 并读取 bot info。两种检查都不会启动事件消费者、监听 Webhook 或发送消息，输出也不会显示凭证值：
+
+```bash
+npm run check:lark
+npm run check:lark -- --verify-credentials
+npm run sync:lark-commands
+npm run sync:lark-commands -- --dry-run
+# 确认只读差异后才执行：npm run sync:lark-commands -- --apply
+```
+
+然后启动：
+
+```bash
+npm run start:lark
+```
+
+若使用 SDK WebSocket 或 Webhook 模式，先在开放平台启用机器人能力、订阅事件 `im.message.receive_v1`（使用机器人菜单时再订阅 `application.bot.menu_v6`）和回调 `card.action.trigger`，并授予收取消息、以机器人身份发送/更新/撤回消息、读取消息资源及读写 reaction 所需权限，然后配置：
+
+版本化的精确权限/事件基线与真实凭证 smoke 步骤见 [`docs/lark-deployment-checklist.md`](docs/lark-deployment-checklist.md)。`check:lark -- --verify-credentials` 还会只读检查已发布机器人版本、WebSocket/Webhook 接入方式、发布事件、机器人菜单的必需 `event_key` 和原生 slash command 注册表，并要求 chat/tenant/user allowlist 至少配置一项；空 allowlist 不会跳过其他远端检查，但最终 readiness 不会通过。菜单仅启用但命令键缺失、或必需的原生命令注册表无法读取时也不会误判通过。若开放平台接口没有返回卡片 callback 列表，会明确输出人工核对项，而不会启动消费者或发送消息。`sync:lark-commands` 默认只检查差异及 slash command read/write provisioning scopes；`--dry-run` 会逐条验证整批 create/update 请求但不写入。显式传入 `--apply` 后会先完成同样的整批预演，全部通过才分别创建缺失命令、更新过期描述，并且不会删除额外命令。缺少 read scope 时不会伪装成空注册表，缺少 write scope 时有待处理的预演/apply 会在执行操作前失败。写入前还会检查飞书每个应用 100 条命令的容量上限，空间不足时不会进行部分同步。
+
+```env
+LARK_TRANSPORT=sdk
+LARK_APP_ID=cli_xxx
+LARK_APP_SECRET=...
+LARK_DOMAIN=feishu
+LARK_ALLOWED_CHAT_IDS=
+LARK_ALLOWED_TENANT_IDS=
+LARK_ALLOWED_USER_IDS=
+LARK_MENTION_ONLY_CHAT_IDS=
+```
+
+若使用 Webhook，开放平台的事件订阅和卡片回调都应指向同一个公网 HTTPS 地址；进程默认只监听 loopback，由反向代理终止 TLS：
+
+```env
+LARK_TRANSPORT=webhook
+LARK_APP_ID=cli_xxx
+LARK_APP_SECRET=...
+LARK_WEBHOOK_VERIFICATION_TOKEN=...
+LARK_WEBHOOK_ENCRYPT_KEY=...
+LARK_WEBHOOK_HOST=127.0.0.1
+LARK_WEBHOOK_PORT=3000
+LARK_WEBHOOK_PATH=/lark/events
+LARK_WEBHOOK_HEALTH_PATH=/healthz
+LARK_WEBHOOK_MAX_BODY_BYTES=1048576
+LARK_WEBHOOK_HEADERS_TIMEOUT_MS=10000
+LARK_WEBHOOK_REQUEST_TIMEOUT_MS=15000
+LARK_WEBHOOK_KEEP_ALIVE_TIMEOUT_MS=5000
+```
+
+反向代理必须原样转发请求体和 `x-lark-*` 请求头。listener 会分别限制请求头接收、完整请求接收和 keep-alive 空闲时间，避免慢连接长期占用 socket；请求头超时不能大于完整请求超时。公网 TLS、challenge、错误签名、body limit 和超时的部署检查见上面的 checklist。
+
+CLI 有多个应用配置时可用 `LARK_CLI_PROFILE` 选择 profile；`LARK_CLI_BIN` 可覆盖命令路径。中国大陆飞书使用 `LARK_DOMAIN=feishu`，国际版 Lark 使用 `LARK_DOMAIN=lark`（这两个变量影响 SDK WebSocket 和 Webhook，CLI 模式跟随 profile 的 brand）。
+
+当前支持群聊 @、私聊、普通消息、文本命令（例如 `!status`、`!progress`、`!cancel`）、附件元数据、Codex 原生图片下载、进度消息编辑、任务状态 reaction、事件去重和 transport 自愈。消息、卡片 action 和机器人菜单按稳定事件 ID 在有界时间窗内去重，避免 Webhook/CLI 重投导致任务执行两次；窗口和内存上限可用 `LARK_EVENT_DEDUP_WINDOW_MS`、`LARK_EVENT_DEDUP_MAX_ENTRIES` 调整。Webhook 模式还提供与回调 POST 路径分离的只读 GET 健康探针。收到 `SIGTERM`/`SIGINT` 时会停止当前任务并断开 SDK、CLI 或 Webhook channel；这个优雅退出路径不依赖 `SELF_HEAL_ENABLED`，退出期间也不会触发自愈重启。`!status` 会显示当前 transport 的连接状态、重试/自愈次数以及消息投递成功、失败、进行中和最近失败。Settings、Onboarding、Workspace Browser、workspace 冲突处理及重试入口可使用飞书原生卡片按钮/下拉选择；模型、Codex profile 和 compact 阈值等共享 modal 会映射为 Card 2.0 内嵌表单，打开和提交后都原位更新当前卡片。回复链按 `root_id` 隔离会话；平台和实例状态通过 `BOT_PLATFORM`、`BOT_INSTANCE_ID` 隔离。
+
+SDK、CLI 和 Webhook 模式都支持卡片 action；CLI 会消费 `im.message.receive_v1`、`card.action.trigger` 和 `application.bot.menu_v6`，Webhook 则通过同一个验证后的 HTTP 入口分发。飞书没有复用 Discord 弹窗 modal，而是用 Card 2.0 表单提供等价输入能力。群聊卡片产生的非表单 `ephemeral` 响应会改为发送到操作者与 bot 的私聊，不会覆盖所有人可见的共享卡片；私聊卡片会携带原群聊或 reply-chain 的限定会话上下文，因此后续按钮、下拉和表单即使跨进程重启仍操作原会话，而卡片更新继续留在私聊。Card 2.0 表单保持在当前卡片原位打开和提交，以保留校验、修正和重试流程。还可在开放平台配置“事件”型机器人自定义菜单，`event_key` 使用共享命令名（例如 `status`、`settings`、`progress`、`queue`、`cancel`、`new`、`onboarding`）；点击后结果会发送到操作者与 bot 的私聊并原位更新。原生 slash command 使用与 Discord 相同的 provider 前缀规则，默认示例为 `/cx_status`、`/cc_status`、`/ag_status` 或 `/zc_status`，并通过普通消息事件复用文本命令核心及参数解析。群聊中的 `fork` 和 Codex `side` 会创建新的根消息，并把后续内容隔离到独立 reply chain；关闭 side 会在根消息上写入关闭标记。私聊不能创建这种子会话。若未注册命令或未启用相应事件/回调，相关原生入口不会生效。
 
 ## 设置面板
 
@@ -124,6 +202,8 @@ npm run start:zcode
 ```
 
 分组配置使用 `CODEX__*`、`CLAUDE__*`、`ANTIGRAVITY__*`、`ZCODE__*`。通常只需要各自的 `DISCORD_TOKEN`，再按需填默认模型、默认 workspace 和 CLI 路径。ZCode 的 safe mode 对应 `edit`，dangerous mode 对应 `yolo`。Antigravity CLI 目前没有公开的 `--model` 参数，模型选择以 Antigravity 自己的 settings.json 为准；模型菜单会合并 settings 当前值、官方 documented reasoning models 和本机日志里观测到的模型。
+
+Lark 当前也可以和 `BOT_PROVIDER=codex|claude|antigravity|zcode` 组合使用；例如 `CODEX__LARK_TRANSPORT`、`CODEX__LARK_CLI_PROFILE` 或 `CODEX__LARK_APP_ID` / `CODEX__LARK_APP_SECRET` 会覆盖共享 Lark 配置，其他 provider 同理。
 
 ## 关键配置
 
@@ -161,6 +241,8 @@ ZCODE_BIN=/Users/you/.local/bin/zcode
 ```
 
 访问控制建议至少设置 `ALLOWED_CHANNEL_IDS` 或 `ALLOWED_USER_IDS`。多人服务器里不要默认使用 dangerous mode。
+
+Lark 使用 `LARK_ALLOWED_CHAT_IDS`、`LARK_ALLOWED_TENANT_IDS`、`LARK_ALLOWED_USER_IDS` 和 `LARK_MENTION_ONLY_CHAT_IDS`；未配置 Lark 专用值时会回退到对应的共享 allowlist。
 
 compact 相关配置可以在 `.env` 里设默认，也可以在 Discord 里按频道覆盖。
 

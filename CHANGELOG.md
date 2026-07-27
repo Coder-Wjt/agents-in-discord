@@ -11,15 +11,37 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 - Added platform Adapter/Foundation contracts, capability policies, normalized inbound event models, platform-neutral command views, delivery ports, conversation services, and their Discord implementations.
 - Added a reusable platform Adapter conformance suite covering messages, commands, cancellation, attachments, capability degradation, child conversations, and error recovery.
 - Added a synthetic Foundation core smoke test that composes the real AppContext without Discord SDK objects.
+- Added a Feishu/Lark message-first Adapter using the official Node SDK and WebSocket transport, including group mentions, DMs, text commands, reply-chain session keys, message edits, notifications, attachment resource downloads, access policy, and lifecycle recovery.
+- Added an optional `lark-cli` transport that reuses encrypted persistent CLI credentials for event streaming, sends, replies, progress edits, and resource downloads without copying the App Secret into the project environment.
+- Added an optional Lark webhook transport using the official dispatcher, with verification-token and signature checks, encrypted-event decryption, URL challenges, a fixed POST path, generic rejection responses, and request-size limits.
+- Added a separate non-sensitive GET health endpoint for the Lark webhook transport, with callback/health path collision validation.
+- Added bounded Lark webhook header, complete-request, and idle keep-alive timeouts to prevent slow clients from occupying listener sockets indefinitely.
+- Added bounded Lark message, card-action, and bot-menu event deduplication across SDK, CLI, and webhook delivery paths to prevent retried events from executing twice.
+- Added native Lark interactive cards for shared Settings, Onboarding, Workspace, conflict, and retry flows, with button/select action routing and in-place card updates on SDK, CLI, and webhook transports.
+- Added Card 2.0 form equivalents for shared modal views, including model, Codex profile, and compact-threshold input with in-place open and submit updates on all supported Lark transports.
+- Added native Lark custom bot-menu command entry through `application.bot.menu_v6`, resolving the operator's direct chat and routing menu event keys through the shared command router on SDK, CLI, and webhook transports.
+- Extended the read-only Lark readiness check to audit the published bot version, delivery mode, required published events, and bot-menu configuration while keeping callback subscriptions and isolated-chat smoke tests as explicit manual checks when the application API cannot prove them.
+- Made Lark readiness compare the published bot menu against the versioned required `event_key` set instead of accepting any enabled non-empty menu.
+- Made credential-verified Lark readiness fail on an empty chat/tenant/user allowlist while still completing all available read-only remote checks.
+- Made required native Lark slash-command registry verification fail closed when the read-only list API is unavailable.
+- Added native Lark app slash-command support: provider-prefixed command manifests, ordinary-message routing into the shared text-command core, a secret-free registry drift audit, and an explicit additive `sync:lark-commands -- --apply` provisioning path that never deletes extra commands.
+- Added private equivalents for non-form Lark `ephemeral` interaction responses: group-card results are delivered to the operator's bot DM, retain the source chat/reply-chain session context across restarts, and keep subsequent card updates private.
+- Added `npm run check:lark`, a secret-free deployment preflight that shares production configuration parsing, validates local SDK/CLI availability, and can optionally verify CLI or SDK credentials, bot identity, and the versioned tenant-scope baseline without starting consumers or sending messages.
+- Added Lark task-status reactions through the shared message-delivery status port.
+- Added Lark group reply-chain child conversations for shared Codex/Claude fork and Codex side flows, including stable `root_id` session keys, root-message rename/cleanup markers, recent-output replay, failure compensation, and card-action context restoration.
+- Added platform-neutral health snapshots and Lark SDK/CLI/webhook connection, retry, self-heal, and message-delivery metrics to shared status reports.
+- Added `BOT_PLATFORM`, `BOT_INSTANCE_ID`, Lark configuration, platform-and-instance state isolation, and `start:lark` / `dev:lark` / `test:lark` scripts.
 
 ### Changed
 
 - Routed command UI, message and interaction input, runtime delivery, project-upgrade notifications, fork/side conversation lifecycle, presentation, and conversation security through platform-neutral boundaries.
 - Composed the existing Discord runtime through one platform Foundation while preserving Discord command registration, session keys, persisted data, configuration, startup modes, and user-visible behavior.
-- Reorganized the multi-platform development plan into completed foundation, core decoupling, and Discord composition milestones, followed by a separate second-platform readiness stage before Slack or Lark implementation begins.
+- Updated the multi-platform plan and deployment checklist for native Lark cards/forms, slash commands, group reply-chain child conversations, verified webhook deployment, and the remaining real-credential smoke work; Slack remains a later phase.
+- Reclassified the Lark milestone as functionally complete and in production acceptance, added a dated capability/verification checkpoint, and prioritized the remaining roadmap as Lark smoke/release, unified observability, Discord conversation-key migration tooling, then Slack.
 - Made AppContext require an explicit Foundation, leaving Discord Foundation construction only in the startup composition root.
 - Made normalized inbound actor, conversation, attachments, reply references, and history metadata the only core message contract.
-- Recorded the Node.js 22 upgrade gate, qualified second-platform conversation keys, platform-and-instance data isolation, and delayed platform-selection configuration required before a second Adapter ships.
+- Kept Discord's legacy default filenames unchanged while namespacing Lark session data, locks, project-upgrade state, and heartbeat identifiers by platform and instance.
+- Accepted Node.js 18 for the Lark implementation; any future Slack runtime upgrade remains a separate decision.
 
 ### Removed
 
@@ -28,11 +50,24 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Fixed
 
+- Decoupled Lark graceful SIGTERM/SIGINT shutdown from the self-heal toggle, cancelled pending retries during exit, and prevented disconnect failures or queued recovery timers from restarting a terminating process.
+- Made Lark native slash-command provisioning verify its read/write scopes, use explicit create/update operations, support a no-write whole-plan `--dry-run`, and reject missing permissions, capacity, or request-validation failures before any writes.
 - Kept Codex goal completion/blocker grace timers referenced until the runner settles, preventing pending executor tests or lightweight process wrappers from being cancelled while awaiting the scheduled stop.
+- Allowed native image staging to use platform-provided attachment downloaders, so private Lark image resources can reach Codex without a public HTTP URL.
+- Prevented Lark app/bot-authored messages from entering the prompt loop and made fatal Lark credential/format failures stop instead of retrying forever.
+- Allowed user-bound command, Settings, Onboarding, Workspace, conflict, and retry component IDs to accept Lark `ou_...` open IDs instead of only Discord numeric IDs.
+- Prevented private Lark interaction context from accepting malformed, cross-platform, or tenant/chat/root-conflicting values, and prevented permission denials from replacing shared group cards.
+- Made Lark startup reject placeholder credentials and invalid selected-transport domain/path/numeric settings instead of silently falling back, while applying the configured text chunk limit through the platform delivery port.
+- Corrected the Lark permission baseline to cover group-at/DM receive, bot send, message update/recall, resource access, and reaction read/write operations actually used by the adapter.
 
 ### Verified
 
 - Added and ran focused contract, boundary, Discord Adapter, input, presentation, security, notification, conformance, synthetic smoke, and AppContext regressions for the platform abstraction work.
+- Added Lark foundation, conformance, inbound, delivery, security, lifecycle, entry-handler, reply-chain fork/side, webhook dispatcher, official-SDK Node.js 18 smoke, and platform-instance isolation coverage.
+- Provisioned and read-only reverified all 42 native Lark slash commands for the bound application; the remote registry is 42/42 matched, provisioning scopes are 2/2, and 58 of 100 command slots remain available.
+- Passed credential-verified Lark deployment readiness with tenant scopes 9/9, events 2/2, card callbacks 1/1, bot-menu event keys 7/7, a restrictive app-scoped user allowlist, and a real P2P `!status` receive/reply round trip.
+- Verified real P2P Settings card rendering and in-place updates, select and Card 2.0 form callbacks, bot-menu command events, native `/cx_status` routing with an associated reply, and the invalid-profile form validation path.
+- Re-ran the current checkpoint with `test:lark` at 105/105, Foundation and conformance at 14/14 each, platform input/security/presentation/topology at 201/25/196/54, the shared `test:progress` suite at 381/381, credential-verified readiness without errors or warnings, syntax checks, safe-reply checks, and `git diff --check`; the deployment checklist now distinguishes this evidence from the remaining group, attachment, cancellation, reconnect, reply-chain, public-webhook, and graceful-shutdown smoke.
 
 ## [0.13.0] - 2026-07-21
 

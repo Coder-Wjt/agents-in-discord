@@ -1519,6 +1519,10 @@ test('parseCommandActionButtonId decodes command buttons', () => {
     command: 'retry',
     userId: '123456789',
   });
+  assert.deepEqual(parseCommandActionButtonId('cmd:retry:ou_lark_user'), {
+    command: 'retry',
+    userId: 'ou_lark_user',
+  });
   assert.equal(parseCommandActionButtonId('cmd:unknown:123456789'), null);
 });
 

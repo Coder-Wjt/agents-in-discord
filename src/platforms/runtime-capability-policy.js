@@ -39,7 +39,7 @@ export function createCapabilityAwareMessageDelivery({
     return resolvedDelivery;
   }
 
-  return markPolicy(assertMessageDelivery({
+  const policy = {
     reply: (target, payload) => resolvedDelivery.reply(target, payload),
     send: (target, payload) => resolvedDelivery.send(target, payload),
     edit(target, payload) {
@@ -56,7 +56,14 @@ export function createCapabilityAwareMessageDelivery({
       if (!resolvedCapabilities.reactions) return Promise.resolve(message);
       return resolvedDelivery.setMessageStatus(message, status);
     },
-  }), 'message-delivery', resolvedCapabilities);
+  };
+  if (typeof resolvedDelivery.getMetricsSnapshot === 'function') {
+    policy.getMetricsSnapshot = () => resolvedDelivery.getMetricsSnapshot();
+  }
+  if (typeof resolvedDelivery.resolveMessageTarget === 'function') {
+    policy.resolveMessageTarget = (messageId) => resolvedDelivery.resolveMessageTarget(messageId);
+  }
+  return markPolicy(assertMessageDelivery(policy), 'message-delivery', resolvedCapabilities);
 }
 
 export function createCapabilityAwareInboundEventNormalizer({

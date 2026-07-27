@@ -130,6 +130,18 @@ import {
 } from './extra-info.js';
 import { DISCORD_DEFAULT_EXTRA_INFO_TEMPLATE } from './platforms/discord/extra-info.js';
 import { createDiscordPlatformFoundation } from './platforms/discord/foundation.js';
+import { createLarkPlatformFoundation } from './platforms/lark/foundation.js';
+import { createLarkCliChannel } from './lark-cli-channel.js';
+import { installLarkWebhookServer } from './lark-webhook-channel.js';
+import { inspectLarkRuntimeConfig } from './lark-runtime-config.js';
+import { installLarkSdkBotMenuSupport } from './platforms/lark/bot-menu.js';
+import { DEFAULT_EXTRA_INFO_TEMPLATE } from './extra-info.js';
+import { buildPromptFromMessage } from './message-input.js';
+import {
+  appendPlatformInstanceSuffix,
+  normalizeBotPlatform,
+  normalizePlatformInstanceId,
+} from './platform-instance-utils.js';
 import {
   parseCommandActionButtonId,
 } from './slash-command-router.js';
@@ -185,9 +197,17 @@ const DATA_DIR = path.join(ROOT, 'data');
 const envState = loadRuntimeEnv({ rootDir: ROOT, env: process.env });
 const ENV_FILE = envState.writableEnvFile;
 const BOT_PROVIDER = parseOptionalProvider(process.env.BOT_PROVIDER);
+const BOT_PLATFORM = normalizeBotPlatform(process.env.BOT_PLATFORM || 'discord');
+const PLATFORM_INSTANCE_ID = normalizePlatformInstanceId(process.env.BOT_INSTANCE_ID || 'default');
 const BOT_MODE = describeBotMode(BOT_PROVIDER);
-const DATA_FILE = path.join(DATA_DIR, appendProviderSuffix('sessions.json', BOT_PROVIDER));
-const LOCK_FILE = path.join(DATA_DIR, appendProviderSuffix('bot.lock', BOT_PROVIDER));
+const DATA_FILE = path.join(DATA_DIR, appendPlatformInstanceSuffix(
+  appendProviderSuffix('sessions.json', BOT_PROVIDER),
+  { platformId: BOT_PLATFORM, instanceId: PLATFORM_INSTANCE_ID },
+));
+const LOCK_FILE = path.join(DATA_DIR, appendPlatformInstanceSuffix(
+  appendProviderSuffix('bot.lock', BOT_PROVIDER),
+  { platformId: BOT_PLATFORM, instanceId: PLATFORM_INSTANCE_ID },
+));
 
 if (envState.loadedFiles.length) {
   const rendered = envState.loadedFiles
@@ -209,7 +229,7 @@ if (proxyLogs.length) {
   }
 }
 
-if (globalThis.__discordWsAgent) {
+if (BOT_PLATFORM === 'discord' && globalThis.__discordWsAgent) {
   const wsPatch = ensureDiscordWsProxyPatch({ rootDir: ROOT });
   if (wsPatch.status === 'patched') {
     console.log('🩹 Patched @discordjs/ws for proxy-aware gateway connections');
@@ -220,6 +240,7 @@ if (globalThis.__discordWsAgent) {
 
 let activeLifecycle = null;
 const getActiveDiscordClient = () => activeLifecycle?.getClient?.() ?? null;
+const getActiveLarkChannel = () => activeLifecycle?.getClient?.() ?? null;
 const safeReplyWithLiveClient = (message, payload, options = {}) => safeReply(message, payload, {
   ...options,
   getActiveClient: getActiveDiscordClient,
@@ -229,6 +250,7 @@ const safeChannelSendWithLiveClient = (target, payload, options = {}) => safeCha
   getActiveClient: getActiveDiscordClient,
 });
 
+const discord = BOT_PLATFORM === 'discord' ? await import('discord.js') : {};
 const {
   ActionRowBuilder,
   ButtonBuilder,
@@ -244,18 +266,66 @@ const {
   TextInputStyle,
   REST,
   Routes,
-} = await import('discord.js');
+} = discord;
 
-const DISCORD_TOKEN = resolveDiscordToken({ botProvider: BOT_PROVIDER, env: process.env });
-if (!DISCORD_TOKEN) {
+const DISCORD_TOKEN = BOT_PLATFORM === 'discord'
+  ? resolveDiscordToken({ botProvider: BOT_PROVIDER, env: process.env })
+  : '';
+if (BOT_PLATFORM === 'discord' && !DISCORD_TOKEN) {
   console.error(renderMissingDiscordTokenHint({ botProvider: BOT_PROVIDER, env: process.env }));
   process.exit(1);
 }
 
-const ALLOWED_CHANNEL_IDS = parseCsvSet(resolveProviderScopedEnv('ALLOWED_CHANNEL_IDS', BOT_PROVIDER, process.env));
-const ALLOWED_GUILD_IDS = parseCsvSet(resolveProviderScopedEnv('ALLOWED_GUILD_IDS', BOT_PROVIDER, process.env));
-const ALLOWED_USER_IDS = parseCsvSet(resolveProviderScopedEnv('ALLOWED_USER_IDS', BOT_PROVIDER, process.env));
-const MENTION_ONLY_CHANNEL_IDS = parseCsvSet(resolveProviderScopedEnv('MENTION_ONLY_CHANNEL_IDS', BOT_PROVIDER, process.env));
+const LARK_CONFIG_INSPECTION = BOT_PLATFORM === 'lark'
+  ? inspectLarkRuntimeConfig({ botProvider: BOT_PROVIDER, env: process.env })
+  : null;
+if (LARK_CONFIG_INSPECTION?.errors.length) {
+  for (const issue of LARK_CONFIG_INSPECTION.errors) console.error(`❌ ${issue}`);
+  process.exit(1);
+}
+if (LARK_CONFIG_INSPECTION?.warnings.length) {
+  for (const issue of LARK_CONFIG_INSPECTION.warnings) console.warn(`⚠️ ${issue}`);
+}
+const LARK_RUNTIME_CONFIG = LARK_CONFIG_INSPECTION?.config || null;
+const LARK_APP_ID = LARK_RUNTIME_CONFIG?.appId || '';
+const LARK_APP_SECRET = LARK_RUNTIME_CONFIG?.appSecret || '';
+const LARK_TRANSPORT = LARK_RUNTIME_CONFIG?.transport || '';
+const LARK_WEBHOOK_VERIFICATION_TOKEN = LARK_RUNTIME_CONFIG?.webhook.verificationToken || '';
+const LARK_WEBHOOK_ENCRYPT_KEY = LARK_RUNTIME_CONFIG?.webhook.encryptKey || '';
+const LARK_WEBHOOK_HOST = LARK_RUNTIME_CONFIG?.webhook.host || '127.0.0.1';
+const LARK_WEBHOOK_PORT = LARK_RUNTIME_CONFIG?.webhook.port || 3000;
+const LARK_WEBHOOK_PATH = LARK_RUNTIME_CONFIG?.webhook.path || '/lark/events';
+const LARK_WEBHOOK_HEALTH_PATH = LARK_RUNTIME_CONFIG?.webhook.healthPath || '/healthz';
+const LARK_WEBHOOK_MAX_BODY_BYTES = LARK_RUNTIME_CONFIG?.webhook.maxBodyBytes || 1024 * 1024;
+const LARK_WEBHOOK_HEADERS_TIMEOUT_MS = LARK_RUNTIME_CONFIG?.webhook.headersTimeoutMs || 10_000;
+const LARK_WEBHOOK_REQUEST_TIMEOUT_MS = LARK_RUNTIME_CONFIG?.webhook.requestTimeoutMs || 15_000;
+const LARK_WEBHOOK_KEEP_ALIVE_TIMEOUT_MS = LARK_RUNTIME_CONFIG?.webhook.keepAliveTimeoutMs || 5000;
+const LARK_EVENT_DEDUP_WINDOW_MS = LARK_RUNTIME_CONFIG?.safety.eventDedupWindowMs || 12 * 60 * 60_000;
+const LARK_EVENT_DEDUP_MAX_ENTRIES = LARK_RUNTIME_CONFIG?.safety.eventDedupMaxEntries || 5000;
+const LARK_DOMAIN = LARK_RUNTIME_CONFIG?.domain || 'feishu';
+const LARK_CLI_BIN = LARK_RUNTIME_CONFIG?.cliBin || 'lark-cli';
+const LARK_CLI_PROFILE = LARK_RUNTIME_CONFIG?.cliProfile || '';
+
+const resolvePlatformScopedEnv = (platformKey, legacyKey = platformKey) => (
+  resolveProviderScopedEnv(platformKey, BOT_PROVIDER, process.env)
+  || resolveProviderScopedEnv(legacyKey, BOT_PROVIDER, process.env)
+);
+const ALLOWED_CHANNEL_IDS = parseCsvSet(resolvePlatformScopedEnv(
+  BOT_PLATFORM === 'lark' ? 'LARK_ALLOWED_CHAT_IDS' : 'ALLOWED_CHANNEL_IDS',
+  'ALLOWED_CHANNEL_IDS',
+));
+const ALLOWED_GUILD_IDS = parseCsvSet(resolvePlatformScopedEnv(
+  BOT_PLATFORM === 'lark' ? 'LARK_ALLOWED_TENANT_IDS' : 'ALLOWED_GUILD_IDS',
+  'ALLOWED_GUILD_IDS',
+));
+const ALLOWED_USER_IDS = parseCsvSet(resolvePlatformScopedEnv(
+  BOT_PLATFORM === 'lark' ? 'LARK_ALLOWED_USER_IDS' : 'ALLOWED_USER_IDS',
+  'ALLOWED_USER_IDS',
+));
+const MENTION_ONLY_CHANNEL_IDS = parseCsvSet(resolvePlatformScopedEnv(
+  BOT_PLATFORM === 'lark' ? 'LARK_MENTION_ONLY_CHAT_IDS' : 'MENTION_ONLY_CHANNEL_IDS',
+  'MENTION_ONLY_CHANNEL_IDS',
+));
 const SECURITY_PROFILE = normalizeSecurityProfile(process.env.SECURITY_PROFILE || 'auto');
 const SECURITY_PROFILE_DEFAULTS = Object.freeze({
   solo: { mentionOnly: false, maxQueuePerChannel: 0 },
@@ -276,9 +346,12 @@ const CONFIG_POLICY = parseConfigAllowlist(
 );
 const EXTRA_INFO_ENABLED = normalizeExtraInfoEnabled(resolveProviderScopedEnv('EXTRA_INFO_ENABLED', BOT_PROVIDER, process.env));
 const EXTRA_INFO_TEXT = normalizeExtraInfoTemplate(resolveProviderScopedEnv('EXTRA_INFO_TEXT', BOT_PROVIDER, process.env))
-  || DISCORD_DEFAULT_EXTRA_INFO_TEMPLATE;
+  || (BOT_PLATFORM === 'discord' ? DISCORD_DEFAULT_EXTRA_INFO_TEMPLATE : DEFAULT_EXTRA_INFO_TEMPLATE);
 const WORKSPACE_ROOT = process.env.WORKSPACE_ROOT || path.join(ROOT, 'workspaces');
-const WORKSPACE_LOCK_ROOT = path.join(DATA_DIR, 'workspace-locks');
+const WORKSPACE_LOCK_ROOT = path.join(DATA_DIR, appendPlatformInstanceSuffix('workspace-locks', {
+  platformId: BOT_PLATFORM,
+  instanceId: PLATFORM_INSTANCE_ID,
+}));
 const SHARED_CHILD_THREAD_WORKSPACE_MODE = process.env.CHILD_THREAD_WORKSPACE_MODE;
 const PROVIDER_CHILD_THREAD_WORKSPACE_MODE_OVERRIDES = {
   codex: process.env.CODEX__CHILD_THREAD_WORKSPACE_MODE,
@@ -432,7 +505,9 @@ const PROJECT_UPGRADE_RESTART_TARGET = String(
   process.env.AGENTS_IN_DISCORD_UPGRADE_RESTART_TARGET || 'all',
 ).trim() || 'all';
 const PROJECT_UPGRADE_RESTART_COMMAND = process.env.AGENTS_IN_DISCORD_UPGRADE_RESTART_COMMAND
-  || (process.platform === 'win32'
+  || (BOT_PLATFORM !== 'discord'
+    ? ''
+    : process.platform === 'win32'
     ? ''
     : `scripts/restart-discord-bot-service.sh ${PROJECT_UPGRADE_RESTART_TARGET}`);
 const SLASH_PREFIX = normalizeSlashPrefix(process.env.SLASH_PREFIX || getDefaultSlashPrefix(BOT_PROVIDER));
@@ -491,42 +566,127 @@ if (bootCliHealth.ok) {
   ].join('\n'));
 }
 
-const createClient = () => createDiscordClient({
+const larkSdk = BOT_PLATFORM === 'lark' && ['sdk', 'webhook'].includes(LARK_TRANSPORT)
+  ? await import('@larksuiteoapi/node-sdk')
+  : null;
+const createDiscordClientInstance = () => createDiscordClient({
   Client,
   GatewayIntentBits,
   Partials,
   restProxyAgent,
 });
-const platformFoundation = createDiscordPlatformFoundation({
-  commandRegistryRendererOptions: {
-    SlashCommandBuilder,
-    slashPrefix: SLASH_PREFIX,
-  },
-  commandViewRendererOptions: {
-    ActionRowBuilder,
-    ButtonBuilder,
-    ButtonStyle,
-    StringSelectMenuBuilder,
-    ModalBuilder,
-    TextInputBuilder,
-    TextInputStyle,
-  },
-  messageDeliveryOptions: {
-    reply: safeReplyWithLiveClient,
-    send: safeChannelSendWithLiveClient,
-    splitText: splitForDiscord,
-  },
-  notificationDeliveryOptions: {
-    getClient: getActiveDiscordClient,
-  },
-  interactionResponseOptions: {
+const createLarkClientInstance = () => {
+  if (LARK_TRANSPORT === 'cli') {
+    return createLarkCliChannel({
+      cliBin: LARK_CLI_BIN,
+      profile: LARK_CLI_PROFILE,
+      cwd: ROOT,
+      env: process.env,
+      logger: console,
+      handshakeTimeoutMs: LARK_RUNTIME_CONFIG.safety.handshakeTimeoutMs,
+    });
+  }
+  let channel = installLarkSdkBotMenuSupport(larkSdk.createLarkChannel({
+    appId: LARK_APP_ID,
+    appSecret: LARK_APP_SECRET,
+    transport: LARK_TRANSPORT === 'webhook' ? 'webhook' : 'websocket',
+    webhook: LARK_TRANSPORT === 'webhook' ? {
+      verificationToken: LARK_WEBHOOK_VERIFICATION_TOKEN,
+      encryptKey: LARK_WEBHOOK_ENCRYPT_KEY || undefined,
+    } : undefined,
+    domain: LARK_DOMAIN === 'lark' ? larkSdk.Domain.Lark : larkSdk.Domain.Feishu,
+    loggerLevel: larkSdk.LoggerLevel.info,
     logger: console,
-    withDiscordNetworkRetry,
-  },
-  conversationSecurityOptions: {
-    permissionFlagsBits: PermissionFlagsBits,
-  },
-});
+    source: 'agents-in-discord',
+    includeRawEvent: true,
+    handshakeTimeoutMs: LARK_RUNTIME_CONFIG.safety.handshakeTimeoutMs,
+    policy: {
+      dmMode: 'open',
+      requireMention: false,
+      respondToMentionAll: false,
+    },
+    safety: {
+      chatQueue: { enabled: true },
+      staleMessageWindowMs: LARK_RUNTIME_CONFIG.safety.staleMessageWindowMs,
+      dedup: {
+        ttl: LARK_EVENT_DEDUP_WINDOW_MS,
+        maxEntries: LARK_EVENT_DEDUP_MAX_ENTRIES,
+      },
+    },
+    outbound: {
+      textChunkLimit: LARK_RUNTIME_CONFIG.outbound.textChunkLimit,
+      retry: {
+        maxAttempts: LARK_RUNTIME_CONFIG.outbound.sendMaxAttempts,
+        baseDelayMs: LARK_RUNTIME_CONFIG.outbound.sendRetryBaseDelayMs,
+      },
+    },
+  }));
+  if (LARK_TRANSPORT === 'webhook') {
+    channel = installLarkWebhookServer(channel, {
+      host: LARK_WEBHOOK_HOST,
+      port: LARK_WEBHOOK_PORT,
+      path: LARK_WEBHOOK_PATH,
+      healthPath: LARK_WEBHOOK_HEALTH_PATH,
+      maxBodyBytes: LARK_WEBHOOK_MAX_BODY_BYTES,
+      headersTimeoutMs: LARK_WEBHOOK_HEADERS_TIMEOUT_MS,
+      requestTimeoutMs: LARK_WEBHOOK_REQUEST_TIMEOUT_MS,
+      keepAliveTimeoutMs: LARK_WEBHOOK_KEEP_ALIVE_TIMEOUT_MS,
+      generateChallenge: larkSdk.generateChallenge,
+      logger: console,
+    });
+  }
+  return channel;
+};
+const createClient = BOT_PLATFORM === 'lark'
+  ? createLarkClientInstance
+  : createDiscordClientInstance;
+
+let platformFoundation;
+if (BOT_PLATFORM === 'lark') {
+  platformFoundation = createLarkPlatformFoundation({
+    commandRegistryRendererOptions: { slashPrefix: SLASH_PREFIX },
+    eventNormalizerOptions: { getChannel: getActiveLarkChannel },
+    messageDeliveryOptions: {
+      getChannel: getActiveLarkChannel,
+      textChunkLimit: LARK_RUNTIME_CONFIG.outbound.textChunkLimit,
+    },
+    notificationDeliveryOptions: { getChannel: getActiveLarkChannel },
+    conversationSpawnOptions: { getChannel: getActiveLarkChannel },
+  });
+} else {
+  platformFoundation = createDiscordPlatformFoundation({
+    commandRegistryRendererOptions: {
+      SlashCommandBuilder,
+      slashPrefix: SLASH_PREFIX,
+    },
+    commandViewRendererOptions: {
+      ActionRowBuilder,
+      ButtonBuilder,
+      ButtonStyle,
+      StringSelectMenuBuilder,
+      ModalBuilder,
+      TextInputBuilder,
+      TextInputStyle,
+    },
+    messageDeliveryOptions: {
+      reply: safeReplyWithLiveClient,
+      send: safeChannelSendWithLiveClient,
+      splitText: splitForDiscord,
+    },
+    notificationDeliveryOptions: {
+      getClient: getActiveDiscordClient,
+    },
+    interactionResponseOptions: {
+      logger: console,
+      withDiscordNetworkRetry,
+    },
+    conversationSecurityOptions: {
+      permissionFlagsBits: PermissionFlagsBits,
+    },
+  });
+}
+const safeReplyForActivePlatform = (target, payload) => platformFoundation.messageDelivery.reply(target, payload);
+const safeSendForActivePlatform = (target, payload) => platformFoundation.messageDelivery.send(target, payload);
 const appContext = createAppContext({
   platformFoundation,
   identityOptions: {
@@ -704,9 +864,9 @@ const appContext = createAppContext({
       progressPlanMaxLines: PROGRESS_PLAN_MAX_LINES,
       progressDoneStepsMax: PROGRESS_DONE_STEPS_MAX,
       showReasoning: SHOW_REASONING,
-      resultChunkChars: 1900,
-      safeReply: safeReplyWithLiveClient,
-      safeChannelSend: safeChannelSendWithLiveClient,
+      resultChunkChars: BOT_PLATFORM === 'lark' ? 4000 : 1900,
+      safeReply: safeReplyForActivePlatform,
+      safeChannelSend: safeSendForActivePlatform,
       withDiscordNetworkRetry,
       splitForDiscord,
       normalizeUiLanguage,
@@ -727,7 +887,7 @@ const appContext = createAppContext({
       composeFinalAnswerText,
     },
     channelQueueOptions: {
-      safeReply: safeReplyWithLiveClient,
+      safeReply: safeReplyForActivePlatform,
       safeError,
     },
   },
@@ -740,7 +900,6 @@ const appContext = createAppContext({
       defaultUiLanguage: DEFAULT_UI_LANGUAGE,
       onboardingTotalSteps: 4,
       workspaceRoot: WORKSPACE_ROOT,
-      discordToken: DISCORD_TOKEN,
       allowedChannelIds: ALLOWED_CHANNEL_IDS,
       allowedGuildIds: ALLOWED_GUILD_IDS,
       allowedUserIds: ALLOWED_USER_IDS,
@@ -771,6 +930,13 @@ const appContext = createAppContext({
       allowedChannelIds: ALLOWED_CHANNEL_IDS,
       allowedGuildIds: ALLOWED_GUILD_IDS,
       allowedUserIds: ALLOWED_USER_IDS,
+      ...(BOT_PLATFORM === 'lark' ? {
+        allowedChannelIdsLabel: 'LARK_ALLOWED_CHAT_IDS',
+        allowedGuildIdsLabel: 'LARK_ALLOWED_TENANT_IDS',
+        allowedUserIdsLabel: 'LARK_ALLOWED_USER_IDS',
+        allChannelsLabel: '(all chats)',
+        allGuildsLabel: '(all tenants)',
+      } : {}),
       progressProcessLines: PROGRESS_PROCESS_LINES,
       progressPlanMaxLines: PROGRESS_PLAN_MAX_LINES,
       progressDoneStepsMax: PROGRESS_DONE_STEPS_MAX,
@@ -873,7 +1039,7 @@ const appContext = createAppContext({
     textCommandOptions: {
       getProviderDisplayName,
       getProviderShortName,
-      safeReply: safeReplyWithLiveClient,
+      safeReply: safeReplyForActivePlatform,
       formatProviderSessionLabel,
       providerSupportsRawConfigOverrides,
       formatProviderRawConfigSurface,
@@ -942,27 +1108,37 @@ const appContext = createAppContext({
   accessPolicyOptions: {
     allowedChannelIds: ALLOWED_CHANNEL_IDS,
     allowedGuildIds: ALLOWED_GUILD_IDS,
+    allowedChatIds: ALLOWED_CHANNEL_IDS,
+    allowedTenantIds: ALLOWED_GUILD_IDS,
     allowedUserIds: ALLOWED_USER_IDS,
   },
   entryHandlerOptions: {
     logger: console,
-    REST,
-    Routes,
-    discordToken: DISCORD_TOKEN,
-    restProxyAgent,
-    withDiscordNetworkRetry,
-    safeReply: safeReplyWithLiveClient,
-    safeError,
-    isIgnorableDiscordRuntimeError,
-    isRecoverableGatewayCloseCode,
-    messageInput: discordMessageInput,
     parseCommandActionButtonId,
+    ...(BOT_PLATFORM === 'discord' ? {
+      REST,
+      Routes,
+      discordToken: DISCORD_TOKEN,
+      restProxyAgent,
+      withDiscordNetworkRetry,
+      safeReply: safeReplyWithLiveClient,
+      isIgnorableDiscordRuntimeError,
+      isRecoverableGatewayCloseCode,
+      messageInput: discordMessageInput,
+    } : {
+      messageInput: { buildPromptFromMessage },
+      eventDedupWindowMs: LARK_EVENT_DEDUP_WINDOW_MS,
+      eventDedupMaxEntries: LARK_EVENT_DEDUP_MAX_ENTRIES,
+    }),
+    safeError,
   },
   lifecycleOptions: {
     selfHealEnabled: SELF_HEAL_ENABLED,
     restartDelayMs: SELF_HEAL_RESTART_DELAY_MS,
     maxLoginBackoffMs: SELF_HEAL_MAX_LOGIN_BACKOFF_MS,
-    discordToken: DISCORD_TOKEN,
+    ...(BOT_PLATFORM === 'discord'
+      ? { discordToken: DISCORD_TOKEN }
+      : { transport: LARK_TRANSPORT }),
     createClient,
     safeError,
     logger: console,
@@ -986,14 +1162,23 @@ const projectUpgradeScheduler = createProjectUpgradeScheduler({
   notificationDelivery: appContext.notificationDelivery,
   getRuntimeSnapshots: () => appContext.promptRuntime.getAllRuntimeSnapshots(),
   requestRestart: () => projectUpgradeManager.requestRestart(),
-  stateFile: path.join(DATA_DIR, 'project-upgrade-notices.json'),
-  heartbeatDir: path.join(DATA_DIR, 'project-upgrade-heartbeats'),
-  heartbeatId: `${BOT_PROVIDER || 'shared'}-${process.pid}`,
+  stateFile: path.join(DATA_DIR, appendPlatformInstanceSuffix('project-upgrade-notices.json', {
+    platformId: BOT_PLATFORM,
+    instanceId: PLATFORM_INSTANCE_ID,
+  })),
+  heartbeatDir: path.join(DATA_DIR, appendPlatformInstanceSuffix('project-upgrade-heartbeats', {
+    platformId: BOT_PLATFORM,
+    instanceId: PLATFORM_INSTANCE_ID,
+  })),
+  heartbeatId: `${BOT_PLATFORM}-${PLATFORM_INSTANCE_ID}-${BOT_PROVIDER || 'shared'}-${process.pid}`,
   logger: console,
 });
 
 console.log([
   '🔐 Security defaults:',
+  `• BOT_PLATFORM=${BOT_PLATFORM}`,
+  ...(BOT_PLATFORM === 'lark' ? [`• LARK_TRANSPORT=${LARK_TRANSPORT}`] : []),
+  `• BOT_INSTANCE_ID=${PLATFORM_INSTANCE_ID}`,
   `• BOT_MODE=${BOT_MODE}`,
   `• DEFAULT_PROVIDER=${DEFAULT_PROVIDER}`,
   `• DEFAULT_MODE=${DEFAULT_MODE}`,
@@ -1028,6 +1213,6 @@ try {
   });
   projectUpgradeScheduler.start();
 } catch (err) {
-  console.error(`❌ Failed to boot Discord client: ${safeError(err)}`);
+  console.error(`❌ Failed to boot ${BOT_PLATFORM} client: ${safeError(err)}`);
   process.exit(1);
 }

@@ -242,6 +242,54 @@ test('createReportFormatters.formatStatusReport labels lastInputTokens as previo
   assert.doesNotMatch(report, /最近输入 tokens/);
 });
 
+test('createReportFormatters.formatStatusReport shows platform connection and delivery health', () => {
+  const formatters = createFormatters({
+    getPlatformHealth: () => ({
+      platformId: 'lark',
+      observedAt: 10_000,
+      connection: {
+        available: true,
+        transport: 'cli',
+        state: 'reconnecting',
+        connectRetries: 2,
+        totalReconnects: 3,
+        selfHealRestarts: 1,
+        consumerCount: 2,
+        expectedConsumerCount: 3,
+        nextReconnectAt: 15_000,
+        lastError: { at: 9_000, error: 'socket closed' },
+      },
+      delivery: {
+        available: true,
+        succeeded: 12,
+        failed: 1,
+        inFlight: 2,
+        lastFailure: { operation: 'send', at: 8_000, error: 'request timeout' },
+      },
+    }),
+  });
+
+  const report = formatters.formatStatusReport('thread-1', {
+    provider: 'codex',
+    language: 'zh',
+    mode: 'safe',
+  }, { id: 'thread-1' });
+
+  assert.match(report, /平台连接：Lark · 重连中（lark-cli WebSocket）；重试 5；自愈重启 1；事件消费者 2\/3；下次重试 5s 后；最近错误：socket closed/);
+  assert.match(report, /消息投递：成功 12，失败 1，进行中 2；最近失败在 2s 前（send：request timeout）/);
+});
+
+test('createReportFormatters keeps status output unchanged when platform health is unavailable', () => {
+  const formatters = createFormatters({ getPlatformHealth: () => null });
+  const report = formatters.formatStatusReport('thread-1', {
+    provider: 'codex',
+    language: 'en',
+    mode: 'safe',
+  }, { id: 'thread-1' });
+
+  assert.doesNotMatch(report, /platform connection|message delivery/);
+});
+
 test('createReportFormatters.formatStatusReport shows parent-channel inherited model effort and workspace', () => {
   const formatters = createFormatters({
     getWorkspaceBinding: () => ({
@@ -515,7 +563,27 @@ test('createReportFormatters.formatDoctorReport includes allowlist and workspace
   assert.match(report, /runtime raw config: config:antigravity/);
   assert.match(report, /runtime reasoning: reasoning:antigravity/);
   assert.match(report, /ALLOWED_CHANNEL_IDS: 2 configured/);
+  assert.match(report, /ALLOWED_GUILD_IDS: \(all guilds\)/);
   assert.match(report, /ALLOWED_USER_IDS: 1 configured/);
+});
+
+test('createReportFormatters supports Lark-specific doctor allowlist labels', () => {
+  const formatters = createFormatters({
+    allowedChannelIdsLabel: 'LARK_ALLOWED_CHAT_IDS',
+    allowedGuildIdsLabel: 'LARK_ALLOWED_TENANT_IDS',
+    allowedUserIdsLabel: 'LARK_ALLOWED_USER_IDS',
+    allChannelsLabel: '(all chats)',
+    allGuildsLabel: '(all tenants)',
+  });
+  const report = formatters.formatDoctorReport(
+    'platform:v1:lark:tenant:chat:',
+    { provider: 'codex', language: 'en' },
+    { chatId: 'chat', chatType: 'group', tenantId: 'tenant' },
+  );
+
+  assert.match(report, /LARK_ALLOWED_CHAT_IDS: 2 configured/);
+  assert.match(report, /LARK_ALLOWED_TENANT_IDS: \(all tenants\)/);
+  assert.match(report, /LARK_ALLOWED_USER_IDS: 1 configured/);
 });
 
 test('createReportFormatters.formatHelpReport documents browse actions and provider switching', () => {

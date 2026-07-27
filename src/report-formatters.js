@@ -20,7 +20,14 @@ export function createReportFormatters({
   supportsThreads = true,
   conversationPresentation = DEFAULT_CONVERSATION_PRESENTATION,
   allowedChannelIds = null,
+  allowedGuildIds = null,
   allowedUserIds = null,
+  allowedChannelIdsLabel = 'ALLOWED_CHANNEL_IDS',
+  allowedGuildIdsLabel = 'ALLOWED_GUILD_IDS',
+  allowedUserIdsLabel = 'ALLOWED_USER_IDS',
+  allChannelsLabel = '(all channels)',
+  allGuildsLabel = '(all guilds)',
+  allUsersLabel = '(all users)',
   progressProcessLines = 3,
   progressPlanMaxLines = 3,
   progressDoneStepsMax = 3,
@@ -54,6 +61,7 @@ export function createReportFormatters({
   resolveCodexProfileSetting = () => ({ value: null, source: 'provider default', valid: true, isExplicit: false, supported: false }),
   resolveReasoningEffortSetting = (session) => ({ value: session?.effort || '(unknown)', source: session?.effort ? 'session override' : 'provider' }),
   getCliHealth = () => ({ ok: false, error: 'unavailable' }),
+  getPlatformHealth = () => null,
   getRuntimeSnapshot = () => ({ running: false, queued: 0 }),
   resolveSecurityContext = () => ({ mentionOnly: false, maxQueuePerChannel: 0 }),
   resolveTimeoutSetting = () => ({ timeoutMs: 0, source: 'env default' }),
@@ -532,6 +540,104 @@ export function createReportFormatters({
       : `• 额外信息：off（${enabledSource}），0 tokens`;
   }
 
+  function formatPlatformHealthLines(language = 'zh') {
+    let health = null;
+    try {
+      health = getPlatformHealth();
+    } catch (error) {
+      health = {
+        platformId: 'platform',
+        connection: {
+          available: false,
+          error: String(error?.message || error || 'unknown error'),
+        },
+      };
+    }
+    if (!health || typeof health !== 'object' || typeof health?.then === 'function') return [];
+    const platformId = String(health.platformId || 'platform').trim().toLowerCase();
+    const platformLabel = platformId === 'lark' ? 'Lark' : platformId;
+    const observedAt = Number(health.observedAt) || Date.now();
+    const connection = health.connection;
+    const delivery = health.delivery;
+    const lines = [];
+
+    if (connection) {
+      if (connection.available === false) {
+        const error = truncate(String(connection.error || 'unavailable').replace(/\s+/g, ' '), 160);
+        lines.push(language === 'en'
+          ? `• platform connection: ${platformLabel} · unavailable (${error})`
+          : `• 平台连接：${platformLabel} · 不可用（${error}）`);
+      } else {
+        const state = String(connection.state || 'unknown').trim().toLowerCase();
+        const stateLabels = language === 'en'
+          ? {
+            idle: 'idle', connecting: 'connecting', connected: 'connected', reconnecting: 'reconnecting', failed: 'failed',
+          }
+          : {
+            idle: '未连接', connecting: '连接中', connected: '已连接', reconnecting: '重连中', failed: '连接失败',
+          };
+        const transport = String(connection.transport || '').trim().toLowerCase();
+        const transportLabel = transport === 'sdk'
+          ? 'SDK WebSocket'
+          : (transport === 'cli' ? 'lark-cli WebSocket' : transport);
+        const retryCount = Math.max(0, Number(connection.connectRetries) || 0)
+          + Math.max(0, Number(connection.totalReconnects ?? connection.reconnectAttempts) || 0);
+        const selfHealRestarts = Math.max(0, Number(connection.selfHealRestarts) || 0);
+        const consumers = Number(connection.consumerCount);
+        const expectedConsumers = Number(connection.expectedConsumerCount);
+        const consumerSuffix = Number.isFinite(consumers) && Number.isFinite(expectedConsumers)
+          && expectedConsumers > 0 && consumers !== expectedConsumers
+          ? (language === 'en'
+            ? `; event consumers ${consumers}/${expectedConsumers}`
+            : `；事件消费者 ${consumers}/${expectedConsumers}`)
+          : '';
+        const reconnectSuffix = connection.nextReconnectAt
+          ? (language === 'en'
+            ? `; next retry in ${humanAge(Math.max(0, Number(connection.nextReconnectAt) - observedAt))}`
+            : `；下次重试 ${humanAge(Math.max(0, Number(connection.nextReconnectAt) - observedAt))} 后`)
+          : '';
+        const lastErrorAt = Number(connection.lastError?.at) || 0;
+        const lastConnectedAt = Number(connection.lastConnectedAt) || 0;
+        const errorText = connection.statusError || (
+          ['failed', 'reconnecting'].includes(state) || lastErrorAt >= lastConnectedAt
+            ? connection.lastError?.error
+            : null
+        );
+        const errorSuffix = errorText
+          ? (language === 'en'
+            ? `; latest error: ${truncate(String(errorText).replace(/\s+/g, ' '), 160)}`
+            : `；最近错误：${truncate(String(errorText).replace(/\s+/g, ' '), 160)}`)
+          : '';
+        lines.push(language === 'en'
+          ? `• platform connection: ${platformLabel} · ${stateLabels[state] || state}${transportLabel ? ` (${transportLabel})` : ''}; retries ${retryCount}; self-heal restarts ${selfHealRestarts}${consumerSuffix}${reconnectSuffix}${errorSuffix}`
+          : `• 平台连接：${platformLabel} · ${stateLabels[state] || state}${transportLabel ? `（${transportLabel}）` : ''}；重试 ${retryCount}；自愈重启 ${selfHealRestarts}${consumerSuffix}${reconnectSuffix}${errorSuffix}`);
+      }
+    }
+
+    if (delivery) {
+      if (delivery.available === false) {
+        const error = truncate(String(delivery.error || 'unavailable').replace(/\s+/g, ' '), 160);
+        lines.push(language === 'en'
+          ? `• message delivery: unavailable (${error})`
+          : `• 消息投递：不可用（${error}）`);
+      } else {
+        const succeeded = Math.max(0, Number(delivery.succeeded) || 0);
+        const failed = Math.max(0, Number(delivery.failed) || 0);
+        const inFlight = Math.max(0, Number(delivery.inFlight) || 0);
+        const failure = delivery.lastFailure;
+        const failureSuffix = failure?.error
+          ? (language === 'en'
+            ? `; latest failure ${humanAge(Math.max(0, observedAt - (Number(failure.at) || observedAt)))} ago (${failure.operation || 'delivery'}: ${truncate(String(failure.error).replace(/\s+/g, ' '), 120)})`
+            : `；最近失败在 ${humanAge(Math.max(0, observedAt - (Number(failure.at) || observedAt)))} 前（${failure.operation || 'delivery'}：${truncate(String(failure.error).replace(/\s+/g, ' '), 120)}）`)
+          : '';
+        lines.push(language === 'en'
+          ? `• message delivery: ${succeeded} succeeded, ${failed} failed, ${inFlight} in flight${failureSuffix}`
+          : `• 消息投递：成功 ${succeeded}，失败 ${failed}，进行中 ${inFlight}${failureSuffix}`);
+      }
+    }
+    return lines;
+  }
+
   function formatStatusReport(key, session, channel = null, { rateLimitReport = null, goalReport = null, projectUpgradeReport = null } = {}) {
     const language = getSessionLanguage(session);
     const lang = normalizeUiLanguage(language);
@@ -563,6 +669,7 @@ export function createReportFormatters({
     const rateLimitLines = formatCodexRateLimitLines(provider, rateLimitReport, lang);
     const goalLines = formatCodexGoalLines(provider, goalReport, lang);
     const projectUpgradeLine = projectUpgradeReport ? formatProjectUpgradeStatusLine(projectUpgradeReport, lang) : null;
+    const platformHealthLines = formatPlatformHealthLines(lang);
 
     if (lang === 'en') {
       return [
@@ -586,6 +693,7 @@ export function createReportFormatters({
         `• ui language: ${formatLanguageLabel(language)}`,
         `• permissions: ${formatPermissionsLabel(session, lang)}`,
         `• cli: ${formatCliHealth(cliHealth, lang)}`,
+        ...platformHealthLines,
         ...rateLimitLines,
         ...goalLines,
         projectUpgradeLine,
@@ -617,6 +725,7 @@ export function createReportFormatters({
       `• 界面语言: ${formatLanguageLabel(language)}`,
       `• 权限: ${formatPermissionsLabel(session, lang)}`,
       `• CLI: ${formatCliHealth(cliHealth, lang)}`,
+      ...platformHealthLines,
       ...rateLimitLines,
       ...goalLines,
       projectUpgradeLine,
@@ -838,8 +947,9 @@ export function createReportFormatters({
       `• queue limit: ${formatQueueLimit(security.maxQueuePerChannel)}`,
       `• !config: ${rawConfigStatus}`,
       `• config allowlist: ${describeConfigPolicy()}`,
-      `• ALLOWED_CHANNEL_IDS: ${allowedChannelIds ? `${allowedChannelIds.size} configured` : '(all channels)'}`,
-      `• ALLOWED_USER_IDS: ${allowedUserIds ? `${allowedUserIds.size} configured` : '(all users)'}`,
+      `• ${allowedChannelIdsLabel}: ${allowedChannelIds ? `${allowedChannelIds.size} configured` : allChannelsLabel}`,
+      `• ${allowedGuildIdsLabel}: ${allowedGuildIds ? `${allowedGuildIds.size} configured` : allGuildsLabel}`,
+      `• ${allowedUserIdsLabel}: ${allowedUserIds ? `${allowedUserIds.size} configured` : allUsersLabel}`,
       `• runner timeout: ${formatTimeoutLabel(timeoutSetting.timeoutMs)} (${timeoutSetting.source})`,
       fastMode.supported ? `• fast mode: ${formatFastModeLabel(fastMode.enabled)} (${fastMode.source})` : null,
       runtimeMode.supported ? `• ${getProviderDisplayName(provider)} runtime: ${formatRuntimeModeLabel(runtimeMode.mode)} (${runtimeMode.source})` : null,

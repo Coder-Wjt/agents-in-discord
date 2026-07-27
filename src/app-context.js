@@ -10,6 +10,7 @@ import { assertPlatformFoundation } from './platforms/foundation.js';
 import { assertPlatformAdapter } from './platforms/contracts.js';
 import { createSingleInstanceLock } from './single-instance-lock.js';
 import { formatWorkspaceBusyReport as formatWorkspaceBusyReportBase } from './workspace-busy-report.js';
+import { createPlatformHealthReader } from './platforms/health.js';
 
 export function createAppContext({
   platformFoundation,
@@ -123,6 +124,14 @@ export function createAppContext({
   const interactionResponse = resolvedPlatformFoundation.interactionResponse;
   const conversationSpawn = resolvedPlatformFoundation.conversationSpawn;
   const conversationPresentation = resolvedPlatformFoundation.conversationPresentation;
+  let platformAdapter = null;
+  const getPlatformHealth = typeof reportOptions.getPlatformHealth === 'function'
+    ? reportOptions.getPlatformHealth
+    : createPlatformHealthReader({
+      platformId: resolvedPlatformFoundation.id,
+      getLifecycle: () => platformAdapter?.lifecycle || null,
+      getMessageDelivery: () => platformAdapter?.messageDelivery || messageDelivery,
+    });
 
   const promptRuntime = createPromptRuntimeFn({
     ...promptRuntimeRest,
@@ -238,6 +247,7 @@ export function createAppContext({
       getSessionProvider: identity.getSessionProvider,
       getSessionId: identity.getSessionId,
       getRuntimeSnapshot: promptRuntime.getRuntimeSnapshot,
+      getPlatformHealth,
       resolveSecurityContext: securityPolicy.resolveSecurityContext,
       resolveModelSetting: sessionSettings.resolveModelSetting,
       resolveCodexProfileSetting: sessionSettings.resolveCodexProfileSetting,
@@ -351,7 +361,7 @@ export function createAppContext({
     buildWorkspaceBusyPayload = commandSurface.buildWorkspaceBusyPayload;
   }
 
-  const platformAdapter = assertPlatformAdapter(resolvedPlatformFoundation.createAdapter({
+  platformAdapter = assertPlatformAdapter(resolvedPlatformFoundation.createAdapter({
     capabilities: resolvedPlatformCapabilities,
     commandRegistryRenderer,
     commandViewRenderer,

@@ -178,7 +178,7 @@ function buildWorkspaceBrowserFavoritesSelectId(token, userId, version) {
 }
 
 export function parseWorkspaceBrowserComponentId(customId) {
-  const match = /^wsp:(btn|sel):([a-z_]+):([a-z0-9_-]{6,32}):([0-9]{5,32}):([0-9]{1,6}):([0-9]{1,4})$/i
+  const match = /^wsp:(btn|sel):([a-z_]+):([a-z0-9_-]{6,32}):([a-z0-9_-]{1,64}):([0-9]{1,6}):([0-9]{1,4})$/i
     .exec(String(customId || '').trim());
   if (!match) return null;
 

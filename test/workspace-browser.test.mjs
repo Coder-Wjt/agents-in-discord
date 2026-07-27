@@ -4,7 +4,7 @@ import path from 'node:path';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createWorkspaceBrowser } from '../src/workspace-browser.js';
+import { createWorkspaceBrowser, parseWorkspaceBrowserComponentId } from '../src/workspace-browser.js';
 import { createDiscordCommandViewRenderer } from '../src/platforms/discord/command-view-renderer.js';
 import { createDiscordInteractionResponse } from '../src/platforms/discord/interaction-response.js';
 
@@ -85,6 +85,20 @@ const commandViewRenderer = createDiscordCommandViewRenderer({
   StringSelectMenuBuilder: FakeStringSelectMenuBuilder,
 });
 const interactionResponse = createDiscordInteractionResponse({ commandViewRenderer });
+
+test('workspace browser component ids accept Lark open ids', () => {
+  assert.deepEqual(
+    parseWorkspaceBrowserComponentId('wsp:btn:apply:token123:ou_lark_user:1:0'),
+    {
+      kind: 'button',
+      action: 'apply',
+      token: 'token123',
+      userId: 'ou_lark_user',
+      version: 1,
+      page: 0,
+    },
+  );
+});
 
 function createTempWorkspace() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'agents-in-discord-workspace-browser-'));

@@ -101,6 +101,32 @@ test('stageNativeImageAttachments accepts normalized-only message attachments', 
   }]);
 });
 
+test('stageNativeImageAttachments accepts platform-provided resource downloaders', async () => {
+  const writes = [];
+  const result = await stageNativeImageAttachments({
+    attachments: [{
+      id: 'lark-image-1',
+      name: 'lark-image.png',
+      mimeType: 'image/png',
+      sizeBytes: null,
+      url: 'lark-resource://image/img_1',
+      download: async () => Buffer.from('lark-image-bytes'),
+    }],
+  }, {
+    fetchImpl: null,
+    mkdtempFn: async () => '/tmp/aid-codex-images-lark',
+    writeFileFn: async (filePath, bytes) => writes.push({ filePath, bytes: bytes.toString() }),
+    rmFn: async () => {},
+    tmpdir: '/tmp',
+  });
+
+  assert.deepEqual(result.inputImages, ['/tmp/aid-codex-images-lark/01-lark-image.png']);
+  assert.deepEqual(writes, [{
+    filePath: '/tmp/aid-codex-images-lark/01-lark-image.png',
+    bytes: 'lark-image-bytes',
+  }]);
+});
+
 test('stageNativeImageAttachments keeps URL fallback notes when image download fails', async () => {
   const message = {
     attachments: [

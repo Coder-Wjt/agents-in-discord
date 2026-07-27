@@ -81,7 +81,7 @@ export function buildCommandActionButtonId(command, userId) {
 }
 
 export function parseCommandActionButtonId(customId) {
-  const match = /^cmd:([a-z_]+):([0-9]{5,32})$/i.exec(String(customId || '').trim());
+  const match = /^cmd:([a-z_]+):([a-z0-9_-]{1,64})$/i.exec(String(customId || '').trim());
   if (!match) return null;
 
   const command = normalizeCommandName(match[1]);
