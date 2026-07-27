@@ -308,12 +308,12 @@ test('Lark message delivery maps semantic statuses to reactions', async () => {
   const message = { responseTarget: { chatId: 'oc_1', messageId: 'om_source' } };
 
   await delivery.setMessageStatus(message, 'processing');
-  await delivery.setMessageStatus(message, 'succeeded');
+  await delivery.setMessageStatus(message, 'cancelled');
 
   assert.deepEqual(calls, [
     { kind: 'add', messageId: 'om_source', emojiType: 'THINKING' },
     { kind: 'remove', messageId: 'om_source', emojiType: 'THINKING' },
-    { kind: 'add', messageId: 'om_source', emojiType: 'THUMBSUP' },
+    { kind: 'add', messageId: 'om_source', emojiType: 'No' },
   ]);
   await assert.rejects(() => delivery.setMessageStatus(message, 'unknown'), /Unsupported message status/);
 });

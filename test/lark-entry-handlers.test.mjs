@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
+import { normalizeLarkCliMessageEvent } from '../src/lark-cli-channel.js';
 import { createLarkEntryHandlers } from '../src/lark-entry-handlers.js';
 import { createLarkCommandRegistryRenderer } from '../src/platforms/lark/command-registry-renderer.js';
 import { createLarkInboundEventNormalizer } from '../src/platforms/lark/inbound-event.js';
@@ -50,6 +51,35 @@ test('Lark entry handler routes prompts and text commands through shared core', 
   assert.equal(commands.length, 1);
   assert.equal(commands[0].content, '!status');
   assert.match(prompts[0].key, /^platform:v1:lark:/);
+});
+
+test('Lark CLI group mentions route text commands after bot mention stripping', async () => {
+  const commands = [];
+  const normalizer = createLarkInboundEventNormalizer();
+  const handler = createLarkEntryHandlers({
+    accessPolicy: { isAllowedUser: () => true, isAllowedChannel: () => true },
+    interactionResponse: createInteractionResponse(),
+    messageDelivery: { reply: async () => {} },
+    normalizeMessageEvent: normalizer.normalizeMessage,
+    getSession: () => ({ provider: 'codex' }),
+    resolveSecurityContext: () => ({ profile: 'team', mentionOnly: true }),
+    handleCommand: async (_message, key, content) => commands.push({ key, content }),
+    enqueuePrompt: async () => assert.fail('mention command must not enter prompt routing'),
+    logger: { log() {}, error() {} },
+  });
+  const message = normalizeLarkCliMessageEvent({
+    message_id: 'om_status',
+    chat_id: 'oc_group',
+    chat_type: 'group',
+    sender_id: 'ou_user',
+    content: '<at user_id="ou_bot">Test Bot</at> !status',
+    mentions: [{ id: 'ou_bot', name: 'Test Bot' }],
+  }, { botOpenId: 'ou_bot' });
+
+  await handler.handleMessageCreate(message);
+
+  assert.equal(commands.length, 1);
+  assert.equal(commands[0].content, '!status');
 });
 
 test('Lark entry handler routes registered native slash messages and leaves unknown paths as prompts', async () => {

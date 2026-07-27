@@ -8,6 +8,7 @@ import {
   extractLarkCliResources,
   normalizeLarkCliCardActionEvent,
   normalizeLarkCliMessageEvent,
+  stripLarkCliBotMentions,
 } from '../src/lark-cli-channel.js';
 
 class FakeChild extends EventEmitter {
@@ -49,6 +50,36 @@ test('Lark CLI event normalization maps mentions, replies, and resources', () =>
     { fileKey: 'img_1', type: 'image', fileName: undefined },
     { fileKey: 'file_1', type: 'file', fileName: 'report.pdf' },
   ]);
+});
+
+test('Lark CLI normalization strips the connected bot mention like the SDK channel', () => {
+  assert.equal(stripLarkCliBotMentions(
+    '<at user_id="ou_bot">Test Bot</at> !status',
+    [{ id: 'ou_bot', name: 'Test Bot' }],
+    'ou_bot',
+  ), '!status');
+  assert.equal(stripLarkCliBotMentions(
+    '@_user_1 !cancel @Other',
+    [{ id: { open_id: 'ou_bot' }, key: '@_user_1', name: 'Test Bot' }],
+    'ou_bot',
+  ), '!cancel @Other');
+  assert.equal(stripLarkCliBotMentions(
+    '@Other hello',
+    [{ id: 'ou_other', name: 'Other' }],
+    'ou_bot',
+  ), '@Other hello');
+
+  const event = normalizeLarkCliMessageEvent({
+    message_id: 'om_command',
+    chat_id: 'oc_group',
+    chat_type: 'group',
+    sender_id: 'ou_user',
+    content: '@Test Bot !status',
+    mentions: [{ id: 'ou_bot', name: 'Test Bot' }],
+  }, { botOpenId: 'ou_bot' });
+
+  assert.equal(event.content, '!status');
+  assert.equal(event.mentionedBot, true);
 });
 
 test('Lark CLI resource extraction deduplicates rendered media references', () => {

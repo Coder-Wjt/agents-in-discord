@@ -21,6 +21,45 @@ function normalizeId(value) {
   return String(value || '').trim() || null;
 }
 
+function escapeRegex(value) {
+  return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function resolveMentionOpenId(mention) {
+  return normalizeId(
+    mention?.openId
+    || mention?.open_id
+    || mention?.id?.open_id
+    || mention?.id,
+  );
+}
+
+export function stripLarkCliBotMentions(content, mentions, botOpenId) {
+  const botId = normalizeId(botOpenId);
+  let result = String(content || '');
+  if (!botId) return result;
+
+  const botMentions = (Array.isArray(mentions) ? mentions : [])
+    .filter((mention) => resolveMentionOpenId(mention) === botId);
+  if (!botMentions.length) return result;
+
+  const escapedBotId = escapeRegex(botId);
+  result = result.replace(
+    new RegExp(`<at\\b[^>]*(?:user_id|id)=["']?${escapedBotId}["']?[^>]*>[\\s\\S]*?<\\/at>`, 'gi'),
+    ' ',
+  );
+  for (const mention of botMentions) {
+    const tokens = [
+      mention?.key,
+      mention?.name ? `@${mention.name}` : null,
+    ].map((value) => String(value || '').trim()).filter(Boolean);
+    for (const token of tokens) {
+      result = result.replace(new RegExp(`\\s?${escapeRegex(token)}\\s?`, 'g'), ' ');
+    }
+  }
+  return result.replace(/[ \t]{2,}/g, ' ').trim();
+}
+
 function parseJsonLine(value) {
   const text = String(value || '').trim();
   if (!text) return null;
@@ -105,17 +144,20 @@ export function normalizeLarkCliMessageEvent(event, { botOpenId = null } = {}) {
   }
   const mentions = Array.isArray(event?.mentions) ? event.mentions : [];
   const resources = extractLarkCliResources(event?.content);
+  const content = stripLarkCliBotMentions(event?.content, mentions, botOpenId);
   return {
     messageId,
     chatId,
     chatType: String(event?.chat_type || 'group').trim().toLowerCase() || 'group',
     senderId,
     senderName: String(event?.sender_name || senderId),
-    content: String(event?.content || ''),
+    content,
     rootId: normalizeId(event?.root_id),
     threadId: normalizeId(event?.thread_id),
     replyToMessageId: normalizeId(event?.reply_to),
-    mentionedBot: Boolean(botOpenId && mentions.some((mention) => normalizeId(mention?.id) === botOpenId)),
+    mentionedBot: Boolean(botOpenId && mentions.some((mention) => (
+      resolveMentionOpenId(mention) === normalizeId(botOpenId)
+    ))),
     resources,
     raw: {
       ...event,

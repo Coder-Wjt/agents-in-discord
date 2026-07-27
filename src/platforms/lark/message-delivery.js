@@ -10,9 +10,9 @@ import {
 const STATUS_REACTION = Object.freeze({
   processing: 'THINKING',
   succeeded: 'THUMBSUP',
-  cancelled: 'NO',
+  cancelled: 'No',
   failed: 'SOB',
-  dequeued: 'NO',
+  dequeued: 'No',
 });
 const MESSAGE_TARGET_CACHE_LIMIT = 2000;
 
