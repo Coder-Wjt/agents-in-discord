@@ -38,7 +38,7 @@
 - 真实凭证预检要求 chat/tenant/user allowlist 至少配置一项；空 allowlist 不会截断 tenant scopes、线上版本、事件、菜单和 slash command 的只读审计，但最终 readiness 必定失败，避免开放访问被误判为可部署。
 - 版本信息可读取但原生 slash command 注册表不可读取时，readiness 现在明确失败并指出 `application:app_slash_command:read`，不再把缺失的自动证据降级为人工确认。
 - `npm run sync:lark-commands` 默认只读比较 provider 对应的原生命令并核对 read/write provisioning scopes；`--dry-run` 使用当前 `lark-cli` 逐条验证整批 create/update 请求，`--apply` 只有在权限、100 条容量预检和全部请求预演通过后才写入，并且永不自动删除额外命令。
-- 当前应用的 slash-command provisioning scopes 为 2/2；42 条命令已显式执行 `--apply`，随后只读复核为 42/42 matched，missing/outdated/extra 均为 0，剩余容量 58/100。
+- 当前应用的 slash-command provisioning scopes 为 2/2；46 条命令已按 dry-run 后 additive `--apply`，随后只读复核为 46/46 matched，missing/outdated/extra 均为 0，剩余容量 54/100。
 - AppContext 通过延迟健康读取器组合 Adapter lifecycle 与 message delivery 指标；Lark SDK/CLI/Webhook 都提供统一连接快照，`status` 显示连接状态、重试、自愈重启、投递成功/失败/进行中和最近失败。
 - 本机模式可用 `LARK_TRANSPORT=cli` 复用官方 `lark-cli` 的加密持久凭证和事件总线；`auto` 在未提供 App ID/Secret 时自动选择 CLI，服务器仍可显式选择 SDK。
 - 服务器可显式选择 `LARK_TRANSPORT=webhook`，通过官方 dispatcher 验证 verification token；配置 encrypt key 后再验证签名并解密 encrypted payload。本地 listener 默认绑定 loopback，支持固定 path、body limit，以及请求头、完整请求和 keep-alive 超时边界。
@@ -136,12 +136,12 @@
 - `npm run test:progress`：837/837 通过。
 - `test:platform-foundation` 与 `test:platform-conformance`：分别 14/14、14/14 通过。
 - `test:platform-inputs`、`test:platform-security`、`test:platform-presentation`、`test:platform-topology`：分别 201/201、25/25、196/196、54/54 通过。
-- `npm run check:lark -- --verify-credentials --json`：合并前通过；tenant scopes 9/9、事件 2/2、卡片回调 1/1、机器人菜单事件键 7/7、原生 slash commands 42/42，且无 errors/warnings。合并后的共享 manifest 因 Pi/OMP session aliases 增至 46 条，远端新增 4 条命令仍需显式执行 additive sync。
+- `npm run check:lark -- --verify-credentials --json`：合并后通过；tenant scopes 9/9、事件 2/2、卡片回调 1/1、机器人菜单事件键 7/7、原生 slash commands 46/46，且无 errors/warnings。Pi/OMP session aliases 对应的 4 条命令已在整批 dry-run 通过后 additive apply。
 - 真实隔离私聊已覆盖 `!status` 收发、Settings 卡片及原位更新、select/Card 2.0 回调、机器人菜单、`/cx_status`、普通 prompt、带参数原生命令、未知 slash-path 回退和无效 Codex profile 校验路径。
 - 真实隔离群聊已覆盖 @/未 @、图片下载与原生图片理解、长任务取消/reaction、fork/side reply chain，以及 side 关闭后同一原生卡片根消息原位写入锁定标记；飞书历史列表 `230027` 时 fork 的可选最近输出重放会安静降级，不影响 fork 成功报告。
 - `git diff --check` 通过；提交范围不包含 App Secret、token、测试 chat ID 或用户 ID。
 
-阶段边界：上述结果证明当前实现具备试运行条件，但不等同于完整生产验收。成功表单保存、无权限用户的私密拒绝、私密响应跨重启、真实断网重连、`!status` 投递指标、真实公网 Webhook 和新增 4 条原生 slash commands 的远端 additive sync 仍按部署检查清单逐项验收。
+阶段边界：上述结果证明当前实现具备试运行条件，但不等同于完整生产验收。成功表单保存、无权限用户的私密拒绝、私密响应跨重启和真实公网 Webhook 仍按部署检查清单逐项验收；真实断网重连、`!status` 投递指标和新增 4 条原生 slash commands 的远端 additive sync 已完成。
 
 ### 2026-07-25 阶段 4 验证
 
@@ -605,7 +605,7 @@ Lark 从首个可运行版本起使用上述限定键，Discord 仍继续使用�
 - 支持将共享 modal view 映射为 Card 2.0 表单，并把 SDK/CLI 的表单提交规范化到共享 modal handlers。
 - 支持事件型机器人自定义菜单，将 `application.bot.menu_v6` 的 `event_key` 路由到共享 command router。
 - 支持飞书原生 app slash command：按 provider 前缀渲染共享 command spec，`/command args` 通过普通消息事件复用文本命令核心；readiness 只读核对注册表，独立同步命令默认检查、显式 `--apply` 才创建或更新且不删除额外命令。
-- 当前绑定应用的 42 条原生 slash commands 已显式 apply 并只读复核为 42/42 matched；provisioning scopes 2/2，missing/outdated/extra 均为 0，剩余容量 58/100。
+- 当前绑定应用的 46 条原生 slash commands 已按 dry-run 后显式 additive apply 并只读复核为 46/46 matched；provisioning scopes 2/2，missing/outdated/extra 均为 0，剩余容量 54/100。
 - 支持 SDK/CLI/Webhook 连接健康、生命周期重试/自愈和消息投递指标，并在共享 `status` 报告中展示。
 - 支持群聊 reply-chain 子会话，将 Codex/Claude fork 和 Codex side 的创建、rename、失败补偿、消息回放及关闭归档映射为根消息操作；私聊明确不支持创建子会话。
 - 支持可选 Webhook transport：verification token、签名验证、encrypted payload 解密、URL challenge、固定 path、POST-only、body limit 和慢连接 HTTP 超时边界。
@@ -617,9 +617,9 @@ Lark 从首个可运行版本起使用上述限定键，Discord 仍继续使用�
 
 验收进度：
 
-- 当前应用的 credential-verified readiness 已通过：tenant scopes 9/9、事件 2/2、卡片回调 1/1、机器人菜单 7/7、原生 slash commands 42/42，且已配置当前应用作用域内的单用户 allowlist。
+- 当前应用的 credential-verified readiness 已通过：tenant scopes 9/9、事件 2/2、卡片回调 1/1、机器人菜单 7/7、原生 slash commands 46/46，且已配置当前应用作用域内的单用户 allowlist。
 - 隔离私聊已验证主动消息、`!status` 收发、`!settings` 卡片及原位更新、select/Card 2.0 回调、机器人菜单事件、`/cx_status` 关联回复、普通 prompt、带参数原生命令和未知 slash-path 回退；不存在的 Codex profile 也正确进入表单校验错误路径。
-- 隔离群聊已验证 @/未 @、真实图片、长任务取消/reaction、fork/side reply chain 和 side 根卡片关闭标记。尚需完成成功表单保存、无权限用户的私密拒绝、私密响应跨重启、真实断网重连、投递指标和真实公网 Webhook smoke。CLI transport 的空闲实例与受控运行中任务退出已在 `SELF_HEAL_ENABLED=false` 下完成真实 SIGTERM 验收，包含忽略 SIGTERM 子进程的有界 SIGKILL 收敛。完成其余项目后，阶段 6 才从“验收中”更新为“已完成”。
+- 隔离群聊已验证 @/未 @、真实图片、长任务取消/reaction、fork/side reply chain 和 side 根卡片关闭标记。受控本机代理 smoke 已验证真实断网后同一主进程 reconnect/reconnected、3/3 consumers 恢复，以及 `!status` 的重试和消息投递指标。尚需完成成功表单保存、无权限用户的私密拒绝、私密响应跨重启和真实公网 Webhook smoke。CLI transport 的空闲实例与受控运行中任务退出已在 `SELF_HEAL_ENABLED=false` 下完成真实 SIGTERM 验收，包含忽略 SIGTERM 子进程的有界 SIGKILL 收敛。完成其余项目后，阶段 6 才从“验收中”更新为“已完成”。
 
 ### 阶段 7：迁移与统一运维（进行中）
 
@@ -632,7 +632,7 @@ Lark 从首个可运行版本起使用上述限定键，Discord 仍继续使用�
 
 ### P0：完成飞书生产验收并发布
 
-- 按 `docs/lark-deployment-checklist.md` 完成剩余成功表单、私密权限/跨重启、真实断网、投递指标和 Webhook smoke，并记录应用版本、region、transport、时间和非敏感结果。
+- 按 `docs/lark-deployment-checklist.md` 完成剩余成功表单、私密权限/跨重启和 Webhook smoke，并记录应用版本、region、transport、时间和非敏感结果。
 - 对 smoke 发现的问题只做飞书 Adapter、transport 或平台契约内的修复；若需要修改共享核心，先补跨 Discord/Lark 的边界与回归测试。
 - 复核 README、环境变量示例、权限/事件基线和运维清单与实际发布应用一致，随后准备版本号、发布说明和可回滚部署步骤。
 
