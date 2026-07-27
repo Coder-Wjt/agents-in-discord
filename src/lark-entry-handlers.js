@@ -20,6 +20,23 @@ function normalizeId(value) {
   return String(value || '').trim() || null;
 }
 
+function describeComponentForLog(value) {
+  const raw = String(value || '');
+  const prefix = raw
+    .split(':', 1)[0]
+    .replace(/[^a-z0-9_-]/gi, '')
+    .slice(0, 24)
+    || 'unknown';
+  return `componentPrefix=${prefix} componentLength=${raw.length}`;
+}
+
+function normalizeLogToken(value, fallback = 'unknown') {
+  return String(value || '')
+    .replace(/[^a-z0-9_-]/gi, '')
+    .slice(0, 32)
+    || fallback;
+}
+
 function resolveRawEventId(value) {
   const visited = new Set();
   let current = value;
@@ -204,14 +221,13 @@ export function createLarkEntryHandlers({
     const isOnboarding = isButton && isOnboardingButtonId(componentId);
     const isSettingsPanel = !isModal && isSettingsPanelComponentId(componentId);
     if (!isSettingsModal && !isGoalModal && !isWorkspaceBusy && !isWorkspaceBrowser && !commandButton && !isOnboarding && !isSettingsPanel) {
-      const componentPrefix = String(componentId || '').split(':', 1)[0].replace(/[^a-z0-9_-]/gi, '').slice(0, 24) || 'unknown';
-      logger.warn?.(`[interaction-unhandled] platform=lark kind=${event.kind} componentPrefix=${componentPrefix} componentLength=${String(componentId || '').length}`);
+      logger.warn?.(`[interaction-unhandled] platform=lark kind=${event.kind} ${describeComponentForLog(componentId)}`);
       return;
     }
     const rawEventId = resolveRawEventId(event.raw);
     if (rawEventId && dropDuplicate(`interaction:${rawEventId}`)) return;
 
-    logger.log(`[interaction] platform=lark kind=${event.kind} id=${componentId} user=${event.actor.displayName || event.actor.id} chat=${event.conversation.id}`);
+    logger.log(`[interaction] platform=lark kind=${event.kind} ${describeComponentForLog(componentId)}`);
     try {
       if (!isAllowedUser(event.actor.id)) {
         await sendInteractionResponse(event, createCommandMessageView({ content: '⛔ 没有权限。', visibility: 'ephemeral' }));
@@ -309,7 +325,7 @@ export function createLarkEntryHandlers({
         raw: menu?.raw || menu,
       });
 
-      logger.log(`[interaction] platform=lark kind=menu command=${commandName} user=${event.actor.displayName || actorId} chat=${event.conversation.id}`);
+      logger.log(`[interaction] platform=lark kind=menu command=${normalizeLogToken(commandName)}`);
       if (!(await isAllowedInteractionChannel(event))) {
         await responsePort.update(event, createCommandMessageView({ content: '⛔ 当前会话未开放。' }));
         return;

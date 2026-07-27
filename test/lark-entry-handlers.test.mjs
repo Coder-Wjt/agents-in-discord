@@ -157,6 +157,7 @@ test('Lark entry handler honors mention-only group policy', async () => {
 test('Lark entry handler routes card buttons and selects through shared component handlers', async () => {
   const routes = [];
   const responses = [];
+  const logs = [];
   const normalizer = createLarkInboundEventNormalizer();
   const handler = createLarkEntryHandlers({
     accessPolicy: {
@@ -178,7 +179,7 @@ test('Lark entry handler routes card buttons and selects through shared componen
       id: event.component.id,
       values: event.component.values,
     }),
-    logger: { log() {}, error() {} },
+    logger: { log: (message) => logs.push(message), error() {} },
   });
 
   await handler.handleInteractionCreate({
@@ -199,6 +200,11 @@ test('Lark entry handler routes card buttons and selects through shared componen
     { kind: 'select', id: 'settings:model', values: ['gpt-5.6'] },
   ]);
   assert.deepEqual(responses, []);
+  assert.deepEqual(logs, [
+    '[interaction] platform=lark kind=button componentPrefix=settings componentLength=13',
+    '[interaction] platform=lark kind=select componentPrefix=settings componentLength=14',
+  ]);
+  assert.doesNotMatch(logs.join('\n'), /open|model|User One|ou_1|oc_1/);
 });
 
 test('Lark entry handler routes card form submits through shared modal handlers', async () => {
@@ -282,6 +288,7 @@ test('Lark entry handler deduplicates card actions and bot-menu retries by event
   let actionCount = 0;
   let menuCount = 0;
   let menuSendCount = 0;
+  const logs = [];
   const normalizer = createLarkInboundEventNormalizer();
   const handler = createLarkEntryHandlers({
     accessPolicy: {
@@ -309,7 +316,7 @@ test('Lark entry handler deduplicates card actions and bot-menu retries by event
       if (commandName === 'status') menuCount += 1;
       return true;
     },
-    logger: { log() {}, debug() {}, error() {} },
+    logger: { log: (message) => logs.push(message), debug() {}, error() {} },
   });
 
   const action = {
@@ -340,4 +347,9 @@ test('Lark entry handler deduplicates card actions and bot-menu retries by event
   });
   assert.equal(menuCount, 2);
   assert.equal(menuSendCount, 2);
+  assert.deepEqual(logs.filter((message) => message.includes('kind=menu')), [
+    '[interaction] platform=lark kind=menu command=status',
+    '[interaction] platform=lark kind=menu command=status',
+  ]);
+  assert.doesNotMatch(logs.join('\n'), /User One|ou_1|oc_dm/);
 });
