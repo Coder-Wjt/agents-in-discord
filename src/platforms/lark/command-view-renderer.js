@@ -31,7 +31,7 @@ function renderSelect(component) {
   return {
     tag: 'select_static',
     placeholder: plainText(component.placeholder || component.id),
-    option: component.options.map((option) => ({
+    options: component.options.map((option) => ({
       text: plainText(option.label),
       value: option.value,
     })),

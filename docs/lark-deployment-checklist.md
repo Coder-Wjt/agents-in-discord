@@ -15,7 +15,17 @@
 
 当前绑定应用已按显式流程完成两次 additive `--apply`：初始 42 条命令上线后，合并 Pi/OMP session aliases 又先 dry-run 再新增 4 条。最近只读复核为 provisioning scopes 2/2、注册表 46/46 matched、missing/outdated/extra 均为 0，剩余容量 54/100。后续仅在 command spec 发生变化时重新审计并按需同步。
 
-最近一次 credential-verified readiness 已自动通过：tenant scopes 9/9、机器人版本已发布、WebSocket 接入方式正确、必需事件 2/2、卡片回调 1/1、机器人菜单 7/7、原生 slash commands 46/46，并已配置当前应用作用域内的单用户 allowlist。隔离私聊 smoke 已验证主动消息、用户 `!status` 入站和机器人回复闭环、`!settings` 原生卡片及原位更新、select 与 Card 2.0 表单回调、`settings`/`progress` 机器人菜单事件、普通 prompt、带参数原生命令、未知 slash-path prompt 回退，以及 `/cx_status` 原生命令的关联回复；表单提交不存在的 Codex profile `work` 时也按预期进入校验错误路径。隔离群聊已验证未 @ 不回复、@ bot 后关联回复、真实图片下载及原生图片理解、长任务取消与 `THINKING` 到 `No` reaction 更新、fork/side 独立 reply chain，以及 side 关闭后同一原生卡片根消息原位更新为锁定标记。双用户隔离群中的真实未授权点击也已完成：生产 consumer 收到第二用户的 card action，只向其独立 bot 私聊发送拒绝结果，且共享卡片保持不变。CLI transport 还已在 `SELF_HEAL_ENABLED=false` 下完成空闲实例和受控运行中任务的真实 SIGTERM smoke；真实 consumer-loss smoke 也确认 lifecycle 在主进程不变的情况下完成 self-heal，恢复为 3 个直接消费者、6 个 wrapper/worker 进程且没有重复。受控本机 CONNECT 代理 smoke 进一步验证了同一主进程内的真实连接中断与恢复：断网期间 3 个消费者进入 reconnecting，恢复后出现 reconnected，`!status` 的重试计数从 0 增至 1、自愈重启保持 0，并报告成功 1、失败 2、进行中 0 及脱敏最近失败。复测发现的临时代理固化问题已修复：代理大小写补齐与本地 SOCKS 推断现在默认只修改当前进程环境，不再写回 `.env`；新源码重启后配置中代理键为 0、consumer 无代理且私聊探针恢复关联回复。成功表单保存、非表单私密响应和跨重启上下文恢复现已通过真实复测；剩余生产验收仅为公网 Webhook 的真实签名/加密/重启恢复闭环。
+最近一次旧 CLI 应用的 credential-verified readiness 已自动通过：tenant scopes 9/9、机器人版本已发布、WebSocket 接入方式正确、必需事件 2/2、卡片回调 1/1、机器人菜单 7/7、原生 slash commands 46/46，并已配置当前应用作用域内的单用户 allowlist。隔离私聊 smoke 已验证主动消息、用户 `!status` 入站和机器人回复闭环、`!settings` 原生卡片及原位更新、select 与 Card 2.0 表单回调、`settings`/`progress` 机器人菜单事件、普通 prompt、带参数原生命令、未知 slash-path prompt 回退，以及 `/cx_status` 原生命令的关联回复；表单提交不存在的 Codex profile `work` 时也按预期进入校验错误路径。隔离群聊已验证未 @ 不回复、@ bot 后关联回复、真实图片下载及原生图片理解、长任务取消与 `THINKING` 到 `No` reaction 更新、fork/side 独立 reply chain，以及 side 关闭后同一原生卡片根消息原位更新为锁定标记。双用户隔离群中的真实未授权点击也已完成：生产 consumer 收到第二用户的 card action，只向其独立 bot 私聊发送拒绝结果，且共享卡片保持不变。CLI transport 还已在 `SELF_HEAL_ENABLED=false` 下完成空闲实例和受控运行中任务的真实 SIGTERM smoke；真实 consumer-loss smoke 也确认 lifecycle 在主进程不变的情况下完成 self-heal，恢复为 3 个直接消费者、6 个 wrapper/worker 进程且没有重复。受控本机 CONNECT 代理 smoke 进一步验证了同一主进程内的真实连接中断与恢复：断网期间 3 个消费者进入 reconnecting，恢复后出现 reconnected，`!status` 的重试计数从 0 增至 1、自愈重启保持 0，并报告成功 1、失败 2、进行中 0 及脱敏最近失败。复测发现的临时代理固化问题已修复：代理大小写补齐与本地 SOCKS 推断现在默认只修改当前进程环境，不再写回 `.env`；新源码重启后配置中代理键为 0、consumer 无代理且私聊探针恢复关联回复。成功表单保存、非表单私密响应和跨重启上下文恢复现已通过真实复测；独立 Webhook 应用的当前状态见下文。
+
+独立 Webhook 应用现已部署到中国大陆飞书，固定 callback 为 `https://fshook.trontoy.com/lark/events`，健康探针为 `https://fshook.trontoy.com/healthz`，由持久 Cloudflare Tunnel 回源到 loopback listener。App Secret、verification token 和 encrypt key 已配置，真实 URL challenge 已通过，应用版本已发布；普通消息、`!settings`、select 和 button 回调均已由生产 Webhook consumer 接收。credential-verified readiness 对该应用确认 SDK、本地配置、限制性单用户 allowlist 和 tenant scopes 9/9 均通过；开放平台应用管理信息无法由当前只读 API 自动获取，因此发布版本、事件/回调和菜单仍以控制台人工核对为证据。机器上同时保留旧 CLI 实例与新 Webhook 实例，`smoke:lark-webhook-live --verify` 按“必须唯一活动 runtime”的安全规则拒绝出具完整自动验收结论；在未获得停用旧实例的明确授权前保持两者不变。
+
+### 2026-07-27 Webhook Settings 卡片收口
+
+- Webhook 入口兼容加密和未加密的 Card 1.0 action envelope，并在签名或 verification token 校验通过后直接路由共享 card handler。
+- `select_static` 使用飞书支持的 `options` 字段；`!settings` 已接入共享 Settings 面板。
+- legacy callback 先返回卡片响应，再在 HTTP 响应完成后执行持久 PATCH，避免飞书 callback 超时；Settings 的分区和状态更新进一步改为发送新的顶层 Card 1.0，绕开旧卡片 stale action 与持久内容回退。
+- 所有交互回复和新 Settings 卡都内嵌来源频道/reply-chain 限定上下文；飞书为命令回复附加的 `root_id` 不再创建错误的临时 session，进程重启后仍能恢复正确会话。
+- 真实操作已验证 `!settings` 初始语言、Language 分区和 `English` 按钮保持一致且持久，不再自动回退中文。本轮 `npm run test:lark` 为 157/157、`npm run test:progress` 为 882/882，`git diff --check` 通过。
 
 ### 2026-07-27 Settings 与私密跨重启复测
 
@@ -38,7 +48,7 @@
 | 群聊与 reply chain | 已通过 | 隔离群已验证 @/未 @、fork/side、新根与链内回复及 side 关闭标记；双用户真实未授权 card action 由生产 consumer 处理，拒绝只进入第二用户的独立 bot 私聊，共享卡片哈希保持不变 | 应用范围、权限策略或卡片 schema 变化后重跑 live 验收 |
 | 附件与任务控制 | 已通过 | 真实图片已下载并作为原生图片输入被精确理解；真实长任务取消后 reaction 从 `THINKING` 更新为 `No` | 应用权限或 transport 变化后重跑 |
 | 恢复与指标 | 已通过 | 自动化覆盖重连、自愈和连接/投递快照；真实 CLI SIGTERM 已验证空闲及运行中任务退出；真实 consumer-loss 已验证主进程内 self-heal；受控代理断网验证同一主进程 reconnect/reconnected、3/3 consumers 恢复，`!status` 显示重试 1、自愈 0、投递 1/2/0 和脱敏最近失败；临时代理修复不再持久化到 `.env` | transport、代理或投递实现变化后重跑 |
-| Webhook 公网部署 | 待验收 | 本地自动化覆盖 challenge、token、签名、解密、去重、body/timeout/health 边界；临时公网 TLS smoke 已通过；`smoke:lark-webhook-live` 已能只记录真实已验证请求、已处理事件和应用/代理恢复的布尔证据，但当前生产 runtime 仍为 CLI 且缺少 Webhook secrets/callback | 配置生产 Webhook 后运行 live prepare/observe/verify，完成开放平台真实签名/加密事件、菜单、slash command、卡片 action 与重启恢复 smoke |
+| Webhook 公网部署 | 部分通过 | 独立加密 Webhook 应用已通过固定 Cloudflare HTTPS callback 上线；真实 challenge、普通消息、`!settings`、select/button、应用重启和公网健康均已验证，credential readiness 为 scopes 9/9；因旧 CLI 与新 Webhook 两个 runtime 同时活动，live verify 按唯一实例规则拒绝出具完整报告 | 获得维护授权并隔离旧 CLI runtime 后，运行 live prepare/observe/verify，补录菜单、原生 slash command、反向代理独立重启和唯一实例自动验收 |
 
 “已通过”表示已有自动化或真实平台证据；“部分通过”与“待验收”不能作为生产发布完成标记。每次真实 smoke 只记录非敏感结果，不提交 App ID、版本 ID、chat/user ID、token、签名或消息正文。
 
@@ -171,7 +181,7 @@ npm run smoke:lark-denial-live -- --verify
 
 `--prepare` 只有在群内至少存在两位真实用户时才会写入，并复用当前生产 consumer，不启动新的 `card.action.trigger` 消费者。卡片发送后会立即通过 bot API 回读飞书服务端规范化结果并保存哈希基线，避免把发送阶段的 Card schema 转换误判为点击修改。生产入口只在待验收卡匹配、操作者不同于 owner、私聊发送成功且私聊 chat 与群聊分离时，将布尔回执写入忽略提交且权限为 `0600` 的本地 `data/` 状态；不会保存被拒用户或私聊 message/chat ID。`--verify` 再读取共享消息并比较服务端基线。第二测试用户必须属于应用可用范围，否则飞书会以 `230013` 拒绝 bot 私聊。
 
-2026-07-27 的 CLI transport 隔离验收已完成这三个自动用例；同日群聊 smoke 还完成了步骤 4、11、12 和 15，其中新建 side 的根消息为无控件原生卡片，关闭后在同一消息 ID 上原位显示 `🔒 Codex side conversation closed`。不要复用旧的普通文本根来判断关闭标记修复是否生效。该测试群的 bot tenant token 调用飞书“列群历史消息”接口会返回 `230027 / user_unauthorized`，因此 fork 的可选“最近一次 agent 输出”重放会无警告跳过；新根、fork session、origin notice 和后续链内消息不受影响。后续复测已完成步骤 7 和 8：成功表单按“旧 Card 2.0 确认 + 新 Settings 卡”收口，跨进程重启后的旧 Workspace Browser 控件只更新私聊卡且不改变原会话绑定；有凭证的合成拒绝演练也验证了真实 bot 私聊发送/回读、共享更新 0 和额外消费者 0。步骤 6 的双用户真实验收第一次点击已由生产 card consumer 接收，但 bot 私聊因第二测试用户尚未进入应用可用范围而返回 `230013`；范围发布生效且该用户首次打开 bot 私聊后，复用同一张卡再次点击，live verify 已确认真实 callback、操作者不同于 owner、私聊发送成功、私聊与群聊分离及共享卡片哈希不变。发送后服务端卡片回读基线避免了飞书 schema 规范化误报。Webhook live 驱动也已准备好真实已验证请求、已处理事件及应用/代理恢复的布尔验收，但当前生产仍是 CLI transport 且缺少 Webhook secrets/callback。当前仅待步骤 16 的公网 Webhook 真实闭环。
+2026-07-27 的 CLI transport 隔离验收已完成这三个自动用例；同日群聊 smoke 还完成了步骤 4、11、12 和 15，其中新建 side 的根消息为无控件原生卡片，关闭后在同一消息 ID 上原位显示 `🔒 Codex side conversation closed`。不要复用旧的普通文本根来判断关闭标记修复是否生效。该测试群的 bot tenant token 调用飞书“列群历史消息”接口会返回 `230027 / user_unauthorized`，因此 fork 的可选“最近一次 agent 输出”重放会无警告跳过；新根、fork session、origin notice 和后续链内消息不受影响。后续复测已完成步骤 7 和 8：成功表单按“旧 Card 2.0 确认 + 新 Settings 卡”收口，跨进程重启后的旧 Workspace Browser 控件只更新私聊卡且不改变原会话绑定；有凭证的合成拒绝演练也验证了真实 bot 私聊发送/回读、共享更新 0 和额外消费者 0。步骤 6 的双用户真实验收第一次点击已由生产 card consumer 接收，但 bot 私聊因第二测试用户尚未进入应用可用范围而返回 `230013`；范围发布生效且该用户首次打开 bot 私聊后，复用同一张卡再次点击，live verify 已确认真实 callback、操作者不同于 owner、私聊发送成功、私聊与群聊分离及共享卡片哈希不变。发送后服务端卡片回读基线避免了飞书 schema 规范化误报。独立生产 Webhook 应用随后已完成固定 HTTPS callback、真实 challenge、发布、消息和 Settings card action 闭环；由于旧 CLI runtime 按要求继续运行，自动 live verify 仍待维护窗口内隔离为唯一 Webhook runtime 后执行。
 
 在隔离测试 chat 中依次验证：
 
@@ -179,7 +189,7 @@ npm run smoke:lark-denial-live -- --verify
 2. 启动后所选 transport 成功：SDK/CLI 长连接不进入重试循环，或 Webhook listener 正确监听且 challenge 已通过；发送 `!status`，平台连接显示为已连接且 transport 正确。
 3. 私聊发送普通 prompt，bot 能回复。
 4. 群聊 @ bot，bot 能回复；未 @ 消息遵守当前 mention-only 策略。
-5. 发送 `!settings`，卡片可显示，button/select 点击后能原位更新。
+5. 发送 `!settings`，卡片可显示；Settings 的 button/select 点击后发送新的顶层卡片并保持状态，其他支持原位更新的卡片流程按各自语义更新。
 6. 让不具备操作权限的用户点击共享卡片，拒绝结果应只发送到该用户与 bot 的私聊，共享卡片内容保持不变。
 7. 从群聊或 reply chain 触发一个带后续控件的非表单私密响应（可从 Onboarding 点击 workspace browse），确认私聊卡片中的 button/select 仍读写原群聊会话，而更新只发生在私聊卡片；在生成私聊卡片后重启一次进程再点击，以覆盖内存 target cache 丢失后的上下文恢复。
 8. 从 Settings 打开自定义 model、Codex profile 或 compact 阈值输入；Card 2.0 表单能在当前卡片原位显示。校验失败时保留表单供修正；保存成功时旧表单原位显示 Card 2.0 确认，并发送新的 Card 1.0 Settings 卡承载最新控件。

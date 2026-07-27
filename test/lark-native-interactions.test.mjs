@@ -9,6 +9,67 @@ import {
   createCommandTextInput,
 } from '../src/platforms/command-view.js';
 import { createLarkPlatformFoundation } from '../src/platforms/lark/foundation.js';
+import { createLarkInteractionResponse } from '../src/platforms/lark/interaction-response.js';
+
+test('Lark settings updates send a fresh card so Card 1.0 does not retain stale state', async () => {
+  const calls = [];
+  const response = createLarkInteractionResponse({
+    messageDelivery: {
+      async send(target, view) {
+        calls.push({ kind: 'send', target, view });
+      },
+      async edit(target, view) {
+        calls.push({ kind: 'edit', target, view });
+      },
+      async reply(target, view) {
+        calls.push({ kind: 'reply', target, view });
+      },
+    },
+  });
+  const target = { platformId: 'lark', chatId: 'oc_1', messageId: 'om_old_card', isCard: true };
+  const view = createCommandMessageView({ content: 'Language settings' });
+  const interactions = [
+    {
+      kind: 'select',
+      component: { id: 'stg:nav:section:picker:ou_user', values: ['language'] },
+      responseTarget: target,
+      raw: {
+        raw: {
+          open_message_id: 'om_old_card',
+          action: { tag: 'select_static' },
+        },
+      },
+    },
+    {
+      kind: 'button',
+      component: { id: 'stg:set:language:en:ou_user', values: [] },
+      responseTarget: target,
+      raw: {
+        raw: {
+          open_message_id: 'om_old_card',
+          action: { tag: 'button' },
+        },
+      },
+    },
+  ];
+
+  for (const interaction of interactions) {
+    const result = await response.update(interaction, view);
+    assert.equal(result, undefined);
+  }
+
+  assert.deepEqual(calls, interactions.map(() => ({
+      kind: 'send',
+      target: {
+        platformId: 'lark',
+        chatId: 'oc_1',
+        chatType: undefined,
+        tenantId: undefined,
+      },
+      view,
+    })),
+  );
+});
 
 test('Lark foundation sends a native card and routes its action to an in-place update', async () => {
   const calls = [];

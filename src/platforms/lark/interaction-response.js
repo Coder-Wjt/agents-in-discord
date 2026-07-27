@@ -35,6 +35,24 @@ function createPrivateTarget(interaction) {
   };
 }
 
+function isSettingsPanelInteraction(interaction) {
+  const componentId = String(interaction?.component?.id || '').trim();
+  return (interaction?.kind === 'select' || interaction?.kind === 'button')
+    && componentId.startsWith('stg:');
+}
+
+function createTopLevelSettingsTarget(interaction) {
+  const target = interaction?.responseTarget || interaction || {};
+  const contextConversation = createLarkPrivateConversationContext(interaction?.conversation);
+  return {
+    platformId: 'lark',
+    chatId: target.chatId,
+    chatType: target.chatType,
+    tenantId: target.tenantId,
+    ...(contextConversation ? { contextConversation } : {}),
+  };
+}
+
 export function createLarkInteractionResponse({ messageDelivery } = {}) {
   async function respond(interaction, view) {
     const target = interaction?.responseTarget || interaction;
@@ -56,6 +74,9 @@ export function createLarkInteractionResponse({ messageDelivery } = {}) {
 
   async function update(interaction, view) {
     const target = interaction?.responseTarget || interaction;
+    if (target?.messageId && isSettingsPanelInteraction(interaction)) {
+      return messageDelivery.send(createTopLevelSettingsTarget(interaction), view);
+    }
     if (target?.messageId) return messageDelivery.edit(target, view);
     return respond(interaction, view);
   }

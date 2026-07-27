@@ -191,6 +191,71 @@ test('Lark private interactive delivery embeds and restores the source conversat
   assert.equal(restoredModal.modal.getField('model_name'), 'gpt-5.6');
 });
 
+test('Lark interactive replies keep their source channel when Feishu reports the command as a reply root', async () => {
+  const calls = [];
+  const delivery = createLarkMessageDelivery({
+    getChannel: () => ({
+      async send(receiveId, input, options) {
+        calls.push({ receiveId, input, options });
+        return { messageId: 'om_settings_reply', chatId: 'oc_group' };
+      },
+    }),
+  });
+  const sourceId = buildConversationKey({
+    platformId: 'lark',
+    tenantId: 'tenant_1',
+    conversationId: 'oc_group',
+  });
+  await delivery.reply({
+    conversation: {
+      id: sourceId,
+      parentId: null,
+      tenantId: 'tenant_1',
+      isThread: false,
+      raw: {
+        platformId: 'lark',
+        id: sourceId,
+        chatId: 'oc_group',
+        chatType: 'group',
+        tenantId: 'tenant_1',
+        rootId: null,
+        threadId: null,
+      },
+    },
+    responseTarget: {
+      platformId: 'lark',
+      id: sourceId,
+      chatId: 'oc_group',
+      chatType: 'group',
+      tenantId: 'tenant_1',
+      messageId: 'om_command',
+      rootId: null,
+      threadId: null,
+    },
+  }, createCommandMessageView({
+    content: 'Settings',
+    rows: [createCommandActionRow([
+      createCommandButton({ id: 'stg:nav:section:picker:ou_user', label: 'Language' }),
+    ])],
+  }));
+
+  const actionValue = calls[0].input.card.elements[1].actions[0].value;
+  assert.equal(typeof actionValue[LARK_PRIVATE_CONTEXT_KEY], 'string');
+  const restored = createLarkInboundEventNormalizer().normalizeInteraction({
+    id: 'evt_settings',
+    messageId: 'om_settings_reply',
+    chatId: 'oc_group',
+    tenantId: 'tenant_1',
+    actorId: 'ou_user',
+    rootId: 'om_command',
+    action: { tag: 'button', value: actionValue },
+  });
+
+  assert.equal(restored.conversation.id, sourceId);
+  assert.equal(restored.conversation.isThread, false);
+  assert.equal(restored.conversation.parentId, null);
+});
+
 test('Lark private interaction context ignores malformed and cross-platform values', () => {
   const normalizer = createLarkInboundEventNormalizer();
   const sourceId = buildConversationKey({

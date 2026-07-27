@@ -53,6 +53,7 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 - Changed non-form `ephemeral` responses from an existing private Lark card to update that private card in place, including after a process restart when only the embedded source-conversation context remains.
 - Kept live Lark denial receipts local and instance-isolated with mode `0600`; they retain the prepared shared-card correlation needed for verification but never store the denied actor or private message/chat identifiers.
 - Kept live Lark webhook receipts local, provider/instance-isolated, and mode `0600`; they store no public URL, signature, decrypted body, or app/user/chat/message/event identifier, and synthetic edge requests are not reported as production acceptance.
+- Changed Lark Settings navigation and state changes to publish fresh top-level Card 1.0 panels, avoiding stale controls and inconsistent persistent updates on legacy card callbacks.
 
 ### Removed
 
@@ -79,6 +80,9 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 - Kept expired Workspace Browser responses visible in the original private card after restart instead of relying on an associated reply that could be hidden from the main P2P message list.
 - Removed full component, user, and conversation identifiers from handled Lark card and bot-menu diagnostics; handled and unhandled controls now share the same bounded component prefix/length logging shape, while menus log only a sanitized command token.
 - Based live denial card verification on an immediate bot-API readback after send, so Lark's server-side card-schema normalization is part of the baseline instead of being misreported as a mutation caused by the second-user click.
+- Accepted verified legacy Card 1.0 callbacks on the webhook endpoint, normalized encrypted and unencrypted action envelopes, returned callback card responses before deferred persistent updates, and corrected Lark selects to emit the supported `options` field.
+- Routed `!settings` through the shared Settings panel on Lark instead of reporting an unknown command.
+- Embedded the qualified source conversation in interactive Lark replies and fresh Settings cards, preventing Feishu reply `root_id` metadata from switching channel settings into an accidental reply-chain session across process restarts.
 
 ### Verified
 
@@ -88,6 +92,7 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 - Passed credential-verified Lark deployment readiness with tenant scopes 9/9, events 2/2, card callbacks 1/1, bot-menu event keys 7/7, a restrictive app-scoped user allowlist, and a real P2P `!status` receive/reply round trip.
 - Verified real P2P Settings card rendering and in-place updates, select and Card 2.0 form callbacks, bot-menu command events, native `/cx_status` routing with an associated reply, and the invalid-profile form validation path.
 - Verified the explicit-write P2P smoke driver end to end for an ordinary prompt, a parameterized native command, and unknown slash-path prompt fallback.
+- Deployed a dedicated encrypted Feishu webhook application behind the persistent `fshook.trontoy.com` Cloudflare endpoint, completed the real URL challenge, published the app, received real message/card callbacks, verified stable Chinese/English Settings changes after service restarts, and passed `test:lark` 157/157 plus `test:progress` 882/882.
 - Verified an isolated group mention-only flow with no response to an unmentioned message and an associated response after mentioning the bot; a generated image was downloaded and understood through native image input; a real workspace-lock wait was cancelled with `THINKING` transitioning to the valid `No` reaction.
 - Verified real Lark fork and Codex side reply chains with independent session bindings and in-chain replies. After the content-only root-card fix, a newly opened side closed by updating the same interactive root message in place to `🔒 Codex side conversation closed`, with both parent and child session metadata persisted as closed.
 - Verified a new real Lark fork after the history-access fallback: the interactive root and fork session were created, the success report remained associated with that root, and no latest-output replay authorization warning was emitted.

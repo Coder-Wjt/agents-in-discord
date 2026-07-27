@@ -37,6 +37,11 @@ test('Lark command view renderer maps buttons and selects to interactive card ac
   assert.equal(rendered.card.elements[1].actions.length, 1);
   assert.deepEqual(rendered.card.elements[1].actions[0].value, { id: 'action:run' });
   assert.equal(rendered.card.elements[2].actions[0].tag, 'select_static');
+  assert.deepEqual(rendered.card.elements[2].actions[0].options, [
+    { text: { tag: 'plain_text', content: 'GPT 5.6' }, value: 'gpt-5.6' },
+    { text: { tag: 'plain_text', content: 'Default' }, value: 'default' },
+  ]);
+  assert.equal('option' in rendered.card.elements[2].actions[0], false);
   assert.equal(rendered.card.elements[2].actions[0].initial_option, 'gpt-5.6');
   assert.deepEqual(rendered.card.elements[2].actions[0].value, { id: 'settings:model' });
 });

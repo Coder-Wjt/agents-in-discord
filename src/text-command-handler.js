@@ -230,6 +230,7 @@ export function createTextCommandHandler({
   retryLastPrompt,
   resolveSecurityContext,
   openWorkspaceBrowser,
+  openSettingsPanel,
   resolvePath,
   safeError,
 } = {}) {
@@ -300,6 +301,23 @@ export function createTextCommandHandler({
 
       case 'status': {
         await safeReply(message, await formatStatusReport(key, session, conversationTarget));
+        break;
+      }
+
+      case 'settings': {
+        if (typeof openSettingsPanel !== 'function') {
+          await safeReply(message, '❌ 当前环境未启用 settings 面板。');
+          break;
+        }
+        const provider = typeof getSessionProvider === 'function'
+          ? getSessionProvider(session)
+          : session?.provider;
+        await safeReply(message, openSettingsPanel({
+          key,
+          session,
+          userId: actorId,
+          activeSection: provider === 'codex' ? 'defaults' : 'overview',
+        }));
         break;
       }
 

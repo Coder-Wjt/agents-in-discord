@@ -169,6 +169,7 @@ export function createCommandSurface({
     formatReasoningEffortHelp: reports.formatReasoningEffortHelp,
     parseOnboardingConfigAction: onboarding.parseOnboardingConfigAction,
     openWorkspaceBrowser: workspaceBrowser.openWorkspaceBrowser,
+    openSettingsPanel: settingsPanel.openSettingsPanel,
   });
 
   return {

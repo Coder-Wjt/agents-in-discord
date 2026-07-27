@@ -116,6 +116,34 @@ test('createTextCommandHandler awaits async status reports', async () => {
   assert.deepEqual(replies, ['status-with-live-quota']);
 });
 
+test('createTextCommandHandler opens the shared settings panel from text commands', async () => {
+  const replies = [];
+  const opened = [];
+  const session = { provider: 'codex' };
+
+  const handleCommand = createTextCommandHandler({
+    getSession: () => session,
+    getSessionProvider: (currentSession) => currentSession.provider,
+    openSettingsPanel: (options) => {
+      opened.push(options);
+      return { type: 'message', content: 'settings-panel', rows: [] };
+    },
+    safeReply: async (_message, payload) => {
+      replies.push(payload);
+    },
+  });
+
+  await handleCommand(createMessage(), 'thread-1', '!settings');
+
+  assert.deepEqual(opened, [{
+    key: 'thread-1',
+    session,
+    userId: 'user-1',
+    activeSection: 'defaults',
+  }]);
+  assert.deepEqual(replies, [{ type: 'message', content: 'settings-panel', rows: [] }]);
+});
+
 test('createTextCommandHandler blocks project upgrade apply for non-admin users', async () => {
   const replies = [];
   const session = { provider: 'codex' };

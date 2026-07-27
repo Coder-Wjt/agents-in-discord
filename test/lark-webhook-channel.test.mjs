@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import crypto from 'node:crypto';
 
-import { EventDispatcher, LoggerLevel } from '@larksuiteoapi/node-sdk';
+import { EventDispatcher, generateChallenge, LoggerLevel } from '@larksuiteoapi/node-sdk';
 
 import { installLarkWebhookServer } from '../src/lark-webhook-channel.js';
 
@@ -53,6 +53,12 @@ function encryptWebhookBody(payload, encryptKey) {
 function signWebhookBody(body, encryptKey, timestamp, nonce) {
   return crypto.createHash('sha256')
     .update(`${timestamp}${nonce}${encryptKey}${JSON.stringify(body)}`)
+    .digest('hex');
+}
+
+function signLegacyCardBody(body, verificationToken, timestamp, nonce) {
+  return crypto.createHash('sha1')
+    .update(`${timestamp}${nonce}${verificationToken}${JSON.stringify(body)}`)
     .digest('hex');
 }
 
@@ -247,6 +253,7 @@ test('Lark webhook server verifies signatures, validates tokens, and decrypts of
   }, {
     host: '127.0.0.1',
     port: 0,
+    generateChallenge,
     async onVerifiedRequest(receipt) { verified.push(receipt); },
     logger: { log() {}, warn() {} },
   });
@@ -254,6 +261,35 @@ test('Lark webhook server verifies signatures, validates tokens, and decrypts of
   const port = channel.getConnectionStatus().endpoint.port;
   const timestamp = '1785070000';
   const nonce = 'nonce-1';
+  const unsignedChallengeBody = {
+    encrypt: encryptWebhookBody({
+      type: 'url_verification',
+      token: verificationToken,
+      challenge: 'encrypted-challenge',
+    }, encryptKey),
+  };
+
+  assert.deepEqual(await requestJson({
+    port,
+    path: '/lark/events',
+    body: unsignedChallengeBody,
+  }), {
+    statusCode: 200,
+    body: { challenge: 'encrypted-challenge' },
+  });
+  assert.deepEqual(verified, [{ challenge: true, encrypted: true, signed: false }]);
+
+  assert.equal((await requestJson({
+    port,
+    path: '/lark/events',
+    body: unsignedChallengeBody,
+    headers: {
+      'x-lark-request-timestamp': timestamp,
+      'x-lark-request-nonce': nonce,
+      'x-lark-signature': 'invalid-signature',
+    },
+  })).statusCode, 400);
+
   const encrypted = encryptWebhookBody({
     schema: '2.0',
     header: {
@@ -278,7 +314,10 @@ test('Lark webhook server verifies signatures, validates tokens, and decrypts of
     statusCode: 200,
     body: { ok: true, value: 42 },
   });
-  assert.deepEqual(verified, [{ challenge: false, encrypted: true, signed: true }]);
+  assert.deepEqual(verified, [
+    { challenge: true, encrypted: true, signed: false },
+    { challenge: false, encrypted: true, signed: true },
+  ]);
 
   assert.deepEqual(await requestJson({
     port,
@@ -311,7 +350,413 @@ test('Lark webhook server verifies signatures, validates tokens, and decrypts of
       'x-lark-signature': signWebhookBody(wrongTokenBody, encryptKey, timestamp, nonce),
     },
   })).statusCode, 400);
-  assert.deepEqual(verified, [{ challenge: false, encrypted: true, signed: true }]);
+  assert.deepEqual(verified, [
+    { challenge: true, encrypted: true, signed: false },
+    { challenge: false, encrypted: true, signed: true },
+  ]);
 
+  await channel.disconnect();
+});
+
+test('Lark webhook server verifies and dispatches legacy Card 1.0 actions', async () => {
+  const verificationToken = 'legacy-card-token';
+  const encryptKey = 'legacy-card-encrypt-key';
+  const dispatcher = new EventDispatcher({
+    verificationToken,
+    encryptKey,
+    loggerLevel: LoggerLevel.fatal,
+  });
+  const actions = [];
+  const verified = [];
+  const warnings = [];
+  const channel = installLarkWebhookServer({
+    dispatcher,
+    handlers: {
+      async cardAction(event) {
+        actions.push(event);
+        return {
+          ok: true,
+          messageId: event.messageId,
+          actorId: event.operator?.openId,
+          option: event.action?.option,
+        };
+      },
+    },
+    async connect() {},
+    async disconnect() {},
+  }, {
+    host: '127.0.0.1',
+    port: 0,
+    async onVerifiedRequest(receipt) { verified.push(receipt); },
+    logger: { log() {}, warn(message) { warnings.push(message); } },
+  });
+  await channel.connect();
+  const port = channel.getConnectionStatus().endpoint.port;
+  const timestamp = '1785070100';
+  const nonce = 'legacy-card-nonce';
+  const body = {
+    open_id: 'ou_legacy_user',
+    user_id: 'legacy-user-id',
+    open_message_id: 'om_settings_card',
+    tenant_key: 'tenant-legacy',
+    token: verificationToken,
+    action: {
+      tag: 'select_static',
+      option: 'language',
+      value: { id: 'settings:section' },
+    },
+  };
+
+  assert.deepEqual(await requestJson({
+    port,
+    path: '/lark/events',
+    body,
+    headers: {
+      'x-lark-request-timestamp': timestamp,
+      'x-lark-request-nonce': nonce,
+      'x-lark-signature': signLegacyCardBody(body, verificationToken, timestamp, nonce),
+    },
+  }), {
+    statusCode: 200,
+    body: {
+      ok: true,
+      messageId: 'om_settings_card',
+      actorId: 'ou_legacy_user',
+      option: 'language',
+    },
+  });
+  assert.equal(actions.length, 1);
+  assert.equal(actions[0].chatId, undefined);
+  assert.equal(actions[0].tenantId, 'tenant-legacy');
+  assert.equal(actions[0].raw.event_id, `legacy-card:${timestamp}:${nonce}`);
+  assert.deepEqual(verified, [{ challenge: false, encrypted: false, signed: true }]);
+  assert.deepEqual(warnings, []);
+
+  assert.deepEqual(await requestJson({
+    port,
+    path: '/lark/events',
+    body,
+    headers: {
+      'x-lark-request-timestamp': timestamp,
+      'x-lark-request-nonce': nonce,
+      'x-lark-signature': 'invalid-signature',
+    },
+  }), {
+    statusCode: 400,
+    body: { ok: false, error: 'invalid webhook request' },
+  });
+  assert.equal(actions.length, 1);
+  assert.deepEqual(verified, [{ challenge: false, encrypted: false, signed: true }]);
+  assert.deepEqual(warnings, ['Lark webhook request rejected (verification_failed).']);
+
+  await channel.disconnect();
+});
+
+test('Lark webhook server keeps schema Card 2.0 actions on SHA-256 event verification', async () => {
+  const verificationToken = 'schema-card-token';
+  const encryptKey = 'schema-card-encrypt-key';
+  const dispatcher = new EventDispatcher({
+    verificationToken,
+    encryptKey,
+    loggerLevel: LoggerLevel.fatal,
+  });
+  let actionCount = 0;
+  dispatcher.register({
+    'card.action.trigger': async () => {
+      actionCount += 1;
+      return { ok: true };
+    },
+  });
+  const channel = installLarkWebhookServer({
+    dispatcher,
+    async connect() {},
+    async disconnect() {},
+  }, {
+    host: '127.0.0.1',
+    port: 0,
+    logger: { log() {}, warn() {} },
+  });
+  await channel.connect();
+  const port = channel.getConnectionStatus().endpoint.port;
+  const timestamp = '1785070200';
+  const nonce = 'schema-card-nonce';
+  const body = {
+    schema: '2.0',
+    header: {
+      event_type: 'card.action.trigger',
+      token: verificationToken,
+      event_id: 'evt_schema_card',
+    },
+    event: {
+      context: {
+        open_message_id: 'om_schema_card',
+        open_chat_id: 'oc_schema_chat',
+      },
+      operator: { open_id: 'ou_schema_user' },
+      action: { tag: 'button', value: { id: 'settings:open' } },
+    },
+  };
+
+  assert.equal((await requestJson({
+    port,
+    path: '/lark/events',
+    body,
+    headers: {
+      'x-lark-request-timestamp': timestamp,
+      'x-lark-request-nonce': nonce,
+      'x-lark-signature': signLegacyCardBody(body, verificationToken, timestamp, nonce),
+    },
+  })).statusCode, 400);
+  assert.equal(actionCount, 0);
+
+  assert.deepEqual(await requestJson({
+    port,
+    path: '/lark/events',
+    body,
+    headers: {
+      'x-lark-request-timestamp': timestamp,
+      'x-lark-request-nonce': nonce,
+      'x-lark-signature': signWebhookBody(body, encryptKey, timestamp, nonce),
+    },
+  }), {
+    statusCode: 200,
+    body: { ok: true },
+  });
+  assert.equal(actionCount, 1);
+
+  await channel.disconnect();
+});
+
+test('Lark webhook server accepts encrypted legacy card actions after SHA-256 authentication', async () => {
+  const verificationToken = 'event-verification-token';
+  const encryptKey = 'encrypted-legacy-card-key';
+  const dispatcher = new EventDispatcher({
+    verificationToken,
+    encryptKey,
+    loggerLevel: LoggerLevel.fatal,
+  });
+  const actions = [];
+  const channel = installLarkWebhookServer({
+    dispatcher,
+    handlers: {
+      async cardAction(event) {
+        actions.push(event);
+        return { ok: true, option: event.action?.option };
+      },
+    },
+    async connect() {},
+    async disconnect() {},
+  }, {
+    host: '127.0.0.1',
+    port: 0,
+    logger: { log() {}, warn() {} },
+  });
+  await channel.connect();
+  const port = channel.getConnectionStatus().endpoint.port;
+  const timestamp = '1785070300';
+  const nonce = 'encrypted-legacy-card-nonce';
+  const body = {
+    encrypt: encryptWebhookBody({
+      open_id: 'ou_encrypted_card_user',
+      user_id: 'encrypted-card-user-id',
+      open_message_id: 'om_encrypted_settings_card',
+      tenant_key: 'tenant-encrypted-card',
+      token: 'card-callback-token-differs-from-event-token',
+      action: {
+        tag: 'select_static',
+        option: 'language',
+        value: { id: 'settings:section' },
+      },
+    }, encryptKey),
+  };
+
+  assert.deepEqual(await requestJson({
+    port,
+    path: '/lark/events',
+    body,
+    headers: {
+      'x-lark-request-timestamp': timestamp,
+      'x-lark-request-nonce': nonce,
+      'x-lark-signature': signWebhookBody(body, encryptKey, timestamp, nonce),
+    },
+  }), {
+    statusCode: 200,
+    body: { ok: true, option: 'language' },
+  });
+  assert.equal(actions.length, 1);
+  assert.equal(actions[0].messageId, 'om_encrypted_settings_card');
+  assert.equal(actions[0].raw.event_id, `legacy-card:${timestamp}:${nonce}`);
+
+  assert.equal((await requestJson({
+    port,
+    path: '/lark/events',
+    body,
+    headers: {
+      'x-lark-request-timestamp': timestamp,
+      'x-lark-request-nonce': nonce,
+      'x-lark-signature': 'invalid-signature',
+    },
+  })).statusCode, 400);
+  assert.equal(actions.length, 1);
+
+  await channel.disconnect();
+});
+
+test('Lark webhook server returns legacy card updates in the callback response', async () => {
+  const verificationToken = 'legacy-card-response-token';
+  const dispatcher = new EventDispatcher({
+    verificationToken,
+    loggerLevel: LoggerLevel.fatal,
+  });
+  const updatedCard = {
+    elements: [{
+      tag: 'action',
+      actions: [
+        { tag: 'button', text: { tag: 'plain_text', content: '中文' }, value: { id: 'language:zh' } },
+        { tag: 'button', text: { tag: 'plain_text', content: 'English' }, value: { id: 'language:en' } },
+      ],
+    }],
+  };
+  const apiUpdates = [];
+  let channel;
+  channel = installLarkWebhookServer({
+    dispatcher,
+    handlers: {
+      async cardAction(event) {
+        await channel.updateCard(event.messageId, updatedCard);
+      },
+    },
+    async updateCard(messageId, card) {
+      apiUpdates.push({ messageId, card });
+    },
+    async connect() {},
+    async disconnect() {},
+  }, {
+    host: '127.0.0.1',
+    port: 0,
+    logger: { log() {}, warn() {} },
+  });
+  await channel.connect();
+  const port = channel.getConnectionStatus().endpoint.port;
+  const timestamp = '1785070400';
+  const nonce = 'legacy-card-response-nonce';
+  const body = {
+    open_id: 'ou_legacy_response_user',
+    open_message_id: 'om_legacy_response_card',
+    tenant_key: 'tenant-legacy-response',
+    token: verificationToken,
+    action: {
+      tag: 'select_static',
+      option: 'language',
+      value: { id: 'settings:section' },
+    },
+  };
+
+  assert.deepEqual(await requestJson({
+    port,
+    path: '/lark/events',
+    body,
+    headers: {
+      'x-lark-request-timestamp': timestamp,
+      'x-lark-request-nonce': nonce,
+      'x-lark-signature': signLegacyCardBody(body, verificationToken, timestamp, nonce),
+    },
+  }), {
+    statusCode: 200,
+    body: updatedCard,
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(apiUpdates, [{
+    messageId: 'om_legacy_response_card',
+    card: updatedCard,
+  }]);
+
+  await channel.updateCard('om_outside_callback', { elements: [] });
+  assert.deepEqual(apiUpdates, [
+    {
+      messageId: 'om_legacy_response_card',
+      card: updatedCard,
+    },
+    {
+      messageId: 'om_outside_callback',
+      card: { elements: [] },
+    },
+  ]);
+
+  await channel.disconnect();
+});
+
+test('Lark webhook server replies to legacy card actions before the persistent card PATCH completes', async () => {
+  const verificationToken = 'legacy-card-fast-response-token';
+  const dispatcher = new EventDispatcher({
+    verificationToken,
+    loggerLevel: LoggerLevel.fatal,
+  });
+  const updatedCard = {
+    config: { update_multi: true },
+    elements: [{
+      tag: 'action',
+      actions: [
+        { tag: 'button', text: { tag: 'plain_text', content: '中文' }, value: { id: 'language:zh' } },
+        { tag: 'button', text: { tag: 'plain_text', content: 'English' }, value: { id: 'language:en' } },
+      ],
+    }],
+  };
+  let resolvePersistentUpdate;
+  let persistentUpdateStarted = false;
+  const persistentUpdate = new Promise((resolve) => {
+    resolvePersistentUpdate = resolve;
+  });
+  let channel;
+  channel = installLarkWebhookServer({
+    dispatcher,
+    handlers: {
+      async cardAction(event) {
+        await channel.updateCard(event.messageId, updatedCard);
+      },
+    },
+    async updateCard() {
+      persistentUpdateStarted = true;
+      await persistentUpdate;
+    },
+    async connect() {},
+    async disconnect() {},
+  }, {
+    host: '127.0.0.1',
+    port: 0,
+    logger: { log() {}, warn() {} },
+  });
+  await channel.connect();
+  const port = channel.getConnectionStatus().endpoint.port;
+  const timestamp = '1785070500';
+  const nonce = 'legacy-card-fast-response-nonce';
+  const body = {
+    open_id: 'ou_legacy_fast_response_user',
+    open_message_id: 'om_legacy_fast_response_card',
+    tenant_key: 'tenant-legacy-fast-response',
+    token: verificationToken,
+    action: {
+      tag: 'select_static',
+      option: 'language',
+      value: { id: 'settings:section' },
+    },
+  };
+
+  const response = await requestJson({
+    port,
+    path: '/lark/events',
+    body,
+    headers: {
+      'x-lark-request-timestamp': timestamp,
+      'x-lark-request-nonce': nonce,
+      'x-lark-signature': signLegacyCardBody(body, verificationToken, timestamp, nonce),
+    },
+  });
+
+  assert.deepEqual(response, { statusCode: 200, body: updatedCard });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(persistentUpdateStarted, true);
+  resolvePersistentUpdate();
+  await persistentUpdate;
   await channel.disconnect();
 });

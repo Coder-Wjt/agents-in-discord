@@ -3,6 +3,7 @@ import { assertCommandViewRenderer } from '../command-view.js';
 import { assertMessageDelivery, MESSAGE_STATUSES } from '../message-delivery.js';
 import { createLarkCommandViewRenderer } from './command-view-renderer.js';
 import {
+  createLarkPrivateConversationContext,
   embedLarkPrivateConversationContext,
   normalizeLarkPrivateConversationContext,
 } from './private-context.js';
@@ -63,7 +64,12 @@ export function splitForLark(text, maxChars = 4000) {
 
 function unwrapTarget(target) {
   if (!target) return null;
-  if (target.responseTarget) return target.responseTarget;
+  if (target.responseTarget) {
+    const contextConversation = createLarkPrivateConversationContext(target.conversation);
+    return contextConversation
+      ? { ...target.responseTarget, contextConversation }
+      : target.responseTarget;
+  }
   if (target.inboundEvent?.responseTarget) return target.inboundEvent.responseTarget;
   if (target.conversation?.raw) return target.conversation.raw;
   if (target.platformId === 'lark' && target.chatId) return target;
