@@ -28,6 +28,7 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 - Added private equivalents for non-form Lark `ephemeral` interaction responses: group-card results are delivered to the operator's bot DM, retain the source chat/reply-chain session context across restarts, and keep subsequent card updates private.
 - Added `npm run check:lark`, a secret-free deployment preflight that shares production configuration parsing, validates local SDK/CLI availability, and can optionally verify CLI or SDK credentials, bot identity, and the versioned tenant-scope baseline without starting consumers or sending messages.
 - Added an explicit-write `smoke:lark-dm` driver: the default is a no-message preflight, while `--apply` verifies ordinary private prompts, parameterized native commands, and unknown slash-path fallback without exposing identifiers, credentials, or message bodies.
+- Added an explicit-write `smoke:lark-denial` driver: the default is a no-message identity preflight, while `--apply` synthesizes an unauthorized shared-card action, sends and reads back one real private bot denial, and asserts zero shared-card updates and zero extra event consumers without exposing identifiers or message bodies.
 - Added an explicit-write `smoke:lark-webhook-edge` driver: the default is a local dependency preflight, while `--apply` uses a temporary public TLS tunnel and synthetic random secrets to verify encrypted challenges/events, invalid-signature rejection, and listener restart recovery without changing the Lark app configuration.
 - Added Lark task-status reactions through the shared message-delivery status port.
 - Added Lark group reply-chain child conversations for shared Codex/Claude fork and Codex side flows, including stable `root_id` session keys, root-message rename/cleanup markers, recent-output replay, failure compensation, and card-action context restoration.
@@ -94,7 +95,9 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 - Verified the private Workspace Browser restart boundary with an actual process replacement: the stale control updated the original private card to an expired state with zero remaining actions, produced zero new group messages, and preserved the workspace, runner-session, Codex-thread, and provider bindings.
 - Re-ran the completed checkpoint with `npm run test:lark` at 120/120 and `npm run test:progress` at 844/844; both suites passed with zero failures, cancellations, or skips.
 - Verified the temporary public webhook edge through real HTTPS: the health probe, encrypted URL challenge, signed/encrypted dispatcher event, generic invalid-signature rejection, and same-tunnel listener restart recovery all passed. This does not replace the remaining real Open Platform webhook acceptance.
+- Verified the credentialed synthetic private-denial rehearsal with one real bot DM read back successfully, zero shared-card updates, and zero extra event consumers. This does not replace the remaining second-user click on a real shared card.
 - Re-ran the expanded checkpoint with `npm run test:lark` at 123/123 and `npm run test:progress` at 847/847; credential-verified readiness and the no-tunnel webhook edge preflight also passed.
+- Re-ran the private-denial checkpoint with `npm run test:lark` at 127/127 and `npm run test:progress` at 851/851; credential-verified readiness remained at scopes 9/9, events 2/2, callbacks 1/1, menu keys 7/7, and native slash commands 46/46.
 
 ## [0.14.0] - 2026-07-25
 

@@ -180,11 +180,16 @@ npm run sync:lark-commands -- --dry-run
 # The webhook edge preflight opens no tunnel by default; --apply creates a temporary TLS tunnel.
 npm run smoke:lark-webhook-edge
 npm run smoke:lark-webhook-edge -- --apply
+# The private-denial command is preflight-only by default; --apply sends one real bot DM to the current CLI user.
+npm run smoke:lark-denial
+npm run smoke:lark-denial -- --apply
 # Only after reviewing the read-only drift:
 # npm run sync:lark-commands -- --apply
 ```
 
 With `--apply`, `smoke:lark-webhook-edge` uses a temporary TryCloudflare HTTPS tunnel and random synthetic token/key values to verify the public health probe, encrypted URL challenge, signed/encrypted event dispatch, generic invalid-signature rejection, and listener restart recovery. It neither reads production credentials nor changes the Lark app configuration. This proves the public TLS/origin edge only; real Open Platform menu, slash-command, card-action, and restart acceptance is still required.
+
+`smoke:lark-denial` requires ready bot and user identities on the selected `lark-cli` profile. Explicit `--apply` synthesizes an unauthorized shared-group-card action, sends and reads back one real bot DM to the current CLI user, and asserts zero shared-card updates and zero extra event consumers. Its report excludes identity, chat, message, and body data. This is a credentialed synthetic callback rehearsal, not a substitute for a second user clicking a real shared card.
 
 Then start the runtime:
 

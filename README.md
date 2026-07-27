@@ -125,10 +125,15 @@ npm run sync:lark-commands -- --dry-run
 # Webhook 公网边缘预检默认不创建隧道；显式 --apply 才创建临时 TLS 隧道
 npm run smoke:lark-webhook-edge
 npm run smoke:lark-webhook-edge -- --apply
+# 私密拒绝默认只预检；显式 --apply 才向当前 CLI 用户发送一条真实 bot 私聊
+npm run smoke:lark-denial
+npm run smoke:lark-denial -- --apply
 # 确认只读差异后才执行：npm run sync:lark-commands -- --apply
 ```
 
 `smoke:lark-webhook-edge` 的 `--apply` 使用临时 TryCloudflare HTTPS 隧道和随机合成 token/key，验证公网健康探针、加密 challenge、签名/加密事件、错误签名通用拒绝以及 listener 重启恢复；它不会读取生产凭证或修改飞书应用配置。该 smoke 只能证明公网 TLS/回源边缘，不能替代开放平台真实菜单、slash command、卡片 action 和重启验收。
+
+`smoke:lark-denial` 要求所选 `lark-cli` profile 的 bot/user identity 均 ready。显式 `--apply` 会合成一次未授权群卡片动作，向当前 CLI 用户发送并读取回验一条真实 bot 私聊，同时断言共享卡片更新为 0、额外事件消费者为 0；报告不输出身份、会话、消息标识或正文。它是有凭证的合成回调演练，不能替代第二位用户点击真实共享卡片的验收。
 
 然后启动：
 
