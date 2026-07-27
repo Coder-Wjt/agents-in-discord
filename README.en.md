@@ -177,9 +177,14 @@ npm run check:lark
 npm run check:lark -- --verify-credentials
 npm run sync:lark-commands
 npm run sync:lark-commands -- --dry-run
+# The webhook edge preflight opens no tunnel by default; --apply creates a temporary TLS tunnel.
+npm run smoke:lark-webhook-edge
+npm run smoke:lark-webhook-edge -- --apply
 # Only after reviewing the read-only drift:
 # npm run sync:lark-commands -- --apply
 ```
+
+With `--apply`, `smoke:lark-webhook-edge` uses a temporary TryCloudflare HTTPS tunnel and random synthetic token/key values to verify the public health probe, encrypted URL challenge, signed/encrypted event dispatch, generic invalid-signature rejection, and listener restart recovery. It neither reads production credentials nor changes the Lark app configuration. This proves the public TLS/origin edge only; real Open Platform menu, slash-command, card-action, and restart acceptance is still required.
 
 Then start the runtime:
 
@@ -220,7 +225,7 @@ LARK_WEBHOOK_REQUEST_TIMEOUT_MS=15000
 LARK_WEBHOOK_KEEP_ALIVE_TIMEOUT_MS=5000
 ```
 
-The reverse proxy must preserve the raw request body and `x-lark-*` headers. The listener separately bounds header receipt, complete request receipt, and idle keep-alive time so slow clients cannot occupy sockets indefinitely; the header timeout cannot exceed the complete request timeout. The deployment checklist covers public TLS, URL challenge verification, invalid signatures, body-size limits, and timeouts.
+The reverse proxy must preserve the raw request body and `x-lark-*` headers. The listener separately bounds header receipt, complete request receipt, and idle keep-alive time so slow clients cannot occupy sockets indefinitely; the header timeout cannot exceed the complete request timeout. Run `npm run smoke:lark-webhook-edge -- --apply` to verify a temporary public TLS/origin path, then use the deployment checklist for the production reverse proxy and real Open Platform event acceptance.
 
 Use `LARK_CLI_PROFILE` to select a profile when the CLI has multiple apps, and `LARK_CLI_BIN` to override the executable path. Use `LARK_DOMAIN=feishu` for mainland Feishu and `LARK_DOMAIN=lark` for international Lark; these domain settings apply to SDK WebSocket and webhook mode, while CLI mode follows the selected profile's brand.
 

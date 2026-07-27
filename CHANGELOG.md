@@ -28,6 +28,7 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 - Added private equivalents for non-form Lark `ephemeral` interaction responses: group-card results are delivered to the operator's bot DM, retain the source chat/reply-chain session context across restarts, and keep subsequent card updates private.
 - Added `npm run check:lark`, a secret-free deployment preflight that shares production configuration parsing, validates local SDK/CLI availability, and can optionally verify CLI or SDK credentials, bot identity, and the versioned tenant-scope baseline without starting consumers or sending messages.
 - Added an explicit-write `smoke:lark-dm` driver: the default is a no-message preflight, while `--apply` verifies ordinary private prompts, parameterized native commands, and unknown slash-path fallback without exposing identifiers, credentials, or message bodies.
+- Added an explicit-write `smoke:lark-webhook-edge` driver: the default is a local dependency preflight, while `--apply` uses a temporary public TLS tunnel and synthetic random secrets to verify encrypted challenges/events, invalid-signature rejection, and listener restart recovery without changing the Lark app configuration.
 - Added Lark task-status reactions through the shared message-delivery status port.
 - Added Lark group reply-chain child conversations for shared Codex/Claude fork and Codex side flows, including stable `root_id` session keys, root-message rename/cleanup markers, recent-output replay, failure compensation, and card-action context restoration.
 - Added platform-neutral health snapshots and Lark SDK/CLI/webhook connection, retry, self-heal, and message-delivery metrics to shared status reports.
@@ -70,6 +71,7 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 - Kept proxy auto-repair runtime-only by default, so temporary systemd/shell outage proxies can fill equivalent process environment keys without being persisted into `.env` and silently trapping future Lark consumers on a stopped local proxy.
 - Treated null or empty `option` fields emitted by `lark-cli` button callbacks as buttons instead of selects, restoring Onboarding and Workspace Browser actions on the CLI transport.
 - Kept expired Workspace Browser responses visible in the original private card after restart instead of relying on an associated reply that could be hidden from the main P2P message list.
+- Removed full component, user, and conversation identifiers from handled Lark card and bot-menu diagnostics; handled and unhandled controls now share the same bounded component prefix/length logging shape, while menus log only a sanitized command token.
 
 ### Verified
 
@@ -91,6 +93,8 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 - Verified Onboarding-to-Workspace-Browser private navigation on the CLI transport, including correct button classification and restoration of the source group/reply-chain context.
 - Verified the private Workspace Browser restart boundary with an actual process replacement: the stale control updated the original private card to an expired state with zero remaining actions, produced zero new group messages, and preserved the workspace, runner-session, Codex-thread, and provider bindings.
 - Re-ran the completed checkpoint with `npm run test:lark` at 120/120 and `npm run test:progress` at 844/844; both suites passed with zero failures, cancellations, or skips.
+- Verified the temporary public webhook edge through real HTTPS: the health probe, encrypted URL challenge, signed/encrypted dispatcher event, generic invalid-signature rejection, and same-tunnel listener restart recovery all passed. This does not replace the remaining real Open Platform webhook acceptance.
+- Re-ran the expanded checkpoint with `npm run test:lark` at 123/123 and `npm run test:progress` at 847/847; credential-verified readiness and the no-tunnel webhook edge preflight also passed.
 
 ## [0.14.0] - 2026-07-25
 

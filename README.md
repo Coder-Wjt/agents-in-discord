@@ -122,8 +122,13 @@ npm run check:lark
 npm run check:lark -- --verify-credentials
 npm run sync:lark-commands
 npm run sync:lark-commands -- --dry-run
+# Webhook 公网边缘预检默认不创建隧道；显式 --apply 才创建临时 TLS 隧道
+npm run smoke:lark-webhook-edge
+npm run smoke:lark-webhook-edge -- --apply
 # 确认只读差异后才执行：npm run sync:lark-commands -- --apply
 ```
+
+`smoke:lark-webhook-edge` 的 `--apply` 使用临时 TryCloudflare HTTPS 隧道和随机合成 token/key，验证公网健康探针、加密 challenge、签名/加密事件、错误签名通用拒绝以及 listener 重启恢复；它不会读取生产凭证或修改飞书应用配置。该 smoke 只能证明公网 TLS/回源边缘，不能替代开放平台真实菜单、slash command、卡片 action 和重启验收。
 
 然后启动：
 
@@ -164,7 +169,7 @@ LARK_WEBHOOK_REQUEST_TIMEOUT_MS=15000
 LARK_WEBHOOK_KEEP_ALIVE_TIMEOUT_MS=5000
 ```
 
-反向代理必须原样转发请求体和 `x-lark-*` 请求头。listener 会分别限制请求头接收、完整请求接收和 keep-alive 空闲时间，避免慢连接长期占用 socket；请求头超时不能大于完整请求超时。公网 TLS、challenge、错误签名、body limit 和超时的部署检查见上面的 checklist。
+反向代理必须原样转发请求体和 `x-lark-*` 请求头。listener 会分别限制请求头接收、完整请求接收和 keep-alive 空闲时间，避免慢连接长期占用 socket；请求头超时不能大于完整请求超时。可先运行 `npm run smoke:lark-webhook-edge -- --apply` 验证临时公网 TLS/回源，再按 checklist 完成生产反向代理和开放平台真实事件验收。
 
 CLI 有多个应用配置时可用 `LARK_CLI_PROFILE` 选择 profile；`LARK_CLI_BIN` 可覆盖命令路径。中国大陆飞书使用 `LARK_DOMAIN=feishu`，国际版 Lark 使用 `LARK_DOMAIN=lark`（这两个变量影响 SDK WebSocket 和 Webhook，CLI 模式跟随 profile 的 brand）。
 

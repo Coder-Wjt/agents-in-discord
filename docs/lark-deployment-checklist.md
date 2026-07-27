@@ -38,7 +38,7 @@
 | 群聊与 reply chain | 部分通过 | 隔离群已验证 @/未 @、fork/side、新根与链内回复；side 关闭后同一交互卡片根原位写入锁定标记 | 补不具备操作权限用户的群聊访问/私密拒绝场景 |
 | 附件与任务控制 | 已通过 | 真实图片已下载并作为原生图片输入被精确理解；真实长任务取消后 reaction 从 `THINKING` 更新为 `No` | 应用权限或 transport 变化后重跑 |
 | 恢复与指标 | 已通过 | 自动化覆盖重连、自愈和连接/投递快照；真实 CLI SIGTERM 已验证空闲及运行中任务退出；真实 consumer-loss 已验证主进程内 self-heal；受控代理断网验证同一主进程 reconnect/reconnected、3/3 consumers 恢复，`!status` 显示重试 1、自愈 0、投递 1/2/0 和脱敏最近失败；临时代理修复不再持久化到 `.env` | transport、代理或投递实现变化后重跑 |
-| Webhook 公网部署 | 待验收 | 本地自动化覆盖 challenge、token、签名、解密、去重、body/timeout/health 边界 | 在 TLS 反向代理后完成真实签名/加密事件和重启恢复 smoke |
+| Webhook 公网部署 | 待验收 | 本地自动化覆盖 challenge、token、签名、解密、去重、body/timeout/health 边界；临时公网 TLS smoke 已覆盖加密 challenge、签名/加密事件、错误签名拒绝和 listener 重启恢复 | 在生产 TLS 反向代理后完成开放平台真实签名/加密事件、菜单、slash command、卡片 action 与重启恢复 smoke |
 
 “已通过”表示已有自动化或真实平台证据；“部分通过”与“待验收”不能作为生产发布完成标记。每次真实 smoke 只记录非敏感结果，不提交 App ID、版本 ID、chat/user ID、token、签名或消息正文。
 
@@ -67,6 +67,15 @@ CLI 模式执行所选 profile 的 `auth status --verify --json`；SDK/Webhook �
 ## Webhook 部署
 
 推荐让进程保持默认的 `127.0.0.1` 监听，由 Nginx、Caddy、Ingress 或云负载均衡器提供公网 HTTPS。除非容器或网络边界已经受控，不要直接把 Node HTTP listener 暴露到公网。
+
+在修改飞书应用 callback 前，可先运行边缘 smoke：
+
+```bash
+npm run smoke:lark-webhook-edge
+npm run smoke:lark-webhook-edge -- --apply
+```
+
+默认只检查 `cloudflared` 是否可用，不创建隧道。显式 `--apply` 会创建临时 TryCloudflare HTTPS 隧道，并使用随机合成 verification token/encrypt key 验证公网健康探针、加密 challenge、签名/加密事件、错误签名通用 `400` 和 listener 重启恢复；报告不输出临时 URL、随机 secret 或事件体，结束后自动关闭隧道。它不读取生产凭证、不修改开放平台配置，也不能替代步骤 16 的真实飞书事件验收。
 
 ```env
 LARK_TRANSPORT=webhook
