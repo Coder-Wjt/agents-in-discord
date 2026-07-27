@@ -85,6 +85,7 @@ test('Lark CLI group mentions route text commands after bot mention stripping', 
 test('Lark entry handler routes registered native slash messages and leaves unknown paths as prompts', async () => {
   const prompts = [];
   const commands = [];
+  const accepted = [];
   const normalizer = createLarkInboundEventNormalizer();
   const handler = createLarkEntryHandlers({
     accessPolicy: { isAllowedUser: () => true, isAllowedChannel: () => true },
@@ -97,6 +98,7 @@ test('Lark entry handler routes registered native slash messages and leaves unkn
     enqueuePrompt: async (_message, key, content) => prompts.push({ key, content }),
     commandSpecs: [{ name: 'status', aliases: ['state'] }],
     commandRegistryRenderer: createLarkCommandRegistryRenderer({ slashPrefix: 'cx' }),
+    onAcceptedEvent: async (kind) => accepted.push(kind),
     logger: { log() {}, error() {} },
   });
 
@@ -107,6 +109,7 @@ test('Lark entry handler routes registered native slash messages and leaves unkn
 
   assert.deepEqual(commands.map((item) => item.content), ['!state verbose']);
   assert.deepEqual(prompts.map((item) => item.content), ['/workspace/project']);
+  assert.deepEqual(accepted, ['nativeSlashCommand', 'message']);
 });
 
 test('Lark entry handler drops retried message deliveries within the dedup window', async () => {
@@ -289,6 +292,7 @@ test('Lark entry handler deduplicates card actions and bot-menu retries by event
   let menuCount = 0;
   let menuSendCount = 0;
   const logs = [];
+  const accepted = [];
   const normalizer = createLarkInboundEventNormalizer();
   const handler = createLarkEntryHandlers({
     accessPolicy: {
@@ -316,6 +320,7 @@ test('Lark entry handler deduplicates card actions and bot-menu retries by event
       if (commandName === 'status') menuCount += 1;
       return true;
     },
+    onAcceptedEvent: async (kind) => accepted.push(kind),
     logger: { log: (message) => logs.push(message), debug() {}, error() {} },
   });
 
@@ -347,6 +352,7 @@ test('Lark entry handler deduplicates card actions and bot-menu retries by event
   });
   assert.equal(menuCount, 2);
   assert.equal(menuSendCount, 2);
+  assert.deepEqual(accepted, ['cardAction', 'cardAction', 'botMenu', 'botMenu']);
   assert.deepEqual(logs.filter((message) => message.includes('kind=menu')), [
     '[interaction] platform=lark kind=menu command=status',
     '[interaction] platform=lark kind=menu command=status',

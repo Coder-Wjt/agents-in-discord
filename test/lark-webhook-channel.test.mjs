@@ -69,6 +69,7 @@ test('Lark webhook server rejects callback and health path collisions', () => {
 
 test('Lark webhook server handles challenges and dispatches verified request envelopes', async () => {
   const dispatched = [];
+  const verified = [];
   let baseConnects = 0;
   let baseDisconnects = 0;
   let rawServer = null;
@@ -105,6 +106,7 @@ test('Lark webhook server handles challenges and dispatches verified request env
         ? { isChallenge: true, challenge: { challenge: data.challenge } }
         : { isChallenge: false, challenge: null };
     },
+    async onVerifiedRequest(receipt) { verified.push(receipt); },
     logger: { log() {}, warn() {} },
     now: () => 123456,
   });
@@ -157,6 +159,7 @@ test('Lark webhook server handles challenges and dispatches verified request env
     body: { challenge: 'challenge-1' },
   });
   assert.equal(dispatched.length, 0);
+  assert.deepEqual(verified, [{ challenge: true, encrypted: false, signed: false }]);
 
   assert.deepEqual(await requestJson({
     port: status.endpoint.port,
@@ -172,6 +175,10 @@ test('Lark webhook server handles challenges and dispatches verified request env
     },
   });
   assert.equal(dispatched.length, 1);
+  assert.deepEqual(verified, [
+    { challenge: true, encrypted: false, signed: false },
+    { challenge: false, encrypted: false, signed: false },
+  ]);
 
   assert.equal((await requestJson({
     port: status.endpoint.port,
@@ -191,6 +198,7 @@ test('Lark webhook server handles challenges and dispatches verified request env
 
 test('Lark webhook server returns a generic rejection for dispatcher verification failures', async () => {
   const warnings = [];
+  const verified = [];
   const channel = installLarkWebhookServer({
     dispatcher: {
       encryptKey: '',
@@ -201,6 +209,7 @@ test('Lark webhook server returns a generic rejection for dispatcher verificatio
   }, {
     host: '127.0.0.1',
     port: 0,
+    async onVerifiedRequest(receipt) { verified.push(receipt); },
     logger: { log() {}, warn(message) { warnings.push(message); } },
   });
   await channel.connect();
@@ -214,6 +223,7 @@ test('Lark webhook server returns a generic rejection for dispatcher verificatio
     body: { ok: false, error: 'invalid webhook request' },
   });
   assert.deepEqual(warnings, ['Lark webhook request rejected.']);
+  assert.deepEqual(verified, []);
   assert.doesNotMatch(warnings[0], /secret detail|verification token mismatch/i);
   await channel.disconnect();
 });
@@ -229,6 +239,7 @@ test('Lark webhook server verifies signatures, validates tokens, and decrypts of
   dispatcher.register({
     'test.event': async (event) => ({ ok: true, value: event.value }),
   });
+  const verified = [];
   const channel = installLarkWebhookServer({
     dispatcher,
     async connect() {},
@@ -236,6 +247,7 @@ test('Lark webhook server verifies signatures, validates tokens, and decrypts of
   }, {
     host: '127.0.0.1',
     port: 0,
+    async onVerifiedRequest(receipt) { verified.push(receipt); },
     logger: { log() {}, warn() {} },
   });
   await channel.connect();
@@ -266,6 +278,7 @@ test('Lark webhook server verifies signatures, validates tokens, and decrypts of
     statusCode: 200,
     body: { ok: true, value: 42 },
   });
+  assert.deepEqual(verified, [{ challenge: false, encrypted: true, signed: true }]);
 
   assert.deepEqual(await requestJson({
     port,
@@ -298,6 +311,7 @@ test('Lark webhook server verifies signatures, validates tokens, and decrypts of
       'x-lark-signature': signWebhookBody(wrongTokenBody, encryptKey, timestamp, nonce),
     },
   })).statusCode, 400);
+  assert.deepEqual(verified, [{ challenge: false, encrypted: true, signed: true }]);
 
   await channel.disconnect();
 });

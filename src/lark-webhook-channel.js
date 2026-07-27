@@ -59,14 +59,20 @@ function formatRejectionLog(error) {
 
 function validateRequestEnvelope(dispatcher, data) {
   const requestHandle = dispatcher?.requestHandle;
+  let signatureVerified = false;
   if (typeof requestHandle?.checkIsEventValidated === 'function'
     && !requestHandle.checkIsEventValidated(data)) {
     const error = new Error('Lark webhook signature verification failed.');
     error.code = 'verification_failed';
     throw error;
   }
+  if (typeof requestHandle?.checkIsEventValidated === 'function') {
+    signatureVerified = Boolean(String(data?.headers?.['x-lark-signature'] || '').trim());
+  }
   const verificationToken = String(dispatcher?.verificationToken || '').trim();
-  if (!verificationToken || typeof requestHandle?.parse !== 'function') return;
+  if (!verificationToken || typeof requestHandle?.parse !== 'function') {
+    return { signatureVerified };
+  }
   const parsed = requestHandle.parse(data);
   const receivedToken = String(parsed?.token || parsed?.verification_token || '').trim();
   if (receivedToken !== verificationToken) {
@@ -74,6 +80,7 @@ function validateRequestEnvelope(dispatcher, data) {
     error.code = 'verification_failed';
     throw error;
   }
+  return { signatureVerified };
 }
 
 function closeServer(server) {
@@ -94,6 +101,7 @@ export function installLarkWebhookServer(channel, {
   keepAliveTimeoutMs = 5000,
   createServer = http.createServer,
   generateChallenge = null,
+  onVerifiedRequest = async () => false,
   logger = console,
   now = Date.now,
 } = {}) {
@@ -127,6 +135,21 @@ export function installLarkWebhookServer(channel, {
   let lastConnectTime = null;
   let lastError = null;
   let boundPort = webhookPort;
+
+  async function recordVerifiedRequest(body, {
+    challenge = false,
+    signatureVerified = false,
+  } = {}) {
+    try {
+      await onVerifiedRequest({
+        challenge,
+        encrypted: Boolean(String(body?.encrypt || '').trim()),
+        signed: signatureVerified === true,
+      });
+    } catch {
+      logger.warn?.('[webhook-acceptance-receipt] platform=lark status=failed');
+    }
+  }
 
   async function handleRequest(request, response) {
     let pathname = '';
@@ -173,17 +196,24 @@ export function installLarkWebhookServer(channel, {
         writable: false,
         value: request.headers,
       });
-      validateRequestEnvelope(channel.dispatcher, data);
+      const verification = validateRequestEnvelope(channel.dispatcher, data);
       if (typeof generateChallenge === 'function') {
         const challenge = generateChallenge(body, {
           encryptKey: channel.dispatcher.encryptKey,
         });
         if (challenge?.isChallenge) {
+          await recordVerifiedRequest(body, {
+            challenge: true,
+            signatureVerified: verification.signatureVerified,
+          });
           sendJson(response, 200, challenge.challenge);
           return;
         }
       }
       const result = await channel.dispatcher.invoke(data, { needCheck: false });
+      await recordVerifiedRequest(body, {
+        signatureVerified: verification.signatureVerified,
+      });
       sendJson(response, 200, result ?? {});
     } catch (error) {
       const tooLarge = error?.code === 'payload_too_large';

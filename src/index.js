@@ -137,6 +137,10 @@ import {
   createLarkDenialAcceptanceRecorder,
   resolveLarkDenialAcceptanceStateFile,
 } from './lark-denial-acceptance.js';
+import {
+  createLarkWebhookAcceptanceRecorder,
+  resolveLarkWebhookAcceptanceStateFile,
+} from './lark-webhook-acceptance.js';
 import { installLarkWebhookServer } from './lark-webhook-channel.js';
 import { inspectLarkRuntimeConfig } from './lark-runtime-config.js';
 import { installLarkSdkBotMenuSupport } from './platforms/lark/bot-menu.js';
@@ -320,6 +324,15 @@ const LARK_EVENT_DEDUP_MAX_ENTRIES = LARK_RUNTIME_CONFIG?.safety.eventDedupMaxEn
 const LARK_DOMAIN = LARK_RUNTIME_CONFIG?.domain || 'feishu';
 const LARK_CLI_BIN = LARK_RUNTIME_CONFIG?.cliBin || 'lark-cli';
 const LARK_CLI_PROFILE = LARK_RUNTIME_CONFIG?.cliProfile || '';
+const larkWebhookAcceptanceRecorder = BOT_PLATFORM === 'lark' && LARK_TRANSPORT === 'webhook'
+  ? createLarkWebhookAcceptanceRecorder({
+    stateFile: resolveLarkWebhookAcceptanceStateFile({
+      dataDir: DATA_DIR,
+      instanceId: PLATFORM_INSTANCE_ID,
+      botProvider: BOT_PROVIDER,
+    }),
+  })
+  : null;
 
 const resolvePlatformScopedEnv = (platformKey, legacyKey = platformKey) => (
   resolveProviderScopedEnv(platformKey, BOT_PROVIDER, process.env)
@@ -653,6 +666,7 @@ const createLarkClientInstance = () => {
       requestTimeoutMs: LARK_WEBHOOK_REQUEST_TIMEOUT_MS,
       keepAliveTimeoutMs: LARK_WEBHOOK_KEEP_ALIVE_TIMEOUT_MS,
       generateChallenge: larkSdk.generateChallenge,
+      onVerifiedRequest: larkWebhookAcceptanceRecorder?.recordVerifiedRequest,
       logger: console,
     });
   }
@@ -1164,6 +1178,7 @@ const appContext = createAppContext({
       eventDedupWindowMs: LARK_EVENT_DEDUP_WINDOW_MS,
       eventDedupMaxEntries: LARK_EVENT_DEDUP_MAX_ENTRIES,
       onPermissionDenied: larkDenialAcceptanceRecorder?.recordPermissionDenied,
+      onAcceptedEvent: larkWebhookAcceptanceRecorder?.recordAcceptedEvent,
     }),
     safeError,
   },

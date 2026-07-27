@@ -141,6 +141,7 @@ export function createLarkEntryHandlers({
   eventDedupWindowMs = DEFAULT_EVENT_DEDUP_WINDOW_MS,
   eventDedupMaxEntries = DEFAULT_EVENT_DEDUP_MAX_ENTRIES,
   onPermissionDenied = async () => false,
+  onAcceptedEvent = async () => false,
   now = Date.now,
   safeError = (error) => error?.message || String(error),
   logger = console,
@@ -168,6 +169,14 @@ export function createLarkEntryHandlers({
     return duplicate;
   }
 
+  async function recordAcceptedEvent(kind) {
+    try {
+      await onAcceptedEvent(kind);
+    } catch {
+      logger.warn?.('[webhook-acceptance-event] platform=lark status=failed');
+    }
+  }
+
   async function handleMessageCreate(message) {
     let promptMessage = null;
     try {
@@ -183,17 +192,20 @@ export function createLarkEntryHandlers({
       logger.log(`[msg] platform=lark ch=${key} actor=${event.actor.displayName} profile=${security.profile} mentionOnly=${security.mentionOnly} contentLen=${event.rawText.length} attachments=${event.attachments.length}`);
 
       const rawContent = event.text;
-      const commandContent = rawContent.startsWith('!')
-        ? rawContent
+      const nativeSlashCommand = rawContent.startsWith('!')
+        ? null
         : resolveNativeSlashCommand(rawContent);
+      const commandContent = rawContent.startsWith('!') ? rawContent : nativeSlashCommand;
       if (commandContent) {
         await handleCommand(promptMessage, key, commandContent);
+        await recordAcceptedEvent(nativeSlashCommand ? 'nativeSlashCommand' : 'message');
         return;
       }
       if (security.mentionOnly && !event.targetsBot) return;
       const content = buildPromptFromMessage(rawContent, event.attachments);
       if (!content) return;
       await enqueuePrompt(promptMessage, key, content, security);
+      await recordAcceptedEvent('message');
     } catch (error) {
       logger.error('Lark message handler error:', error);
       try {
@@ -251,10 +263,12 @@ export function createLarkEntryHandlers({
       }
       if (isSettingsModal) {
         await handleSettingsPanelModalSubmit(event);
+        await recordAcceptedEvent('cardAction');
         return;
       }
       if (isGoalModal) {
         await handleGoalModalSubmit(event);
+        await recordAcceptedEvent('cardAction');
         return;
       }
       if (commandButton) {
@@ -275,22 +289,28 @@ export function createLarkEntryHandlers({
             content: '❌ 快捷按钮已失效，请重新执行命令。',
             visibility: 'ephemeral',
           }));
+        } else {
+          await recordAcceptedEvent('cardAction');
         }
         return;
       }
       if (isWorkspaceBusy) {
         await handleWorkspaceBusyInteraction(event);
+        await recordAcceptedEvent('cardAction');
         return;
       }
       if (isWorkspaceBrowser) {
         await handleWorkspaceBrowserInteraction(event);
+        await recordAcceptedEvent('cardAction');
         return;
       }
       if (isSettingsPanel) {
         await handleSettingsPanelInteraction(event);
+        await recordAcceptedEvent('cardAction');
         return;
       }
       await handleOnboardingButtonInteraction(event);
+      await recordAcceptedEvent('cardAction');
     } catch (error) {
       logger.error(`Lark ${event.kind} interaction handler error:`, error);
       try {
@@ -351,6 +371,8 @@ export function createLarkEntryHandlers({
         await responsePort.update(event, createCommandMessageView({
           content: `❌ 未识别的飞书菜单命令：${commandName}`,
         }));
+      } else {
+        await recordAcceptedEvent('botMenu');
       }
     } catch (error) {
       logger.error('Lark bot menu handler error:', error);
