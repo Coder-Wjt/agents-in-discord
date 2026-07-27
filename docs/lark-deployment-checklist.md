@@ -15,7 +15,7 @@
 
 当前绑定应用已获授权执行一次显式 `--apply`，随后完成只读复核：provisioning scopes 2/2、注册表 42/42 matched、missing/outdated/extra 均为 0，剩余容量 58/100。原生 slash commands 已注册，无需再次执行 apply；后续仅在 command spec 发生变化时重新审计并按需同步。
 
-最近一次 credential-verified readiness 已自动通过：tenant scopes 9/9、机器人版本已发布、WebSocket 接入方式正确、必需事件 2/2、卡片回调 1/1、机器人菜单 7/7、原生 slash commands 42/42，并已配置当前应用作用域内的单用户 allowlist。隔离私聊 smoke 已验证主动消息、用户 `!status` 入站和机器人回复闭环、`!settings` 原生卡片及原位更新、select 与 Card 2.0 表单回调、`settings`/`progress` 机器人菜单事件，以及 `/cx_status` 原生命令的关联回复；表单提交不存在的 Codex profile `work` 时也按预期进入校验错误路径。其余成功表单保存、带参数原生命令、附件、取消、重连和 reply-chain 场景仍按下方清单继续执行。
+最近一次 credential-verified readiness 已自动通过：tenant scopes 9/9、机器人版本已发布、WebSocket 接入方式正确、必需事件 2/2、卡片回调 1/1、机器人菜单 7/7、原生 slash commands 42/42，并已配置当前应用作用域内的单用户 allowlist。隔离私聊 smoke 已验证主动消息、用户 `!status` 入站和机器人回复闭环、`!settings` 原生卡片及原位更新、select 与 Card 2.0 表单回调、`settings`/`progress` 机器人菜单事件，以及 `/cx_status` 原生命令的关联回复；表单提交不存在的 Codex profile `work` 时也按预期进入校验错误路径。CLI transport 还已在 `SELF_HEAL_ENABLED=false` 下完成空闲实例和受控运行中任务的真实 SIGTERM smoke：接入生产 channel runtime 的长驻子进程故意忽略 SIGTERM，随后在父进程退出前由有界 SIGKILL 收敛；3 个事件消费者结束、实例锁释放，恢复后仍保持单消费者连接。真实 consumer-loss smoke 也已终止消息事件消费者，确认 lifecycle 记录 `channel_error` 后在主进程不变的情况下完成 self-heal，恢复为 3 个直接消费者、6 个 wrapper/worker 进程且没有重复。其余成功表单保存、带参数原生命令、附件、聊天命令取消/reaction、真实断网重连和 reply-chain 场景仍按下方清单继续执行。
 
 ### 2026-07-27 验收矩阵
 
@@ -27,7 +27,7 @@
 | 原生卡片与表单 | 部分通过 | 卡片发送/原位更新、select、Card 2.0 回调、无效 profile 校验已验证 | 补成功保存、私密响应、权限拒绝和跨重启上下文恢复 |
 | 群聊与 reply chain | 待验收 | 自动化覆盖 mention-only、访问控制、fork/side 和上下文恢复 | 在隔离群聊完成 @、未 @、权限、fork/side 和关闭标记 smoke |
 | 附件与任务控制 | 待验收 | 自动化覆盖私有资源下载、原生图片输入、取消和 reaction 映射 | 使用真实图片和长任务验证下载、取消及状态 reaction |
-| 恢复与指标 | 待验收 | 自动化覆盖重连、自愈、连接/投递快照和优雅退出 | 完成断网恢复、`!status` 指标核对和 SIGTERM smoke |
+| 恢复与指标 | 部分通过 | 自动化覆盖重连、自愈和连接/投递快照；真实 CLI SIGTERM 已验证空闲及运行中任务退出；真实 consumer-loss 已验证主进程内 self-heal、3 个直接消费者恢复且无重复进程 | 完成真实断网恢复和 `!status` 指标核对 |
 | Webhook 公网部署 | 待验收 | 本地自动化覆盖 challenge、token、签名、解密、去重、body/timeout/health 边界 | 在 TLS 反向代理后完成真实签名/加密事件和重启恢复 smoke |
 
 “已通过”表示已有自动化或真实平台证据；“部分通过”与“待验收”不能作为生产发布完成标记。每次真实 smoke 只记录非敏感结果，不提交 App ID、版本 ID、chat/user ID、token、签名或消息正文。
@@ -92,6 +92,20 @@ LARK_EVENT_DEDUP_MAX_ENTRIES=5000
 11. verification token、encrypt key、App Secret、完整签名请求和解密后的敏感消息体不得写入仓库或普通访问日志。
 
 ## 真实凭证 smoke
+
+私聊中的普通 prompt、带参数原生命令和未知 `/path` 回退可先用无写入预检确认自动化条件：
+
+```bash
+npm run smoke:lark-dm
+```
+
+默认不会发送消息。预检要求同一 `lark-cli` profile 的 bot/user identity 均 ready，且 user identity 已由用户交互授权 `im:message.send_as_user`。授权属于额外 smoke 驱动权限，不是 bot 生产运行权限；项目不会自动发起或扩大 OAuth 授权。确认隔离私聊中只有一个 bot consumer 后，显式执行：
+
+```bash
+npm run smoke:lark-dm -- --apply
+```
+
+工具依次发送普通 prompt、带 `status` 参数的 provider 前缀原生命令和未知 `/path` prompt，并按关联回复自动核验。报告仅包含 identity/scope 布尔值、用例名、轮询次数和耗时，不输出 app/chat/user/message ID、profile 名称、凭证或消息正文。
 
 在隔离测试 chat 中依次验证：
 

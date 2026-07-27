@@ -618,7 +618,7 @@ Lark 从首个可运行版本起使用上述限定键，Discord 仍继续使用�
 
 - 当前应用的 credential-verified readiness 已通过：tenant scopes 9/9、事件 2/2、卡片回调 1/1、机器人菜单 7/7、原生 slash commands 42/42，且已配置当前应用作用域内的单用户 allowlist。
 - 隔离私聊已验证主动消息、`!status` 收发、`!settings` 卡片及原位更新、select/Card 2.0 回调、机器人菜单事件和 `/cx_status` 关联回复；不存在的 Codex profile 也正确进入表单校验错误路径。
-- 尚需完成成功表单保存、群聊 mention/access、私密响应跨重启、带参数原生命令、附件、取消/reaction、断网重连、投递指标、reply-chain fork/side、真实公网 Webhook 和优雅退出 smoke。完成这些项目后，阶段 6 才从“验收中”更新为“已完成”。
+- 尚需完成成功表单保存、群聊 mention/access、私密响应跨重启、带参数原生命令、附件、聊天命令取消/reaction、断网重连、投递指标、reply-chain fork/side 和真实公网 Webhook smoke。CLI transport 的空闲实例与受控运行中任务退出已在 `SELF_HEAL_ENABLED=false` 下完成真实 SIGTERM 验收，包含忽略 SIGTERM 子进程的有界 SIGKILL 收敛。完成其余项目后，阶段 6 才从“验收中”更新为“已完成”。
 
 ### 阶段 7：迁移与统一运维（进行中）
 

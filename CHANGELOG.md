@@ -27,6 +27,7 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 - Added native Lark app slash-command support: provider-prefixed command manifests, ordinary-message routing into the shared text-command core, a secret-free registry drift audit, and an explicit additive `sync:lark-commands -- --apply` provisioning path that never deletes extra commands.
 - Added private equivalents for non-form Lark `ephemeral` interaction responses: group-card results are delivered to the operator's bot DM, retain the source chat/reply-chain session context across restarts, and keep subsequent card updates private.
 - Added `npm run check:lark`, a secret-free deployment preflight that shares production configuration parsing, validates local SDK/CLI availability, and can optionally verify CLI or SDK credentials, bot identity, and the versioned tenant-scope baseline without starting consumers or sending messages.
+- Added an explicit-write `smoke:lark-dm` driver: the default is a no-message preflight, while `--apply` verifies ordinary private prompts, parameterized native commands, and unknown slash-path fallback without exposing identifiers, credentials, or message bodies.
 - Added Lark task-status reactions through the shared message-delivery status port.
 - Added Lark group reply-chain child conversations for shared Codex/Claude fork and Codex side flows, including stable `root_id` session keys, root-message rename/cleanup markers, recent-output replay, failure compensation, and card-action context restoration.
 - Added platform-neutral health snapshots and Lark SDK/CLI/webhook connection, retry, self-heal, and message-delivery metrics to shared status reports.
@@ -50,6 +51,8 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Fixed
 
+- Let the Lark lifecycle own SIGTERM/SIGINT through completion instead of allowing the single-instance lock handler to exit first; active work cancellation, transport disconnect, completion logging, and lock cleanup now finish in order.
+- Made graceful Lark shutdown await every active provider child process through SIGTERM and bounded SIGKILL escalation, preventing stubborn tasks from surviving as orphan processes after the bot exits.
 - Decoupled Lark graceful SIGTERM/SIGINT shutdown from the self-heal toggle, cancelled pending retries during exit, and prevented disconnect failures or queued recovery timers from restarting a terminating process.
 - Made Lark native slash-command provisioning verify its read/write scopes, use explicit create/update operations, support a no-write whole-plan `--dry-run`, and reject missing permissions, capacity, or request-validation failures before any writes.
 - Kept Codex goal completion/blocker grace timers referenced until the runner settles, preventing pending executor tests or lightweight process wrappers from being cancelled while awaiting the scheduled stop.
@@ -67,6 +70,8 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 - Provisioned and read-only reverified all 42 native Lark slash commands for the bound application; the remote registry is 42/42 matched, provisioning scopes are 2/2, and 58 of 100 command slots remain available.
 - Passed credential-verified Lark deployment readiness with tenant scopes 9/9, events 2/2, card callbacks 1/1, bot-menu event keys 7/7, a restrictive app-scoped user allowlist, and a real P2P `!status` receive/reply round trip.
 - Verified real P2P Settings card rendering and in-place updates, select and Card 2.0 form callbacks, bot-menu command events, native `/cx_status` routing with an associated reply, and the invalid-profile form validation path.
+- Verified real CLI-transport SIGTERM with `SELF_HEAL_ENABLED=false` for both an idle instance and a controlled active task registered through the production channel runtime. The active child deliberately ignored SIGTERM, was removed by bounded SIGKILL escalation before parent exit, all three event consumers stopped, the instance lock was released, and the supervised single consumer reconnected after restoration.
+- Verified real CLI consumer-loss recovery by terminating the message-event consumer: the lifecycle recorded `channel_error`, self-healed without replacing the main process, restored all three direct consumers, and returned to exactly six wrapper/worker consumer processes without duplicates.
 - Re-ran the current checkpoint with `test:lark` at 105/105, Foundation and conformance at 14/14 each, platform input/security/presentation/topology at 201/25/196/54, the shared `test:progress` suite at 381/381, credential-verified readiness without errors or warnings, syntax checks, safe-reply checks, and `git diff --check`; the deployment checklist now distinguishes this evidence from the remaining group, attachment, cancellation, reconnect, reply-chain, public-webhook, and graceful-shutdown smoke.
 
 ## [0.13.0] - 2026-07-21
