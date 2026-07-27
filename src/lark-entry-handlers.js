@@ -140,6 +140,7 @@ export function createLarkEntryHandlers({
   messageInput = {},
   eventDedupWindowMs = DEFAULT_EVENT_DEDUP_WINDOW_MS,
   eventDedupMaxEntries = DEFAULT_EVENT_DEDUP_MAX_ENTRIES,
+  onPermissionDenied = async () => false,
   now = Date.now,
   safeError = (error) => error?.message || String(error),
   logger = console,
@@ -207,6 +208,16 @@ export function createLarkEntryHandlers({
     return responsePort.respond(interaction, view);
   }
 
+  async function recordPermissionDenied(event, response) {
+    const chatType = String(event?.responseTarget?.chatType || '').trim().toLowerCase();
+    const delivery = chatType === 'p2p' ? 'direct' : 'private';
+    try {
+      await onPermissionDenied(event, { delivery, response });
+    } catch {
+      logger.warn?.('[interaction-denial-receipt] platform=lark status=failed');
+    }
+  }
+
   async function handleInteractionCreate(interaction) {
     const event = normalizeInteractionEvent(interaction);
     if (event.kind !== 'button' && event.kind !== 'select' && event.kind !== 'modal') return;
@@ -230,7 +241,8 @@ export function createLarkEntryHandlers({
     logger.log(`[interaction] platform=lark kind=${event.kind} ${describeComponentForLog(componentId)}`);
     try {
       if (!isAllowedUser(event.actor.id)) {
-        await sendInteractionResponse(event, createCommandMessageView({ content: '⛔ 没有权限。', visibility: 'ephemeral' }));
+        const response = await sendInteractionResponse(event, createCommandMessageView({ content: '⛔ 没有权限。', visibility: 'ephemeral' }));
+        await recordPermissionDenied(event, response);
         return;
       }
       if (!(await isAllowedInteractionChannel(event))) {

@@ -133,6 +133,10 @@ import { DISCORD_DEFAULT_EXTRA_INFO_TEMPLATE } from './platforms/discord/extra-i
 import { createDiscordPlatformFoundation } from './platforms/discord/foundation.js';
 import { createLarkPlatformFoundation } from './platforms/lark/foundation.js';
 import { createLarkCliChannel } from './lark-cli-channel.js';
+import {
+  createLarkDenialAcceptanceRecorder,
+  resolveLarkDenialAcceptanceStateFile,
+} from './lark-denial-acceptance.js';
 import { installLarkWebhookServer } from './lark-webhook-channel.js';
 import { inspectLarkRuntimeConfig } from './lark-runtime-config.js';
 import { installLarkSdkBotMenuSupport } from './platforms/lark/bot-menu.js';
@@ -210,6 +214,15 @@ const LOCK_FILE = path.join(DATA_DIR, appendPlatformInstanceSuffix(
   appendProviderSuffix('bot.lock', BOT_PROVIDER),
   { platformId: BOT_PLATFORM, instanceId: PLATFORM_INSTANCE_ID },
 ));
+const larkDenialAcceptanceRecorder = BOT_PLATFORM === 'lark'
+  ? createLarkDenialAcceptanceRecorder({
+    stateFile: resolveLarkDenialAcceptanceStateFile({
+      dataDir: DATA_DIR,
+      instanceId: PLATFORM_INSTANCE_ID,
+      botProvider: BOT_PROVIDER,
+    }),
+  })
+  : null;
 
 if (envState.loadedFiles.length) {
   const rendered = envState.loadedFiles
@@ -1150,6 +1163,7 @@ const appContext = createAppContext({
       messageInput: { buildPromptFromMessage },
       eventDedupWindowMs: LARK_EVENT_DEDUP_WINDOW_MS,
       eventDedupMaxEntries: LARK_EVENT_DEDUP_MAX_ENTRIES,
+      onPermissionDenied: larkDenialAcceptanceRecorder?.recordPermissionDenied,
     }),
     safeError,
   },
