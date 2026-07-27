@@ -568,12 +568,14 @@ test('createSessionStore projects current provider state and preserves other pro
 
   const session = store.getSession('thread-1');
   session.model = 'claude-opus';
+  session.lastObservedModel = 'claude-opus-5';
   store.saveDb();
   const persisted = JSON.parse(fs.readFileSync(dataFile, 'utf8'));
 
   assert.equal(session.runnerSessionId, 'sess-claude');
   assert.equal(session.model, 'claude-opus');
   assert.equal(persisted.threads['thread-1'].providers.claude.model, 'claude-opus');
+  assert.equal(persisted.threads['thread-1'].providers.claude.lastObservedModel, 'claude-opus-5');
   assert.equal(persisted.threads['thread-1'].providers.codex.model, 'gpt-5.3-codex');
 });
 

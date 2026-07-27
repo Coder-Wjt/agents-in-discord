@@ -9,6 +9,7 @@ import {
   listRecentSessions,
   readClaudeSessionMetaBySessionId,
   readCodexSessionMetaBySessionId,
+  readPiFamilySessionMetaBySessionId,
   readAntigravitySessionState,
   resolveAntigravityProjectRootBySessionId,
 } from '../src/provider-sessions.js';
@@ -66,6 +67,63 @@ test('provider-sessions lists recent ZCode rollout sessions', () => {
       { id: 'sess_zcode_new', mtime: 2000 },
       { id: 'sess_zcode_old', mtime: 1000 },
     ]);
+  } finally {
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
+  }
+});
+
+test('provider-sessions lists Pi and OMP session journals from separate roots', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agents-in-discord-pi-family-'));
+  const piDir = path.join(root, '.pi', 'agent', 'sessions', '-tmp-workspace');
+  const ompDir = path.join(root, '.omp', 'agent', 'sessions', '-tmp-workspace');
+  fs.mkdirSync(piDir, { recursive: true });
+  fs.mkdirSync(ompDir, { recursive: true });
+
+  const piFile = path.join(piDir, '2026-07-25T00-00-00-000Z_019-pi.jsonl');
+  const ompFile = path.join(ompDir, '2026-07-25T00-00-00-000Z_019-omp.jsonl');
+  fs.writeFileSync(piFile, `${JSON.stringify({ type: 'session', id: '019-pi', cwd: '/tmp/workspace' })}\n`);
+  fs.writeFileSync(ompFile, `${JSON.stringify({ type: 'session', id: '019-omp', cwd: '/tmp/workspace' })}\n`);
+  fs.writeFileSync(path.join(ompDir, 'broken.jsonl'), '{not-json}\n');
+  fs.utimesSync(piFile, new Date(1000), new Date(1000));
+  fs.utimesSync(ompFile, new Date(2000), new Date(2000));
+
+  const previousHome = process.env.HOME;
+  process.env.HOME = root;
+  try {
+    assert.deepEqual(listRecentSessions({ provider: 'pi', workspaceDir: '/tmp/workspace' }), [
+      { id: '019-pi', mtime: 1000 },
+    ]);
+    assert.deepEqual(listRecentSessions({ provider: 'omp', workspaceDir: '/tmp/workspace' }), [
+      { id: '019-omp', mtime: 2000 },
+    ]);
+  } finally {
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
+  }
+});
+
+test('provider-sessions resolves Pi-family session workspace from its own journal root', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agents-in-discord-pi-family-meta-'));
+  const piDir = path.join(root, '.pi', 'agent', 'sessions', '-tmp-pi-workspace');
+  const ompDir = path.join(root, '.omp', 'agent', 'sessions', '-tmp-omp-workspace');
+  fs.mkdirSync(piDir, { recursive: true });
+  fs.mkdirSync(ompDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(piDir, 'pi-session.jsonl'),
+    `${JSON.stringify({ type: 'session', id: 'pi-session', cwd: '/tmp/pi-workspace' })}\n`,
+  );
+  fs.writeFileSync(
+    path.join(ompDir, 'omp-session.jsonl'),
+    `${JSON.stringify({ type: 'session', id: 'omp-session', cwd: '/tmp/omp-workspace' })}\n`,
+  );
+
+  const previousHome = process.env.HOME;
+  process.env.HOME = root;
+  try {
+    assert.equal(readPiFamilySessionMetaBySessionId('pi', 'pi-session')?.cwd, '/tmp/pi-workspace');
+    assert.equal(readPiFamilySessionMetaBySessionId('omp', 'omp-session')?.cwd, '/tmp/omp-workspace');
+    assert.equal(readPiFamilySessionMetaBySessionId('pi', 'omp-session'), null);
   } finally {
     if (previousHome === undefined) delete process.env.HOME;
     else process.env.HOME = previousHome;

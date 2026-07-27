@@ -131,6 +131,8 @@ export function getProviderBin(provider, options = {}) {
     claudeBin = 'claude',
     antigravityBin = 'agy',
     zcodeBin = 'zcode',
+    piBin = 'pi',
+    ompBin = 'omp',
   } = options;
   switch (normalizeProvider(provider)) {
     case 'claude':
@@ -139,6 +141,10 @@ export function getProviderBin(provider, options = {}) {
       return antigravityBin;
     case 'zcode':
       return zcodeBin;
+    case 'pi':
+      return piBin;
+    case 'omp':
+      return ompBin;
     default:
       return codexBin;
   }
@@ -189,6 +195,8 @@ export function getCliHealth(provider, options = {}) {
     claudeBin = 'claude',
     antigravityBin,
     zcodeBin,
+    piBin,
+    ompBin,
     spawnEnv = process.env,
     safeError,
   } = options;
@@ -197,6 +205,8 @@ export function getCliHealth(provider, options = {}) {
     claudeBin,
     antigravityBin,
     zcodeBin,
+    piBin,
+    ompBin,
   });
   return getCliHealthForBin({
     bin,

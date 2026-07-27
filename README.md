@@ -1,6 +1,6 @@
 # Agents in Discord
 
-在 Discord 频道/线程或飞书/Lark 聊天里运行 Codex CLI、Claude Code、Antigravity CLI 和 ZCode CLI 的 bot。
+在 Discord 频道/线程或飞书/Lark 聊天里运行 Codex CLI、Claude Code、Antigravity CLI、ZCode CLI、Pi Agent 和 Oh My Pi；另提供独立的微信 Codex 入口。
 
 它是一个独立 bridge，不是 OpenClaw 插件，也不需要 OpenClaw。
 
@@ -14,7 +14,7 @@ ZCode CLI 支持从 [v0.13.0](https://github.com/atou42/agents-in-discord/releas
 
 一个平台会话（Discord 频道/线程，或飞书/Lark chat/reply chain）对应一条 provider 会话。
 
-你可以在同一个 Discord 服务器里使用共享 bot，也可以把 Codex、Claude、Antigravity、ZCode 拆成四个独立 bot。每个 provider 有自己的 session、workspace、模型和运行配置，不会混在一起。ZCode 使用 headless JSON runner，支持附件、按 session id 恢复和 workspace 绑定。Antigravity 的模型菜单会优先显示 `~/.gemini/antigravity-cli/settings.json` 当前模型，再补充 Antigravity 官方 reasoning model 列表和本机 CLI 日志里出现过的模型；面板里选中的模型会在下一次启动前写回 Antigravity 设置。
+你可以在同一个 Discord 服务器里使用共享 bot，也可以把 Codex、Claude、Antigravity、ZCode、Pi、OMP 拆成独立 bot。每个 provider 有自己的 session、workspace、模型和运行配置，不会混在一起。Pi 和 OMP 共用兼容层，但会分别读取 `~/.pi` 和 `~/.omp`，恢复参数和权限参数也按各自 CLI 处理。ZCode 使用 headless JSON runner。Antigravity 的模型菜单会合并当前设置、官方 reasoning model 列表和本机日志里出现过的模型。
 
 Discord 继续提供完整 slash command 和交互面板；飞书/Lark 采用消息优先接入，同时支持已注册的 provider 前缀原生 slash command、文本命令、原生卡片按钮/下拉和 Card 2.0 表单。
 
@@ -36,13 +36,15 @@ Codex 的安全模式现在使用 workspace-write 沙盒，并把需要审批的
 
 需要 Node.js 18+、你要使用的 CLI，以及 Discord Bot Token 或飞书/Lark 鉴权配置。Lark 本机模式可复用 `lark-cli` 的加密持久登录，SDK/Webhook 模式使用应用凭证；接入已在 Node.js `v18.17.1` 验证，不要求先升级到 Node.js 22。
 
-本项目不管理 Codex、Claude、Antigravity、ZCode 自己的登录状态。请先在本机 CLI 里完成登录，并确认命令能直接运行。
+本项目不管理各个 CLI 自己的登录状态。请先在本机 CLI 里完成登录，并确认命令能直接运行。
 
 ```bash
 codex --version
 claude --version
 agy --version
 zcode --version
+pi --version
+omp --version
 ```
 
 如果 CLI 不在 bot 进程的 PATH 里，可以在 `.env` 里写绝对路径。
@@ -52,6 +54,8 @@ CODEX_BIN=/opt/homebrew/bin/codex
 CLAUDE_BIN=/opt/homebrew/bin/claude
 ANTIGRAVITY_BIN=/opt/homebrew/bin/agy
 ZCODE_BIN=/Users/you/.local/bin/zcode
+PI_BIN=/Users/you/.local/bin/pi
+OMP_BIN=/Users/you/.local/bin/omp
 ```
 
 ## 安装
@@ -71,7 +75,7 @@ npm start
 
 ## Discord 里怎么用
 
-默认 shared bot 的 slash 前缀是 `cx_`。独立 Claude bot 默认是 `cc_`，独立 Antigravity bot 默认是 `ag_`，独立 ZCode bot 默认是 `zc_`。
+默认 shared bot 的 slash 前缀是 `cx_`。独立 Claude、Antigravity、ZCode、Pi 和 OMP bot 默认使用 `cc_`、`ag_`、`zc_`、`pi_` 和 `omp_`。
 
 最常用的入口是这些。
 
@@ -166,7 +170,79 @@ CLI 有多个应用配置时可用 `LARK_CLI_PROFILE` 选择 profile；`LARK_CLI
 
 当前支持群聊 @、私聊、普通消息、文本命令（例如 `!status`、`!progress`、`!cancel`）、附件元数据、Codex 原生图片下载、进度消息编辑、任务状态 reaction、事件去重和 transport 自愈。消息、卡片 action 和机器人菜单按稳定事件 ID 在有界时间窗内去重，避免 Webhook/CLI 重投导致任务执行两次；窗口和内存上限可用 `LARK_EVENT_DEDUP_WINDOW_MS`、`LARK_EVENT_DEDUP_MAX_ENTRIES` 调整。Webhook 模式还提供与回调 POST 路径分离的只读 GET 健康探针。收到 `SIGTERM`/`SIGINT` 时会停止当前任务并断开 SDK、CLI 或 Webhook channel；这个优雅退出路径不依赖 `SELF_HEAL_ENABLED`，退出期间也不会触发自愈重启。`!status` 会显示当前 transport 的连接状态、重试/自愈次数以及消息投递成功、失败、进行中和最近失败。Settings、Onboarding、Workspace Browser、workspace 冲突处理及重试入口可使用飞书原生卡片按钮/下拉选择；模型、Codex profile 和 compact 阈值等共享 modal 会映射为 Card 2.0 内嵌表单，打开和提交后都原位更新当前卡片。回复链按 `root_id` 隔离会话；平台和实例状态通过 `BOT_PLATFORM`、`BOT_INSTANCE_ID` 隔离。
 
-SDK、CLI 和 Webhook 模式都支持卡片 action；CLI 会消费 `im.message.receive_v1`、`card.action.trigger` 和 `application.bot.menu_v6`，Webhook 则通过同一个验证后的 HTTP 入口分发。飞书没有复用 Discord 弹窗 modal，而是用 Card 2.0 表单提供等价输入能力。群聊卡片产生的非表单 `ephemeral` 响应会改为发送到操作者与 bot 的私聊，不会覆盖所有人可见的共享卡片；私聊卡片会携带原群聊或 reply-chain 的限定会话上下文，因此后续按钮、下拉和表单即使跨进程重启仍操作原会话，而卡片更新继续留在私聊。Card 2.0 表单保持在当前卡片原位打开和提交，以保留校验、修正和重试流程。还可在开放平台配置“事件”型机器人自定义菜单，`event_key` 使用共享命令名（例如 `status`、`settings`、`progress`、`queue`、`cancel`、`new`、`onboarding`）；点击后结果会发送到操作者与 bot 的私聊并原位更新。原生 slash command 使用与 Discord 相同的 provider 前缀规则，默认示例为 `/cx_status`、`/cc_status`、`/ag_status` 或 `/zc_status`，并通过普通消息事件复用文本命令核心及参数解析。群聊中的 `fork` 和 Codex `side` 会创建新的根消息，并把后续内容隔离到独立 reply chain；关闭 side 会在根消息上写入关闭标记。私聊不能创建这种子会话。若未注册命令或未启用相应事件/回调，相关原生入口不会生效。
+SDK、CLI 和 Webhook 模式都支持卡片 action；CLI 会消费 `im.message.receive_v1`、`card.action.trigger` 和 `application.bot.menu_v6`，Webhook 则通过同一个验证后的 HTTP 入口分发。飞书没有复用 Discord 弹窗 modal，而是用 Card 2.0 表单提供等价输入能力。群聊卡片产生的非表单 `ephemeral` 响应会改为发送到操作者与 bot 的私聊，不会覆盖所有人可见的共享卡片；私聊卡片会携带原群聊或 reply-chain 的限定会话上下文，因此后续按钮、下拉和表单即使跨进程重启仍操作原会话，而卡片更新继续留在私聊。Card 2.0 表单保持在当前卡片原位打开和提交，以保留校验、修正和重试流程。还可在开放平台配置“事件”型机器人自定义菜单，`event_key` 使用共享命令名（例如 `status`、`settings`、`progress`、`queue`、`cancel`、`new`、`onboarding`）；点击后结果会发送到操作者与 bot 的私聊并原位更新。原生 slash command 使用与 Discord 相同的 provider 前缀规则，默认示例为 `/cx_status`、`/cc_status`、`/ag_status`、`/zc_status`、`/pi_status` 或 `/omp_status`，并通过普通消息事件复用文本命令核心及参数解析。群聊中的 `fork` 和 Codex `side` 会创建新的根消息，并把后续内容隔离到独立 reply chain；关闭 side 会在根消息上写入关闭标记。私聊不能创建这种子会话。若未注册命令或未启用相应事件/回调，相关原生入口不会生效。
+
+## 微信入口（可选）
+
+微信入口是独立进程，不修改 Discord bot 的启动路径、token、频道 session 或交互组件。两边复用同一套 Codex runner，并共享 workspace 文件锁，所以同一个项目正在 Discord 中执行时，微信任务会等待而不是并发修改。
+
+先在 `.env` 配置允许的 workspace。扫码登录所使用的微信账号默认加入白名单，也可以显式增加 iLink user ID。
+
+```env
+WECHAT_WORKSPACE_ROOTS=~/GitHub,~/Lark_Project
+WECHAT_DEFAULT_WORKSPACE_DIR=~/GitHub
+WECHAT_ALLOWED_USER_IDS=
+WECHAT_CODEX_RUNTIME_MODE=long
+WECHAT_ALLOW_DANGEROUS=false
+```
+
+启动微信入口：
+
+```bash
+npm run start:wechat
+```
+
+首次启动会在终端显示二维码。微信入口当前支持文本和语音转写，不接收图片或文件。常用命令：
+
+```text
+/sessions                 浏览本机 Codex 历史会话
+/resume 2                 绑定列表中的第 2 条会话
+/resume <thread-id>       绑定指定 Codex thread
+/session                  查看当前绑定
+/new                      下一条消息新建会话
+/status                   查看 workspace、model、effort 和运行状态
+/cancel                   取消当前任务
+/dir <路径>               切换 workspace，同时解除旧 session
+```
+
+微信 session 映射和 iLink 凭据分别保存在 `data/wechat/`，不会写入 Discord 的 `data/sessions*.json`。真实 Codex 会话仍来自同一个 `~/.codex/sessions`。
+
+iLink 登录和消息协议实现参考了 MIT 项目 [sgaofen/cli-in-wechat](https://github.com/sgaofen/cli-in-wechat)，但没有采用它的 CLI adapter 或 `resume --last` 会话模型。
+
+### macOS 长期运行 Discord 和微信
+
+两个入口使用独立的 `launchd` 服务，登录后自动启动，异常退出后自动拉起：
+
+```bash
+# 1. 先配置 .env，至少填写 CODEX__DISCORD_TOKEN
+cp .env.example .env
+
+# 2. 微信首次前台扫码，看到 Agents in WeChat started 后按 Ctrl-C
+npm run start:wechat
+
+# 3. 安装并启动两个后台服务
+npm run services:install
+```
+
+常用维护命令：
+
+```bash
+npm run services:status
+npm run services:logs
+npm run services:restart
+npm run services:stop
+npm run services:start
+npm run services:uninstall
+```
+
+只操作一个入口时，直接调用管理脚本并传 `discord` 或 `wechat`：
+
+```bash
+bash scripts/manage-channel-services-macos.sh restart wechat
+bash scripts/manage-channel-services-macos.sh logs discord
+```
+
+Discord 日志写入 `logs/discord.service*.log`，微信日志写入 `logs/wechat.service*.log`。微信凭据保存在本机忽略提交的 `data/wechat/credentials.json`；如果凭据过期，先停止微信服务，再前台运行 `npm run start:wechat` 重新扫码。
 
 ## 设置面板
 
@@ -192,18 +268,20 @@ workspace 是 CLI 真正执行任务的目录。
 npm start
 ```
 
-如果想把四家 provider 拆成独立 bot，可以在同一个 `.env` 里写分组配置，然后分别启动。
+如果想把 provider 拆成独立 bot，可以在同一个 `.env` 里写分组配置，然后分别启动。
 
 ```bash
 npm run start:codex
 npm run start:claude
 npm run start:antigravity
 npm run start:zcode
+npm run start:pi
+npm run start:omp
 ```
 
-分组配置使用 `CODEX__*`、`CLAUDE__*`、`ANTIGRAVITY__*`、`ZCODE__*`。通常只需要各自的 `DISCORD_TOKEN`，再按需填默认模型、默认 workspace 和 CLI 路径。ZCode 的 safe mode 对应 `edit`，dangerous mode 对应 `yolo`。Antigravity CLI 目前没有公开的 `--model` 参数，模型选择以 Antigravity 自己的 settings.json 为准；模型菜单会合并 settings 当前值、官方 documented reasoning models 和本机日志里观测到的模型。
+分组配置还支持 `PI__*` 和 `OMP__*`。通常只需要各自的 `DISCORD_TOKEN`，再按需填默认模型、默认 workspace 和 CLI 路径。
 
-Lark 当前也可以和 `BOT_PROVIDER=codex|claude|antigravity|zcode` 组合使用；例如 `CODEX__LARK_TRANSPORT`、`CODEX__LARK_CLI_PROFILE` 或 `CODEX__LARK_APP_ID` / `CODEX__LARK_APP_SECRET` 会覆盖共享 Lark 配置，其他 provider 同理。
+Lark 当前也可以和 `BOT_PROVIDER=codex|claude|antigravity|zcode|pi|omp` 组合使用；例如 `CODEX__LARK_TRANSPORT`、`CODEX__LARK_CLI_PROFILE` 或 `CODEX__LARK_APP_ID` / `CODEX__LARK_APP_SECRET` 会覆盖共享 Lark 配置，其他 provider 同理。
 
 ## 关键配置
 
@@ -238,6 +316,16 @@ ZCODE__DISCORD_TOKEN=...
 ZCODE__DEFAULT_WORKSPACE_DIR=/Users/you/zcode-work
 ZCODE__SLASH_PREFIX=zc
 ZCODE_BIN=/Users/you/.local/bin/zcode
+
+PI__DISCORD_TOKEN=...
+PI__DEFAULT_WORKSPACE_DIR=/Users/you/pi-work
+PI__SLASH_PREFIX=pi
+PI_BIN=/Users/you/.local/bin/pi
+
+OMP__DISCORD_TOKEN=...
+OMP__DEFAULT_WORKSPACE_DIR=/Users/you/omp-work
+OMP__SLASH_PREFIX=omp
+OMP_BIN=/Users/you/.local/bin/omp
 ```
 
 访问控制建议至少设置 `ALLOWED_CHANNEL_IDS` 或 `ALLOWED_USER_IDS`。多人服务器里不要默认使用 dangerous mode。
@@ -250,6 +338,14 @@ compact 相关配置可以在 `.env` 里设默认，也可以在 Discord 里按�
 COMPACT_STRATEGY=native
 COMPACT_ON_THRESHOLD=true
 MAX_INPUT_TOKENS_BEFORE_COMPACT=272000
+```
+
+进度卡默认只展示 agent 自己的过程叙述，不展示模型的 reasoning 摘要。想开的话设 `SHOW_REASONING=true`，同时 CLI 那边也要产出 reasoning 事件——Codex 需要在 `~/.codex/config.toml` 里设 `model_reasoning_summary = "detailed"`。
+
+注意 codex-cli 0.144.0 下 `gpt-5.6` 系列（sol/terra/luna）不产出 reasoning 事件，因为它们在 `~/.codex/models_cache.json` 里缺少 CLI 要求的 `supports_reasoning_summaries` 字段；`gpt-5.4` 可以正常产出。另外 reasoning 是摘要而非完整思维链，内容通常比过程叙述短。
+
+```env
+SHOW_REASONING=false
 ```
 
 ## 代理
@@ -272,6 +368,8 @@ scripts/restart-discord-bot-service.sh codex
 scripts/restart-discord-bot-service.sh claude
 scripts/restart-discord-bot-service.sh antigravity
 scripts/restart-discord-bot-service.sh zcode
+scripts/restart-discord-bot-service.sh pi
+scripts/restart-discord-bot-service.sh omp
 scripts/restart-discord-bot-service.sh all
 ```
 
@@ -352,6 +450,8 @@ which codex
 which claude
 which agy
 which zcode
+which pi
+which omp
 ```
 
 然后把绝对路径写进 `.env`，重启 bot。

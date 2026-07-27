@@ -11,6 +11,7 @@ const FEATURES_SECTION = 'features';
 const CODEX_MODEL_CATALOG_CACHE = new Map();
 const CLAUDE_MODEL_CATALOG_CACHE = new Map();
 const ANTIGRAVITY_MODEL_CATALOG_CACHE = new Map();
+const PI_FAMILY_MODEL_CATALOG_CACHE = new Map();
 const ANTIGRAVITY_DOCUMENTED_MODELS = Object.freeze([
   'Gemini 3.5 Flash',
   'Gemini 3.1 Pro (High)',
@@ -345,10 +346,23 @@ function normalizeCodexModelCatalog(raw) {
   };
 }
 
+function extractClaudeOptionHelp(raw, optionName) {
+  const lines = String(raw || '').split(/\r?\n/);
+  const startIndex = lines.findIndex((line) => line.includes(optionName));
+  if (startIndex === -1) return '';
+
+  const optionStartPattern = /^\s{2}(?:-[a-zA-Z],\s*)?--[a-zA-Z0-9-]+\b/;
+  const block = [lines[startIndex]];
+  for (let index = startIndex + 1; index < lines.length; index += 1) {
+    if (optionStartPattern.test(lines[index])) break;
+    block.push(lines[index]);
+  }
+  return block.join(' ');
+}
+
 function extractClaudeEffortLevels(raw) {
-  const help = String(raw || '');
-  const effortLine = help.split(/\r?\n/).find((line) => /--effort\b/.test(line)) || '';
-  const parenMatch = effortLine.match(/\(([^)]+)\)/);
+  const effortHelp = extractClaudeOptionHelp(raw, '--effort');
+  const parenMatch = effortHelp.match(/\(([^)]+)\)/);
   const source = parenMatch?.[1] || '';
   const seen = new Set();
   return source
@@ -363,12 +377,10 @@ function extractClaudeEffortLevels(raw) {
 
 function normalizeClaudeModelCatalog(raw) {
   const help = String(raw || '');
-  const modelHelp = help.split(/\r?\n/)
-    .filter((line) => /--model\b|model/i.test(line))
-    .join('\n');
+  const modelHelp = extractClaudeOptionHelp(help, '--model');
   const quoted = [];
   const seen = new Set();
-  const modelPattern = /\bclaude-(?:sonnet|opus|haiku)-[a-z0-9-]+|\b(?:sonnet|opus|haiku)\b/gi;
+  const modelPattern = /\bclaude-(?:fable|sonnet|opus|haiku)-[a-z0-9-]+|\b(?:fable|sonnet|opus|haiku)\b/gi;
   let match = modelPattern.exec(modelHelp);
   while (match) {
     const value = String(match[0] || '').trim();
@@ -385,7 +397,7 @@ function normalizeClaudeModelCatalog(raw) {
     models: quoted.map((slug) => ({
       slug,
       displayName: slug,
-      description: ['sonnet', 'opus', 'haiku'].includes(slug.toLowerCase())
+      description: ['fable', 'sonnet', 'opus', 'haiku'].includes(slug.toLowerCase())
         ? 'Claude Code model alias from CLI help'
         : 'Claude Code full model name from CLI help',
       defaultReasoningLevel: null,
@@ -394,6 +406,50 @@ function normalizeClaudeModelCatalog(raw) {
     })),
     error: null,
   };
+}
+
+function readClaudeConfiguredModelCatalog({ env = process.env } = {}) {
+  const settingsPath = resolveClaudeSettingsPath({ env });
+  try {
+    const settings = readJsonObjectFile(settingsPath);
+    const values = [];
+    const seen = new Set();
+    const addModel = (value) => {
+      const model = normalizeOptionalJsonString(value);
+      if (!model) return;
+      const key = model.toLowerCase();
+      if (seen.has(key)) return;
+      seen.add(key);
+      values.push(model);
+    };
+
+    addModel(settings.model);
+    const configuredEnv = settings.env && typeof settings.env === 'object' && !Array.isArray(settings.env)
+      ? settings.env
+      : {};
+    for (const [key, value] of Object.entries(configuredEnv)) {
+      if (!/^ANTHROPIC_DEFAULT_(?:FABLE|OPUS|SONNET|HAIKU)_MODEL(?:_NAME)?$/i.test(key)) continue;
+      addModel(value);
+    }
+
+    return {
+      models: values.map((slug) => ({
+        slug,
+        displayName: slug,
+        description: 'Claude model from local settings.json',
+        defaultReasoningLevel: null,
+        supportedReasoningLevels: [],
+        visibility: 'settings',
+      })),
+      error: null,
+    };
+  } catch (err) {
+    if (err?.code === 'ENOENT') return { models: [], error: null };
+    return {
+      models: [],
+      error: String(err?.message || err || 'unknown error'),
+    };
+  }
 }
 
 function listRecentAntigravityLogFiles(logDir, limit = 12) {
@@ -505,6 +561,89 @@ export function readAntigravityModelCatalog({
   return catalog;
 }
 
+const PI_FAMILY_REASONING_LEVELS = new Set(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'auto']);
+
+function normalizePiFamilyModelCatalog(raw) {
+  let payload = null;
+  try {
+    payload = JSON.parse(String(raw || ''));
+  } catch {
+    return { models: [], error: 'Pi-family CLI returned unparseable model JSON' };
+  }
+
+  const entries = Array.isArray(payload?.models) ? payload.models : [];
+  const models = [];
+  const seen = new Set();
+  for (const entry of entries) {
+    // `selector` is the provider-qualified form the CLI accepts unambiguously
+    // (openai-codex/gpt-5.6-sol); `id` alone can collide across providers.
+    const slug = normalizeOptionalJsonString(entry?.selector) || normalizeOptionalJsonString(entry?.id);
+    if (!slug) continue;
+    const key = slug.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    const levels = Array.isArray(entry?.thinking)
+      ? entry.thinking
+        .map((level) => String(level || '').trim().toLowerCase())
+        .filter((level) => PI_FAMILY_REASONING_LEVELS.has(level))
+      : [];
+
+    models.push({
+      slug,
+      displayName: normalizeOptionalJsonString(entry?.name) || slug,
+      description: normalizeOptionalJsonString(entry?.provider)
+        ? `Pi-family model from ${entry.provider}`
+        : 'Pi-family model from CLI catalog',
+      defaultReasoningLevel: null,
+      supportedReasoningLevels: levels,
+      visibility: 'catalog',
+    });
+  }
+
+  return {
+    models,
+    error: models.length ? null : 'Pi-family CLI did not report any models',
+  };
+}
+
+export function readPiFamilyModelCatalog({
+  provider = 'omp',
+  bin = '',
+  env = process.env,
+  execFileSyncFn = execFileSync,
+  now = Date.now,
+  ttlMs = 5 * 60_000,
+} = {}) {
+  const normalizedProvider = String(provider || '').trim().toLowerCase() || 'omp';
+  const resolvedBin = String(bin || '').trim() || normalizedProvider;
+  const cacheKey = `${normalizedProvider}:${resolvedBin}`;
+  const cached = PI_FAMILY_MODEL_CATALOG_CACHE.get(cacheKey);
+  const currentTime = typeof now === 'function' ? now() : Date.now();
+  if (cached && currentTime - cached.timestamp < ttlMs) {
+    return cached.catalog;
+  }
+
+  let catalog;
+  try {
+    const raw = execFileSyncFn(resolvedBin, ['models', '--json'], {
+      encoding: 'utf-8',
+      env,
+      maxBuffer: 8 * 1024 * 1024,
+      timeout: 10_000,
+    });
+    catalog = normalizePiFamilyModelCatalog(raw);
+  } catch (err) {
+    catalog = {
+      models: [],
+      error: String(err?.message || err || 'unknown error').trim() || 'unknown error',
+    };
+  }
+
+  PI_FAMILY_MODEL_CATALOG_CACHE.set(cacheKey, { timestamp: currentTime, catalog });
+  return catalog;
+}
+
 export function readCodexModelCatalog({
   codexBin = 'codex',
   env = process.env,
@@ -549,7 +688,7 @@ export function readClaudeModelCatalog({
   ttlMs = 5 * 60_000,
 } = {}) {
   const bin = String(claudeBin || 'claude').trim() || 'claude';
-  const cacheKey = bin;
+  const cacheKey = `${bin}:${resolveClaudeSettingsPath({ env })}`;
   const cached = CLAUDE_MODEL_CATALOG_CACHE.get(cacheKey);
   const currentTime = typeof now === 'function' ? now() : Date.now();
   if (cached && currentTime - cached.timestamp < ttlMs) {
@@ -563,7 +702,21 @@ export function readClaudeModelCatalog({
       maxBuffer: 2 * 1024 * 1024,
       timeout: 5000,
     });
-    const catalog = normalizeClaudeModelCatalog(raw);
+    const helpCatalog = normalizeClaudeModelCatalog(raw);
+    const settingsCatalog = readClaudeConfiguredModelCatalog({ env });
+    const models = [];
+    const seen = new Set();
+    for (const model of [...helpCatalog.models, ...settingsCatalog.models]) {
+      const key = String(model?.slug || '').trim().toLowerCase();
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      models.push(model);
+    }
+    const catalog = {
+      models,
+      error: settingsCatalog.error
+        || (models.length ? null : 'Claude CLI help did not expose any model options'),
+    };
     CLAUDE_MODEL_CATALOG_CACHE.set(cacheKey, { timestamp: currentTime, catalog });
     return catalog;
   } catch (err) {
@@ -581,6 +734,8 @@ export function readProviderModelCatalog({
   provider = 'codex',
   codexBin = 'codex',
   claudeBin = 'claude',
+  piBin = 'pi',
+  ompBin = 'omp',
   env = process.env,
   execFileSyncFn = execFileSync,
   now = Date.now,
@@ -595,6 +750,16 @@ export function readProviderModelCatalog({
   }
   if (normalized === 'agy' || normalized === 'antigravity') {
     return readAntigravityModelCatalog({ env, now, ttlMs });
+  }
+  if (normalized === 'pi' || normalized === 'omp') {
+    return readPiFamilyModelCatalog({
+      provider: normalized,
+      bin: normalized === 'pi' ? piBin : ompBin,
+      env,
+      execFileSyncFn,
+      now,
+      ttlMs,
+    });
   }
   return { models: [], error: null };
 }

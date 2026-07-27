@@ -3,6 +3,7 @@ import {
   appendCompletedStep as appendCompletedStepBase,
   cloneProgressPlan as cloneProgressPlanBase,
   extractRawProgressTextFromEvent as extractRawProgressTextFromEventBase,
+  extractProcessNarrationFromEvent as extractProcessNarrationFromEventBase,
   extractCompletedStepFromEvent as extractCompletedStepFromEventBase,
   extractPlanStateFromEvent as extractPlanStateFromEventBase,
   renderRecentActivitiesLines as renderRecentActivitiesLinesBase,
@@ -150,6 +151,26 @@ export function createRuntimePresentation({
       }
       return language === 'en' ? 'auto-edit (--mode edit)' : '自动编辑（--mode edit）';
     }
+    if (provider === 'pi') {
+      if (session.mode === 'dangerous') {
+        return language === 'en'
+          ? 'all tools; trust project resources (--approve)'
+          : '全部工具；信任项目资源（--approve）';
+      }
+      return language === 'en'
+        ? 'read-only tools (--no-approve --tools read)'
+        : '只读工具（--no-approve --tools read）';
+    }
+    if (provider === 'omp') {
+      if (session.mode === 'dangerous') {
+        return language === 'en'
+          ? 'full access (--approval-mode yolo)'
+          : '完全权限（--approval-mode yolo）';
+      }
+      return language === 'en'
+        ? 'write approval mode (--approval-mode write)'
+        : '写入审批模式（--approval-mode write）';
+    }
     if (session.mode === 'dangerous') {
       return formatCodexPermissionsLabel(session.mode, language);
     }
@@ -165,7 +186,19 @@ export function createRuntimePresentation({
   }
 
   function extractRawProgressTextFromEvent(ev, runtimeOptions = {}) {
-    return extractRawProgressTextFromEventBase(ev, runtimeOptions);
+    return extractRawProgressTextFromEventBase(ev, {
+      showReasoning,
+      previewChars: progressTextPreviewChars,
+      ...runtimeOptions,
+    });
+  }
+
+  function extractProcessNarrationFromEvent(ev, runtimeOptions = {}) {
+    return extractProcessNarrationFromEventBase(ev, {
+      showReasoning,
+      previewChars: progressTextPreviewChars,
+      ...runtimeOptions,
+    });
   }
 
   function cloneProgressPlan(planState) {
@@ -238,6 +271,7 @@ export function createRuntimePresentation({
     cloneProgressPlan,
     extractCompletedStepFromEvent,
     extractPlanStateFromEvent,
+    extractProcessNarrationFromEvent,
     extractRawProgressTextFromEvent,
     formatCompletedStepsSummary,
     formatPermissionsLabel,

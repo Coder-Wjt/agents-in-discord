@@ -11,9 +11,69 @@ export function listRecentSessions({ provider = 'codex', workspaceDir = '', limi
       return listRecentAntigravitySessions(limit, workspaceDir);
     case 'zcode':
       return listRecentZCodeSessions(limit);
+    case 'pi':
+      return listRecentPiFamilySessions('pi', limit, workspaceDir);
+    case 'omp':
+      return listRecentPiFamilySessions('omp', limit, workspaceDir);
     default:
       return listRecentCodexSessions(limit);
   }
+}
+
+function listRecentPiFamilySessions(provider, limit = 10, workspaceDir = '') {
+  const sessionsRoot = getPiFamilySessionsDir(provider);
+  if (!sessionsRoot || !fs.existsSync(sessionsRoot)) return [];
+
+  const targetWorkspace = String(workspaceDir || '').trim();
+  const latestById = new Map();
+  for (const file of findFilesRecursive(sessionsRoot, (name) => name.endsWith('.jsonl'))) {
+    const header = readFirstJsonLine(file);
+    if (header?.type !== 'session') continue;
+    const id = String(header.id || '').trim();
+    const cwd = String(header.cwd || '').trim();
+    if (!id || (targetWorkspace && (!cwd || path.resolve(cwd) !== path.resolve(targetWorkspace)))) continue;
+    try {
+      const stat = fs.statSync(file);
+      if (!stat.isFile()) continue;
+      const previous = latestById.get(id);
+      if (!previous || stat.mtimeMs > previous.mtime) {
+        latestById.set(id, { id, mtime: stat.mtimeMs });
+      }
+    } catch {
+    }
+  }
+  return [...latestById.values()]
+    .sort((a, b) => b.mtime - a.mtime)
+    .slice(0, limit);
+}
+
+export function readPiFamilySessionMetaBySessionId(provider, sessionId, notOlderThanMs = 0) {
+  const normalizedProvider = normalizeProvider(provider);
+  if (normalizedProvider !== 'pi' && normalizedProvider !== 'omp') return null;
+  const targetId = String(sessionId || '').trim();
+  const sessionsRoot = getPiFamilySessionsDir(normalizedProvider);
+  if (!targetId || !sessionsRoot || !fs.existsSync(sessionsRoot)) return null;
+
+  let latest = null;
+  for (const file of findFilesRecursive(sessionsRoot, (name) => name.endsWith('.jsonl'))) {
+    const header = readFirstJsonLine(file);
+    if (header?.type !== 'session' || String(header.id || '').trim() !== targetId) continue;
+    const cwd = String(header.cwd || '').trim();
+    if (!cwd) continue;
+    try {
+      const stat = fs.statSync(file);
+      if (!stat.isFile() || (notOlderThanMs > 0 && stat.mtimeMs < notOlderThanMs)) continue;
+      if (!latest || stat.mtimeMs > latest.mtimeMs) {
+        latest = {
+          cwd: path.resolve(cwd),
+          file,
+          mtimeMs: stat.mtimeMs,
+        };
+      }
+    } catch {
+    }
+  }
+  return latest;
 }
 
 function listRecentZCodeSessions(limit = 10) {
@@ -365,6 +425,12 @@ function getCodexSessionsDir() {
   const home = process.env.HOME || process.env.USERPROFILE || '';
   if (!home) return '';
   return path.join(home, '.codex', 'sessions');
+}
+
+function getPiFamilySessionsDir(provider) {
+  const home = process.env.HOME || process.env.USERPROFILE || '';
+  if (!home) return '';
+  return path.join(home, provider === 'omp' ? '.omp' : '.pi', 'agent', 'sessions');
 }
 
 function getAntigravityDataRootDir() {

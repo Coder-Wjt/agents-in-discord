@@ -5,6 +5,7 @@ import {
   appendRecentActivity,
   appendCompletedStep,
   extractCompletedStepFromEvent,
+  extractProcessNarrationFromEvent,
   extractRawProgressTextFromEvent,
   extractPlanStateFromEvent,
   renderRecentActivitiesLines,
@@ -910,4 +911,113 @@ test('summarizeCodexEvent renders Claude queue-operation events', () => {
 
   const summary = summarizeCodexEvent(ev, { previewChars: 180 });
   assert.equal(summary, 'prompt queued');
+});
+
+test('extractRawProgressTextFromEvent reads Pi-family text deltas and tool starts', () => {
+  assert.equal(
+    extractRawProgressTextFromEvent({
+      type: 'message_update',
+      assistantMessageEvent: { type: 'text_delta', delta: 'Checking the workspace' },
+      message: { role: 'assistant', content: [{ type: 'text', text: 'Checking the workspace' }] },
+    }),
+    'Checking the workspace',
+  );
+  assert.equal(
+    extractRawProgressTextFromEvent({
+      type: 'tool_execution_start',
+      toolName: 'bash',
+      args: { command: 'npm test' },
+    }),
+    'bash: run: npm test',
+  );
+});
+
+test('extractProcessNarrationFromEvent drops tool activity but keeps agent narration', () => {
+  const commandEvent = {
+    type: 'item.completed',
+    item: {
+      type: 'command_execution',
+      command: '/bin/zsh -lc "cohub search allhands"',
+      exit_code: 0,
+      status: 'completed',
+    },
+  };
+  assert.equal(extractRawProgressTextFromEvent(commandEvent), 'search Cohub context');
+  assert.equal(extractProcessNarrationFromEvent(commandEvent), '');
+
+  const webSearchEvent = {
+    type: 'item.completed',
+    item: { type: 'web_search', action: { query: 'codex progress events' } },
+  };
+  assert.equal(extractProcessNarrationFromEvent(webSearchEvent), '');
+
+  const toolExecutionEvent = {
+    type: 'tool_execution_start',
+    toolName: 'bash',
+    args: { command: 'npm test' },
+  };
+  assert.equal(extractProcessNarrationFromEvent(toolExecutionEvent), '');
+
+  const narrationEvent = {
+    type: 'item.completed',
+    item: { type: 'agent_message', phase: 'commentary', text: '先把三个来源并行拉一遍。' },
+  };
+  assert.equal(extractProcessNarrationFromEvent(narrationEvent), '先把三个来源并行拉一遍。');
+});
+
+test('extractProcessNarrationFromEvent excludes failed commands but keeps errors readable', () => {
+  // A failed command still reads as tool activity: its text already reaches the
+  // latest-activity line, so streaming it would duplicate the same sentence.
+  const failedCommand = {
+    type: 'item.completed',
+    item: {
+      type: 'command_execution',
+      command: '/bin/zsh -lc "npm test"',
+      aggregated_output: 'AssertionError: expected 1 to equal 2',
+      exit_code: 1,
+      status: 'completed',
+    },
+  };
+  assert.equal(extractProcessNarrationFromEvent(failedCommand), '');
+  assert.match(extractRawProgressTextFromEvent(failedCommand), /command failed/);
+
+  const apiError = {
+    type: 'system',
+    subtype: 'api_error',
+    error: { status: 429, message: 'rate limit exceeded' },
+  };
+  assert.match(extractProcessNarrationFromEvent(apiError), /429/);
+});
+
+test('extractProcessNarrationFromEvent classifies tool activity through stream and event_msg wrappers', () => {
+  const wrappedCommand = {
+    type: 'event_msg',
+    payload: {
+      type: 'item.completed',
+      item: {
+        type: 'command_execution',
+        command: '/bin/zsh -lc "cohub search allhands"',
+        exit_code: 0,
+        status: 'completed',
+      },
+    },
+  };
+  assert.equal(extractProcessNarrationFromEvent(wrappedCommand), '');
+});
+
+test('extractProcessNarrationFromEvent surfaces reasoning only when showReasoning is on', () => {
+  // Codex can run long stretches of tool calls with no agent_message at all
+  // (one observed turn: 93 function calls, 98 reasoning items, zero messages).
+  // Reasoning is the only narration available there.
+  const ev = {
+    type: 'item.completed',
+    item: { id: 'rs_1', type: 'reasoning', text: '**Checking the workspace layout**' },
+  };
+
+  assert.equal(extractProcessNarrationFromEvent(ev), '');
+  assert.equal(extractProcessNarrationFromEvent(ev, { showReasoning: false }), '');
+  assert.equal(
+    extractProcessNarrationFromEvent(ev, { showReasoning: true }),
+    '**Checking the workspace layout**',
+  );
 });

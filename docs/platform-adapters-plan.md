@@ -124,7 +124,7 @@
 
 - 平台组合：`BOT_PLATFORM=lark` 可创建 Lark Foundation/Adapter；平台与实例共同隔离 session、single-instance lock、workspace lock、project-upgrade 状态和健康标识，Discord 默认文件名与行为保持不变。
 - 接入方式：支持官方 SDK WebSocket、复用加密持久凭证的 `lark-cli` WebSocket，以及显式启用的 Webhook dispatcher；三种 transport 共用消息、卡片 action、机器人菜单、去重、生命周期和投递语义。
-- 消息与命令：支持私聊、群聊 @、普通 prompt、文本命令、42 条 provider 前缀原生 slash commands、事件型机器人菜单、消息回复/编辑、长文本分片和通知投递。
+- 消息与命令：支持私聊、群聊 @、普通 prompt、文本命令、46 条 provider 前缀原生 slash commands、事件型机器人菜单、消息回复/编辑、长文本分片和通知投递。
 - 原生交互：共享 command view 可渲染为按钮、下拉和 Card 2.0 表单；支持原位更新、操作者私聊中的非表单私密响应、跨重启恢复来源会话上下文，以及权限拒绝不覆盖群聊共享卡片。
 - 会话与附件：使用 tenant/chat/root message 限定会话键，支持群聊 reply-chain fork/side、附件资源下载和 Codex 原生图片输入；私聊对不支持的子会话能力显式降级。
 - 可靠性与安全：支持访问 allowlist、mention-only 策略、机器人消息过滤、陈旧事件窗口、有界去重、发送重试、断线重连/自愈、优雅退出、Webhook token/签名/加密验证、body limit 和 HTTP 超时。
@@ -133,15 +133,15 @@
 本次提交前的验证结果：
 
 - `npm run test:lark`：116/116 通过。
-- `npm run test:progress`：388/388 通过。
+- `npm run test:progress`：837/837 通过。
 - `test:platform-foundation` 与 `test:platform-conformance`：分别 14/14、14/14 通过。
 - `test:platform-inputs`、`test:platform-security`、`test:platform-presentation`、`test:platform-topology`：分别 201/201、25/25、196/196、54/54 通过。
-- `npm run check:lark -- --verify-credentials --json`：通过；tenant scopes 9/9、事件 2/2、卡片回调 1/1、机器人菜单事件键 7/7、原生 slash commands 42/42，且无 errors/warnings。
+- `npm run check:lark -- --verify-credentials --json`：合并前通过；tenant scopes 9/9、事件 2/2、卡片回调 1/1、机器人菜单事件键 7/7、原生 slash commands 42/42，且无 errors/warnings。合并后的共享 manifest 因 Pi/OMP session aliases 增至 46 条，远端新增 4 条命令仍需显式执行 additive sync。
 - 真实隔离私聊已覆盖 `!status` 收发、Settings 卡片及原位更新、select/Card 2.0 回调、机器人菜单、`/cx_status`、普通 prompt、带参数原生命令、未知 slash-path 回退和无效 Codex profile 校验路径。
 - 真实隔离群聊已覆盖 @/未 @、图片下载与原生图片理解、长任务取消/reaction、fork/side reply chain，以及 side 关闭后同一原生卡片根消息原位写入锁定标记；飞书历史列表 `230027` 时 fork 的可选最近输出重放会安静降级，不影响 fork 成功报告。
 - `git diff --check` 通过；提交范围不包含 App Secret、token、测试 chat ID 或用户 ID。
 
-阶段边界：上述结果证明当前实现具备试运行条件，但不等同于完整生产验收。成功表单保存、无权限用户的私密拒绝、私密响应跨重启、真实断网重连、`!status` 投递指标和真实公网 Webhook 仍按部署检查清单逐项验收。
+阶段边界：上述结果证明当前实现具备试运行条件，但不等同于完整生产验收。成功表单保存、无权限用户的私密拒绝、私密响应跨重启、真实断网重连、`!status` 投递指标、真实公网 Webhook 和新增 4 条原生 slash commands 的远端 additive sync 仍按部署检查清单逐项验收。
 
 ### 2026-07-25 阶段 4 验证
 

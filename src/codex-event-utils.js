@@ -86,6 +86,44 @@ export function isFinalAnswerLikeAgentMessage(item) {
   return phase !== 'commentary';
 }
 
+// Long `codex exec resume` sessions label almost every agent_message
+// `phase: "final_answer"` — observed 116 of 121 in a single 1h21m run, where
+// only the last one was actually final and the rest read as step-by-step
+// progress. Treating each as final left the progress card with no narration at
+// all, so a superseded final answer is reclassified as process narration.
+//
+// Keeping only the newest means the real final answer is never duplicated into
+// the stream: it is still pending when the turn ends and goes out as the reply.
+export function supersedeFinalAnswerForNarration(state, text) {
+  const next = normalizeMessageText(text).trim();
+  if (!next) return '';
+  const previous = normalizeMessageText(state?.pendingFinalAnswer || '').trim();
+  if (state && typeof state === 'object') state.pendingFinalAnswer = next;
+  if (!previous || normalizeWhitespace(previous) === normalizeWhitespace(next)) return '';
+  return previous;
+}
+
+// Pulls the narration out of a phased Codex agent_message. `commentary` is
+// narration outright; a `final_answer` only becomes narration once a newer one
+// supersedes it (see supersedeFinalAnswerForNarration). Returns '' for anything
+// that should stay out of the process stream.
+export function extractCodexAgentMessageForNarration(event, state) {
+  if (!event || typeof event !== 'object') return '';
+  const type = normalizePhase(event.type || '');
+  const item = type === 'item_completed' || type === 'item_started' ? event.item : event;
+  if (!item || typeof item !== 'object') return '';
+  if (normalizePhase(item.type || '') !== 'agent_message') return '';
+
+  const phase = getAgentMessagePhase(item);
+  if (!phase) return '';
+
+  const text = extractAgentMessageText(item);
+  if (!text) return '';
+  if (phase === 'commentary') return text;
+  if (phase !== 'final_answer') return '';
+  return supersedeFinalAnswerForNarration(state, text);
+}
+
 export function extractUnphasedCodexAgentMessage(event) {
   if (!event || typeof event !== 'object') return '';
   const type = normalizePhase(event.type || '');

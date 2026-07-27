@@ -750,6 +750,23 @@ export function summarizeCodexEvent(ev, options = {}) {
       || 'plan updated';
   }
 
+  if (type === 'message_update') {
+    const update = ev.assistantMessageEvent && typeof ev.assistantMessageEvent === 'object'
+      ? ev.assistantMessageEvent
+      : null;
+    const updateType = normalizeEventType(update?.type || '');
+    if (updateType !== 'text_delta') return '';
+    const text = pickFirstRawText([update?.delta, update?.text]);
+    if (!text || isLowSignalProcessText(text)) return '';
+    return text;
+  }
+
+  if (type === 'tool_execution_start') {
+    const toolName = normalizeWhitespace(ev.toolName || ev.tool_name || '') || 'tool';
+    const detail = summarizeKnownArgObject(ev.args || {}, options);
+    return detail ? `${toolName}: ${detail}` : `tool ${toolName}`;
+  }
+
   if (type === 'response_item' && payload) {
     const summary = summarizeResponseItem(payload, opts);
     if (summary) return summary;
@@ -1087,6 +1104,23 @@ export function extractRawProgressTextFromEvent(ev, options = {}) {
       || '';
   }
 
+  if (type === 'message_update') {
+    const update = ev.assistantMessageEvent && typeof ev.assistantMessageEvent === 'object'
+      ? ev.assistantMessageEvent
+      : null;
+    const updateType = normalizeEventType(update?.type || '');
+    if (updateType !== 'text_delta') return '';
+    const text = pickFirstRawText([update?.delta, update?.text]);
+    if (!text || isLowSignalProcessText(text)) return '';
+    return text;
+  }
+
+  if (type === 'tool_execution_start') {
+    const toolName = normalizeWhitespace(ev.toolName || ev.tool_name || '') || 'tool';
+    const detail = summarizeKnownArgObject(ev.args || {}, options);
+    return detail ? `${toolName}: ${detail}` : `tool ${toolName}`;
+  }
+
   if (type === 'assistant') {
     const content = Array.isArray(payload?.content) ? payload.content : Array.isArray(ev?.content) ? ev.content : [];
     const hasClaudeMessageShape = payload && typeof payload === 'object'
@@ -1165,7 +1199,15 @@ export function extractRawProgressTextFromEvent(ev, options = {}) {
       const text = extractEventTextPreview(item, options);
       return !text || isLowSignalProcessText(text) ? '' : text;
     }
-    if (itemType === 'reasoning') return '';
+    if (itemType === 'reasoning') {
+      // Reasoning is the only thing Codex emits during long tool-calling
+      // stretches — one observed turn ran 93 function calls and 98 reasoning
+      // items without a single agent_message, leaving the card silent. Honour
+      // SHOW_REASONING here so those stretches can be narrated when asked for.
+      if (!options.showReasoning) return '';
+      const text = extractEventTextPreview(item, options);
+      return !text || isLowSignalProcessText(text) ? '' : text;
+    }
     if (itemType === 'message') return '';
     if (isCommandExecutionType(itemType)) {
       const command = summarizeCommandActivity(item, options);
@@ -1246,6 +1288,64 @@ export function extractRawProgressTextFromEvent(ev, options = {}) {
   }
 
   return '';
+}
+
+const TOOL_ACTIVITY_ITEM_TYPES = new Set([
+  'command_execution',
+  'local_shell_call',
+  'web_search',
+  'web_search_call',
+  'file_change',
+  'mcp_tool_call',
+  'collab_tool_call',
+]);
+
+function unwrapProgressEventForClassification(ev, depth = 0) {
+  if (!ev || typeof ev !== 'object' || depth > 3) return ev;
+  const type = normalizeEventType(ev.type || '');
+  if (type === 'stream_event' && ev.event && typeof ev.event === 'object') {
+    return unwrapProgressEventForClassification({ ...ev.event, type: ev.event.type }, depth + 1);
+  }
+  if (type === 'event_msg') {
+    const payload = extractEventPayload(ev);
+    const nestedType = normalizeEventType(payload?.type || '');
+    if (nestedType && nestedType !== 'event_msg') {
+      return unwrapProgressEventForClassification({ ...payload, type: payload.type }, depth + 1);
+    }
+  }
+  return ev;
+}
+
+// The process narration stream posts one Discord message per entry, so it is
+// reserved for what the agent says about its own progress. Tool and command
+// activity is already surfaced by the "latest activity" line and the
+// completed-milestones list; streaming it too crowds the agent out entirely on
+// tool-heavy runs.
+//
+// Command failures are excluded as well. They read like something worth
+// streaming, but the failure text already lands on the latest-activity line, so
+// forwarding it here just says the same thing twice — and on a run where the
+// agent narrates nothing, a lone failure line was the only thing reaching the
+// channel.
+export function isToolActivityProgressEvent(rawEvent) {
+  const ev = unwrapProgressEventForClassification(rawEvent);
+  if (!ev || typeof ev !== 'object') return false;
+  const type = normalizeEventType(ev.type || '');
+
+  if (type === 'tool_execution_start' || type === 'tool_use' || type === 'tool_result') return true;
+
+  if (type === 'item_started' || type === 'item_completed') {
+    const item = ev.item && typeof ev.item === 'object' ? ev.item : {};
+    const itemType = normalizeEventType(item.type || '');
+    return TOOL_ACTIVITY_ITEM_TYPES.has(itemType);
+  }
+
+  return false;
+}
+
+export function extractProcessNarrationFromEvent(ev, options = {}) {
+  if (isToolActivityProgressEvent(ev)) return '';
+  return extractRawProgressTextFromEvent(ev, options);
 }
 
 export function extractEventTextPreview(item, options = {}) {

@@ -44,14 +44,30 @@ const PROVIDER_NATIVE_SESSION_COMMANDS = Object.freeze({
       plural: 'ZCode sessions',
     }),
   }),
+  pi: Object.freeze({
+    resume: 'pi_resume',
+    sessions: 'pi_sessions',
+    sessionTerm: Object.freeze({
+      singular: 'Pi session',
+      plural: 'Pi sessions',
+    }),
+  }),
+  omp: Object.freeze({
+    resume: 'omp_resume',
+    sessions: 'omp_sessions',
+    sessionTerm: Object.freeze({
+      singular: 'OMP session',
+      plural: 'OMP sessions',
+    }),
+  }),
 });
 
 const ALL_SESSION_COMMAND_ALIASES = Object.freeze({
-  sessions: Object.freeze(['rollout_sessions', 'project_sessions', 'conversation_sessions', 'chat_sessions', 'zcode_sessions']),
-  resume: Object.freeze(['rollout_resume', 'project_resume', 'conversation_resume', 'chat_resume', 'zcode_resume']),
+  sessions: Object.freeze(['rollout_sessions', 'project_sessions', 'conversation_sessions', 'chat_sessions', 'zcode_sessions', 'pi_sessions', 'omp_sessions']),
+  resume: Object.freeze(['rollout_resume', 'project_resume', 'conversation_resume', 'chat_resume', 'zcode_resume', 'pi_resume', 'omp_resume']),
 });
 
-const REASONING_LEVEL_DISPLAY_ORDER = Object.freeze(['xhigh', 'high', 'medium', 'low']);
+const REASONING_LEVEL_DISPLAY_ORDER = Object.freeze(['auto', 'max', 'xhigh', 'high', 'medium', 'low', 'minimal', 'off']);
 
 const COMMAND_ALIASES = Object.freeze({
   c: 'cancel',
@@ -73,11 +89,15 @@ const COMMAND_ALIASES = Object.freeze({
   conversation_sessions: 'sessions',
   chat_sessions: 'sessions',
   zcode_sessions: 'sessions',
+  pi_sessions: 'sessions',
+  omp_sessions: 'sessions',
   rollout_resume: 'resume',
   project_resume: 'resume',
   conversation_resume: 'resume',
   chat_resume: 'resume',
   zcode_resume: 'resume',
+  pi_resume: 'resume',
+  omp_resume: 'resume',
 });
 
 export function normalizeCommandName(value, { allowBangPrefix = false } = {}) {
@@ -122,11 +142,15 @@ function getSessionAliasDescriptions(aliases = []) {
     if (alias === 'conversation_sessions') return [alias, '列出最近的 conversations（同 sessions）'];
     if (alias === 'chat_sessions') return [alias, '列出最近的 legacy chat sessions（同 sessions）'];
     if (alias === 'zcode_sessions') return [alias, '列出最近的 ZCode sessions（同 sessions）'];
+    if (alias === 'pi_sessions') return [alias, '列出最近的 Pi sessions（同 sessions）'];
+    if (alias === 'omp_sessions') return [alias, '列出最近的 OMP sessions（同 sessions）'];
     if (alias === 'rollout_resume') return [alias, '继承一个已有的 rollout session（同 resume）'];
     if (alias === 'project_resume') return [alias, '继承一个已有的 project session（同 resume）'];
     if (alias === 'conversation_resume') return [alias, '继承一个已有的 conversation（同 resume）'];
     if (alias === 'chat_resume') return [alias, '继承一个已有的 legacy chat session（同 resume）'];
     if (alias === 'zcode_resume') return [alias, '继承一个已有的 ZCode session（同 resume）'];
+    if (alias === 'pi_resume') return [alias, '继承一个已有的 Pi session（同 resume）'];
+    if (alias === 'omp_resume') return [alias, '继承一个已有的 OMP session（同 resume）'];
     return [alias, alias];
   })));
 }
@@ -235,6 +259,8 @@ export function buildCommandSpecs({
             { name: 'claude', value: 'claude' },
             { name: 'antigravity', value: 'antigravity' },
             { name: 'zcode', value: 'zcode' },
+            { name: 'pi', value: 'pi' },
+            { name: 'omp', value: 'omp' },
             { name: 'status', value: 'status' },
         ],
       }],

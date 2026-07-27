@@ -6,6 +6,7 @@ import {
   composeFinalAnswerText,
   createProgressEventDeduper,
   extractAgentMessageText,
+  extractCodexAgentMessageForNarration,
   getAgentMessagePhase,
   isFinalAnswerLikeAgentMessage,
   stripCodexControlBlocks,
@@ -155,4 +156,59 @@ test('bridge and stdout events map to one dedupe key for same activity text', ()
   const isDuplicate = createProgressEventDeduper({ ttlMs: 3000, maxKeys: 16 });
   assert.equal(isDuplicate(stdoutKey, 1000), false);
   assert.equal(isDuplicate(bridgeKey, 1300), true);
+});
+
+test('extractCodexAgentMessageForNarration streams commentary immediately', () => {
+  const state = { pendingFinalAnswer: '' };
+  const event = {
+    type: 'item.completed',
+    item: { type: 'agent_message', phase: 'commentary', message: '先读一遍配置。' },
+  };
+  assert.equal(extractCodexAgentMessageForNarration(event, state), '先读一遍配置。');
+  // Commentary is never a candidate final answer.
+  assert.equal(state.pendingFinalAnswer, '');
+});
+
+test('extractCodexAgentMessageForNarration retires superseded final answers', () => {
+  const state = { pendingFinalAnswer: '' };
+  const mk = (message) => ({
+    type: 'item.completed',
+    item: { type: 'agent_message', phase: 'final_answer', message },
+  });
+
+  // Long resume sessions label nearly every message final_answer, so the first
+  // one is held back rather than streamed.
+  assert.equal(extractCodexAgentMessageForNarration(mk('第一阶段完成。'), state), '');
+  assert.equal(state.pendingFinalAnswer, '第一阶段完成。');
+
+  // A newer one proves the previous was really mid-task progress.
+  assert.equal(extractCodexAgentMessageForNarration(mk('第二阶段完成。'), state), '第一阶段完成。');
+  assert.equal(extractCodexAgentMessageForNarration(mk('全部写完了。'), state), '第二阶段完成。');
+
+  // The newest is still pending, so it goes out as the reply, not the stream.
+  assert.equal(state.pendingFinalAnswer, '全部写完了。');
+});
+
+test('extractCodexAgentMessageForNarration ignores repeats and unphased messages', () => {
+  const state = { pendingFinalAnswer: '' };
+  const mk = (message) => ({
+    type: 'item.completed',
+    item: { type: 'agent_message', phase: 'final_answer', message },
+  });
+
+  extractCodexAgentMessageForNarration(mk('同一句。'), state);
+  // A redelivered identical message must not duplicate itself into the stream.
+  assert.equal(extractCodexAgentMessageForNarration(mk('同一句。'), state), '');
+
+  // Unphased messages belong to the buffering path, not this one.
+  assert.equal(extractCodexAgentMessageForNarration({
+    type: 'item.completed',
+    item: { type: 'agent_message', text: '没有 phase。' },
+  }, state), '');
+
+  // Non-agent-message events are ignored outright.
+  assert.equal(extractCodexAgentMessageForNarration({
+    type: 'item.completed',
+    item: { type: 'command_execution', command: 'ls' },
+  }, state), '');
 });

@@ -233,3 +233,33 @@ test('claude session progress bridge forwards assistant tool_use snapshots even 
     stop();
   }
 });
+
+test('session progress bridge does not treat Pi-family sessions as Codex rollouts', () => {
+  let codexLookupCount = 0;
+  const factory = createSessionProgressBridgeFactory({
+    normalizeProvider: (provider) => provider,
+    extractRawProgressTextFromEvent: () => '',
+    findLatestRolloutFileBySessionId: () => {
+      codexLookupCount += 1;
+      return null;
+    },
+    findLatestClaudeSessionFileBySessionId: () => null,
+  });
+
+  const stopPi = factory.startSessionProgressBridge({
+    provider: 'pi',
+    threadId: 'pi-session',
+    workspaceDir: '/tmp',
+    onEvent() {},
+  });
+  const stopOmp = factory.startSessionProgressBridge({
+    provider: 'omp',
+    threadId: 'omp-session',
+    workspaceDir: '/tmp',
+    onEvent() {},
+  });
+
+  stopPi();
+  stopOmp();
+  assert.equal(codexLookupCount, 0);
+});

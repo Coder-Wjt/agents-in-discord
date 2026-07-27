@@ -5,6 +5,8 @@ import { createClaudeProviderAdapter } from './providers/claude.js';
 import { createCodexProviderAdapter } from './providers/codex.js';
 import { createAntigravityProviderAdapter } from './providers/antigravity.js';
 import { createZCodeProviderAdapter } from './providers/zcode.js';
+import { createPiProviderAdapter } from './providers/pi.js';
+import { createOmpProviderAdapter } from './providers/omp.js';
 import { createProviderAdapterRegistry } from './providers/index.js';
 
 export function uniqueDirs(dirs = []) {
@@ -75,6 +77,12 @@ export function createRunnerArgsBuilder({
         inputImages,
         systemPrompt,
       }),
+    }),
+    createPiProviderAdapter({
+      buildArgs: (options) => buildPiFamilyArgs({ ...options, provider: 'pi' }),
+    }),
+    createOmpProviderAdapter({
+      buildArgs: (options) => buildPiFamilyArgs({ ...options, provider: 'omp' }),
     }),
   ]);
 
@@ -212,11 +220,51 @@ export function createRunnerArgsBuilder({
     return args;
   }
 
+  function buildPiFamilyArgs({
+    provider,
+    session,
+    prompt,
+    additionalWorkspaceDirs = [],
+    inputImages = [],
+    systemPrompt = '',
+  }) {
+    const isOmp = provider === 'omp';
+    const args = ['-p', '--mode', 'json'];
+    if (isOmp) {
+      args.push('--approval-mode', session.mode === 'dangerous' ? 'yolo' : 'write');
+    } else if (session.mode === 'dangerous') {
+      args.push('--approve');
+    } else {
+      args.push('--no-approve', '--tools', 'read');
+    }
+
+    const model = resolveModelSetting(session).value || defaultModel;
+    const effort = resolveReasoningEffortSetting(session).value;
+    if (model) args.push('--model', model);
+    if (effort) args.push('--thinking', effort);
+
+    const systemText = String(systemPrompt || '').trim();
+    if (systemText) args.push('--append-system-prompt', systemText);
+    if (isOmp) {
+      for (const dir of uniqueDirs(additionalWorkspaceDirs)) args.push('--add-dir', dir);
+    }
+
+    const sessionId = getSessionId(session);
+    if (sessionId) args.push(isOmp ? '--resume' : '--session', sessionId);
+    for (const imagePath of inputImages) {
+      const value = String(imagePath || '').trim();
+      if (value) args.push(`@${value}`);
+    }
+    args.push(prompt);
+    return args;
+  }
+
   return {
     buildSessionRunnerArgs,
     buildCodexArgs,
     buildClaudeArgs,
     buildAntigravityArgs,
     buildZCodeArgs,
+    buildPiFamilyArgs,
   };
 }

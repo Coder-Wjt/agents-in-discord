@@ -560,6 +560,41 @@ test('createSessionCommandActions.bindSession adopts Claude project session work
   assert.equal(saveCount, 1);
 });
 
+test('createSessionCommandActions.bindSession adopts OMP session workspace', () => {
+  let saveCount = 0;
+  const adoptedWorkspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agents-in-discord-bind-omp-session-'));
+  const session = { provider: 'omp', workspaceDir: '/wrong/thread', runnerSessionId: null, codexThreadId: null };
+  const actions = createSessionCommandActions({
+    saveDb: () => {
+      saveCount += 1;
+    },
+    listStoredSessions: () => [{ key: 'thread-a', session }],
+    readPiFamilySessionMetaBySessionId: (provider, sessionId) => (
+      provider === 'omp' && sessionId === 'omp-sess-1'
+        ? { cwd: adoptedWorkspaceDir }
+        : null
+    ),
+    clearSessionId: (currentSession) => {
+      currentSession.runnerSessionId = null;
+      currentSession.codexThreadId = null;
+    },
+    getSessionId: (currentSession) => currentSession.runnerSessionId,
+    setSessionId: (currentSession, value) => {
+      currentSession.runnerSessionId = value;
+      currentSession.codexThreadId = value;
+    },
+    getSessionProvider: (currentSession) => currentSession.provider || 'codex',
+    getProviderShortName: () => 'OMP',
+  });
+
+  const result = actions.bindSession(session, 'thread-a', 'omp-sess-1');
+
+  assert.equal(result.sessionId, 'omp-sess-1');
+  assert.equal(result.adoptedWorkspaceDir, adoptedWorkspaceDir);
+  assert.equal(session.workspaceDir, adoptedWorkspaceDir);
+  assert.equal(saveCount, 1);
+});
+
 test('createSessionCommandActions.bindSession rejects strict-provider sessions whose workspace no longer exists', () => {
   let saveCount = 0;
   const currentSession = { provider: 'codex', workspaceDir: null, runnerSessionId: null, codexThreadId: null };

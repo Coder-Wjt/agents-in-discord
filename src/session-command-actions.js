@@ -80,6 +80,7 @@ export function createSessionCommandActions({
   listStoredSessions = () => [],
   readCodexSessionMetaBySessionId = () => null,
   readClaudeSessionMetaBySessionId = () => null,
+  readPiFamilySessionMetaBySessionId = () => null,
   resolveAntigravityProjectRootBySessionId = () => null,
   resolveProviderDefaultWorkspace = () => ({ workspaceDir: null, source: 'unset', envKey: null }),
   setProviderDefaultWorkspace = () => ({ workspaceDir: null, source: 'unset', envKey: null }),
@@ -141,6 +142,9 @@ export function createSessionCommandActions({
     }
     if (provider === 'antigravity') {
       return normalizeWorkspacePath(resolveAntigravityProjectRootBySessionId(normalizedSessionId));
+    }
+    if (provider === 'pi' || provider === 'omp') {
+      return normalizeWorkspacePath(readPiFamilySessionMetaBySessionId(provider, normalizedSessionId)?.cwd);
     }
     return null;
   }

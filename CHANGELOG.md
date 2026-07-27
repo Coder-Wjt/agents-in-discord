@@ -69,7 +69,7 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 - Added and ran focused contract, boundary, Discord Adapter, input, presentation, security, notification, conformance, synthetic smoke, and AppContext regressions for the platform abstraction work.
 - Added Lark foundation, conformance, inbound, delivery, security, lifecycle, entry-handler, reply-chain fork/side, webhook dispatcher, official-SDK Node.js 18 smoke, and platform-instance isolation coverage.
-- Provisioned and read-only reverified all 42 native Lark slash commands for the bound application; the remote registry is 42/42 matched, provisioning scopes are 2/2, and 58 of 100 command slots remain available.
+- Provisioned and read-only reverified the pre-merge 42-command native Lark registry for the bound application; provisioning scopes are 2/2 and 58 of 100 command slots remain available. The merged shared manifest now contains 46 commands after adding Pi/OMP session aliases, so applying that four-command additive sync remains an explicit deployment step.
 - Passed credential-verified Lark deployment readiness with tenant scopes 9/9, events 2/2, card callbacks 1/1, bot-menu event keys 7/7, a restrictive app-scoped user allowlist, and a real P2P `!status` receive/reply round trip.
 - Verified real P2P Settings card rendering and in-place updates, select and Card 2.0 form callbacks, bot-menu command events, native `/cx_status` routing with an associated reply, and the invalid-profile form validation path.
 - Verified the explicit-write P2P smoke driver end to end for an ordinary prompt, a parameterized native command, and unknown slash-path prompt fallback.
@@ -78,7 +78,23 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 - Verified a new real Lark fork after the history-access fallback: the interactive root and fork session were created, the success report remained associated with that root, and no latest-output replay authorization warning was emitted.
 - Verified real CLI-transport SIGTERM with `SELF_HEAL_ENABLED=false` for both an idle instance and a controlled active task registered through the production channel runtime. The active child deliberately ignored SIGTERM, was removed by bounded SIGKILL escalation before parent exit, all three event consumers stopped, the instance lock was released, and the supervised single consumer reconnected after restoration.
 - Verified real CLI consumer-loss recovery by terminating the message-event consumer: the lifecycle recorded `channel_error`, self-healed without replacing the main process, restored all three direct consumers, and returned to exactly six wrapper/worker consumer processes without duplicates.
-- Re-ran the current checkpoint with `npm run test:lark` at 116/116 and the shared `test:progress` suite at 388/388; earlier Foundation/conformance and platform input/security/presentation/topology checkpoints remain recorded at 14/14, 14/14, and 201/25/196/54. Credential-verified readiness, syntax checks, safe-reply checks, and `git diff --check` also passed; the deployment checklist now isolates the remaining successful form/private-permission/restart, real network outage, status-metric, and public-webhook smoke.
+- Re-ran the merged checkpoint with `npm run test:lark` at 116/116 and the expanded shared `test:progress` suite at 837/837; earlier Foundation/conformance and platform input/security/presentation/topology checkpoints remain recorded at 14/14, 14/14, and 201/25/196/54. Credential-verified readiness, syntax checks, safe-reply checks, and `git diff --check` also passed; the deployment checklist now isolates the remaining successful form/private-permission/restart, real network outage, status-metric, public-webhook smoke, and additive four-command remote slash sync.
+
+## [0.14.0] - 2026-07-25
+
+### Added
+- Added Pi Agent and Oh My Pi as shared or dedicated providers, covering CLI argument building, event parsing, session resume and compaction, status and permission-mode labels, slash prefixes, settings and onboarding entries, launch scripts, and service restart support.
+- Added Claude model discovery from local `settings.json`, including `ANTHROPIC_DEFAULT_*_MODEL` overrides and the fable tier, so configured models appear in the model menu.
+- Added `--nonce` to the channel message script so a retried send is deduplicated by Discord instead of posting twice.
+
+### Changed
+- Kept tool and command activity out of the streamed process narration, so tool-heavy runs no longer bury what the agent says about its own progress. Tool progress stays visible on the latest-activity line and in completed milestones.
+- Gave agent narration priority over mechanical tool labels on the latest-activity line, with errors still taking precedence over both.
+- Showed the model observed in Claude runtime events on the progress card instead of reporting an unknown model when no default is configured.
+
+### Fixed
+- Fixed Claude CLI help parsing that truncated multi-line `--model` and `--effort` option blocks to their first line.
+- Forwarded native Codex progress events and restored Codex process commentary.
 
 ## [0.13.0] - 2026-07-21
 

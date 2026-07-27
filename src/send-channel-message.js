@@ -1,13 +1,14 @@
 import fs from 'node:fs/promises';
 
-const PROVIDER_CHOICES = new Set(['shared', 'codex', 'claude', 'antigravity', 'agy', 'zcode']);
+const PROVIDER_CHOICES = new Set(['shared', 'codex', 'claude', 'antigravity', 'agy', 'zcode', 'pi', 'omp']);
 const CHANNEL_ID_RE = /^\d{15,25}$/;
+const NONCE_RE = /^[A-Za-z0-9_-]{1,25}$/;
 const DISCORD_MESSAGE_LIMIT = 2000;
 
 export function buildSendChannelMessageUsage() {
   return [
     'Usage:',
-    '  node scripts/send-channel-message.mjs --channel <channel-id> [--content "text" | --content-file <path> | --stdin] [--provider shared|codex|claude|antigravity|zcode] [--json]',
+    '  node scripts/send-channel-message.mjs --channel <channel-id> [--content "text" | --content-file <path> | --stdin] [--provider shared|codex|claude|antigravity|zcode|pi|omp] [--nonce <id>] [--json]',
     '',
     'Examples:',
     '  node scripts/send-channel-message.mjs --channel 123456789012345678 --content "Deploy finished."',
@@ -25,6 +26,7 @@ export function parseSendChannelMessageArgs(argv = []) {
     stdin: false,
     json: false,
     provider: '',
+    nonce: '',
     help: false,
   };
 
@@ -62,6 +64,12 @@ export function parseSendChannelMessageArgs(argv = []) {
         throw new Error(`Unsupported provider: ${provider}`);
       }
       options.provider = provider;
+      continue;
+    }
+    if (token === '--nonce') {
+      const nonce = requireValue(args, ++index, token);
+      if (!NONCE_RE.test(nonce)) throw new Error('Missing or invalid --nonce <id>');
+      options.nonce = nonce;
       continue;
     }
 

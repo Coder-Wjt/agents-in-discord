@@ -1,6 +1,6 @@
 # Agents in Discord
 
-A standalone bridge that lets you direct **Codex CLI**, **Claude Code**, **Antigravity CLI**, and **ZCode CLI** from Discord or Feishu/Lark.
+A standalone bridge that lets you direct **Codex CLI**, **Claude Code**, **Antigravity CLI**, **ZCode CLI**, **Pi Agent**, and **Oh My Pi** from Discord or Feishu/Lark, with an optional WeChat Codex entry.
 
 > This project is a standalone chat bridge. It is **not** an OpenClaw plugin, and it does **not** depend on OpenClaw to run.
 
@@ -51,10 +51,12 @@ Discord keeps its full slash-command surface. Lark is message-first but also sup
   - Claude: `claude` available in shell, or set `CLAUDE_BIN=/absolute/path/to/claude`
   - Antigravity: `agy` available in shell, or set `ANTIGRAVITY_BIN=/absolute/path/to/agy`
   - ZCode: `zcode` available in shell, or set `ZCODE_BIN=/absolute/path/to/zcode`
+  - Pi Agent: `pi` available in shell, or set `PI_BIN=/absolute/path/to/pi`
+  - Oh My Pi: `omp` available in shell, or set `OMP_BIN=/absolute/path/to/omp`
 - If the CLI itself needs login, complete that in the CLI first; this project does not manage provider auth in `.env`
 - Discord Application/Bot token(s), or Feishu/Lark authentication
   - Discord shared mode needs one bot token
-  - Discord dedicated mode can use separate tokens for Codex, Claude, Antigravity, and ZCode bots
+  - Discord dedicated mode can use separate tokens for Codex, Claude, Antigravity, ZCode, Pi, and OMP bots
   - Local Lark CLI mode can reuse the encrypted persistent `lark-cli` login
   - Lark SDK/Webhook mode needs an app ID and app secret
 
@@ -77,6 +79,38 @@ Git hooks note:
 - The pre-commit atomic check is Node-based and works on macOS/Linux/Windows (no bash required).
 
 Then in your Discord server, invite the bot. For a normal first run, start with `/cx_onboarding`, choose language/provider/workspace, then send the first task.
+
+### Optional WeChat entry
+
+The WeChat entry runs as a separate process, so the existing Discord startup path, tokens, channel sessions, and components remain unchanged. Both entries reuse the Codex runner and the same workspace lock directory.
+
+```env
+WECHAT_WORKSPACE_ROOTS=~/GitHub,~/Lark_Project
+WECHAT_DEFAULT_WORKSPACE_DIR=~/GitHub
+WECHAT_CODEX_RUNTIME_MODE=long
+WECHAT_ALLOW_DANGEROUS=false
+```
+
+Start it with `npm run start:wechat` and scan the terminal QR code. Use `/sessions`, `/resume <number|thread-id>`, `/session`, `/new`, `/status`, `/cancel`, and `/dir <path>` in WeChat. The first version accepts text and voice transcription, but not image or file inputs.
+
+### Run Discord and WeChat continuously on macOS
+
+The two entries use independent `launchd` services. They start at login and restart after an unexpected exit:
+
+```bash
+# 1. Configure .env and at least set CODEX__DISCORD_TOKEN
+cp .env.example .env
+
+# 2. Complete the initial WeChat QR login in the foreground, then press Ctrl-C
+npm run start:wechat
+
+# 3. Install and start both background services
+npm run services:install
+```
+
+Use `npm run services:status`, `npm run services:logs`, and `npm run services:restart` for routine operations. Pass `discord` or `wechat` directly to `scripts/manage-channel-services-macos.sh` to operate on only one entry.
+
+WeChat credentials and channel bindings live under `data/wechat/`, separately from Discord state. The iLink protocol implementation was informed by the MIT-licensed [sgaofen/cli-in-wechat](https://github.com/sgaofen/cli-in-wechat); its CLI adapter and `resume --last` session model are not used.
 
 Examples below use the default Codex/shared prefix `cx_`; a dedicated Claude bot defaults to `cc_`, a dedicated Antigravity bot defaults to `ag_`, and a dedicated ZCode bot defaults to `zc_`. All can be overridden with `SLASH_PREFIX` or the matching provider-scoped `__SLASH_PREFIX` key:
 
@@ -192,9 +226,9 @@ Use `LARK_CLI_PROFILE` to select a profile when the CLI has multiple apps, and `
 
 The integration supports group mentions, DMs, ordinary messages, text commands such as `!status`, `!progress`, and `!cancel`, attachment metadata, native Codex image downloads, progress-message edits, task-status reactions, bounded event deduplication, and transport self-healing. Messages, card actions, and bot-menu events are deduplicated by stable event identity so webhook or CLI redelivery cannot execute the same task twice; tune the retention window and memory bound with `LARK_EVENT_DEDUP_WINDOW_MS` and `LARK_EVENT_DEDUP_MAX_ENTRIES`. Webhook mode also exposes a read-only GET health probe on a path separate from the callback POST endpoint. On `SIGTERM` or `SIGINT`, active work is cancelled and the SDK, CLI, or webhook channel is disconnected even when `SELF_HEAL_ENABLED=false`; shutdown failures cannot schedule a self-heal restart. `!status` reports the selected transport's connection state, retry/self-heal counts, and message-delivery successes, failures, in-flight operations, and the latest failure. Settings, onboarding, workspace browsing, workspace-conflict actions, and retry controls can use native Lark cards with buttons and selects. Shared modals for model, Codex profile, and compact-threshold input are rendered as inline Card 2.0 forms; opening and submitting them updates the current card in place. Reply chains are isolated by `root_id`; local state and locks are isolated by `BOT_PLATFORM` and `BOT_INSTANCE_ID`.
 
-SDK, CLI, and webhook transports support card actions. CLI mode consumes `im.message.receive_v1`, `card.action.trigger`, and `application.bot.menu_v6`; webhook mode dispatches them through the same verified HTTP endpoint. Lark does not reuse Discord's popup modal UI; Card 2.0 forms provide the equivalent input flow. Non-form `ephemeral` responses triggered from a group card are sent to the operator's bot DM instead of replacing the shared card. The private card carries the qualified source chat or reply-chain context, so its buttons, selects, and forms continue to operate on the original session even after a process restart, while card updates remain private. Card 2.0 forms still open and submit in place on the current card to preserve validation, correction, and retry behavior. Event-style custom bot menus can use shared command names as their `event_key` (for example `status`, `settings`, `progress`, `queue`, `cancel`, `new`, or `onboarding`); results are delivered to the operator's bot DM and updated in place. Native slash commands follow the provider-aware prefix used on Discord, for example `/cx_status`, `/cc_status`, `/ag_status`, or `/zc_status`; their ordinary message deliveries reuse the existing text-command parser and arguments. In group chats, `fork` and Codex `side` create a new root message and isolate subsequent work in its reply chain; closing a side conversation marks that root as closed. DMs cannot create these child conversations. Apps must register commands and enable the matching events/callbacks for native entries to work.
+SDK, CLI, and webhook transports support card actions. CLI mode consumes `im.message.receive_v1`, `card.action.trigger`, and `application.bot.menu_v6`; webhook mode dispatches them through the same verified HTTP endpoint. Lark does not reuse Discord's popup modal UI; Card 2.0 forms provide the equivalent input flow. Non-form `ephemeral` responses triggered from a group card are sent to the operator's bot DM instead of replacing the shared card. The private card carries the qualified source chat or reply-chain context, so its buttons, selects, and forms continue to operate on the original session even after a process restart, while card updates remain private. Card 2.0 forms still open and submit in place on the current card to preserve validation, correction, and retry behavior. Event-style custom bot menus can use shared command names as their `event_key` (for example `status`, `settings`, `progress`, `queue`, `cancel`, `new`, or `onboarding`); results are delivered to the operator's bot DM and updated in place. Native slash commands follow the provider-aware prefix used on Discord, for example `/cx_status`, `/cc_status`, `/ag_status`, `/zc_status`, `/pi_status`, or `/omp_status`; their ordinary message deliveries reuse the existing text-command parser and arguments. In group chats, `fork` and Codex `side` create a new root message and isolate subsequent work in its reply chain; closing a side conversation marks that root as closed. DMs cannot create these child conversations. Apps must register commands and enable the matching events/callbacks for native entries to work.
 
-If you want **separate Discord bots** for Codex, Claude, Antigravity, and ZCode, keep everything in one `.env`, but group provider-specific values with clear prefixes:
+If you want **separate Discord bots** for Codex, Claude, Antigravity, ZCode, Pi, and OMP, keep everything in one `.env`, but group provider-specific values with clear prefixes:
 
 ```bash
 # one-time setup
@@ -205,11 +239,13 @@ npm run start:codex
 npm run start:claude
 npm run start:antigravity
 npm run start:zcode
+npm run start:pi
+npm run start:omp
 ```
 
-Use plain keys for shared Discord/runtime settings, then put dedicated bot settings under `CODEX__*`, `CLAUDE__*`, `ANTIGRAVITY__*`, and `ZCODE__*` sections in the same file. In practice, you usually only need `DISCORD_TOKEN`, optional `DEFAULT_MODEL`, optional `DEFAULT_MODE`, and optional CLI path overrides. ZCode maps safe mode to `edit` and dangerous mode to `yolo`. Antigravity currently has no public `--model` launch flag, so this bridge applies Antigravity model choices through `~/.gemini/antigravity-cli/settings.json`; the model menu merges the current settings value, Antigravity's documented reasoning models, and models observed in local CLI logs. Each locked instance uses its own provider-scoped state file and process lock, so channel/session context does not mix across bots.
+Use plain keys for shared Discord/runtime settings, then put dedicated bot settings under `CODEX__*`, `CLAUDE__*`, `ANTIGRAVITY__*`, `ZCODE__*`, `PI__*`, and `OMP__*` sections in the same file. In practice, you usually only need `DISCORD_TOKEN`, optional `DEFAULT_MODEL`, optional `DEFAULT_MODE`, and optional CLI path overrides. Pi and OMP share a compatibility layer while keeping their session stores, resume flags, and permission flags separate. Each locked instance uses its own provider-scoped state file and process lock, so channel/session context does not mix across bots.
 
-Lark can also be combined with `BOT_PROVIDER=codex|claude|antigravity|zcode`; for example, `CODEX__LARK_TRANSPORT`, `CODEX__LARK_CLI_PROFILE`, or `CODEX__LARK_APP_ID` / `CODEX__LARK_APP_SECRET` override the shared Lark settings, and the other provider prefixes work the same way.
+Lark can also be combined with `BOT_PROVIDER=codex|claude|antigravity|zcode|pi|omp`; for example, `CODEX__LARK_TRANSPORT`, `CODEX__LARK_CLI_PROFILE`, or `CODEX__LARK_APP_ID` / `CODEX__LARK_APP_SECRET` override the shared Lark settings, and the other provider prefixes work the same way.
 
 ## Configuration (.env)
 
@@ -228,7 +264,7 @@ Important knobs:
 - `LARK_EVENT_DEDUP_WINDOW_MS` / `LARK_EVENT_DEDUP_MAX_ENTRIES`: duplicate event retention and bounded in-memory cache size
 - `LARK_ALLOWED_CHAT_IDS` / `LARK_ALLOWED_TENANT_IDS` / `LARK_ALLOWED_USER_IDS`: Lark access control; falls back to the corresponding shared allowlist when unset
 - `LARK_MENTION_ONLY_CHAT_IDS`: Lark chats that require a bot mention for normal prompts
-- `ALLOWED_CHANNEL_IDS` / `ALLOWED_USER_IDS`: lock the bot down (recommended); dedicated bots can also use `CODEX__ALLOWED_*` / `CLAUDE__ALLOWED_*` / `ANTIGRAVITY__ALLOWED_*` / `ZCODE__ALLOWED_*`
+- `ALLOWED_CHANNEL_IDS` / `ALLOWED_USER_IDS`: lock the bot down (recommended); dedicated bots can also use `CODEX__ALLOWED_*` / `CLAUDE__ALLOWED_*` / `ANTIGRAVITY__ALLOWED_*` / `ZCODE__ALLOWED_*` / `PI__ALLOWED_*` / `OMP__ALLOWED_*`
 - Shared `.env` keys: Discord/runtime settings only (`ALLOWED_*`, `WORKSPACE_ROOT`, `DEFAULT_WORKSPACE_DIR`, proxy, etc.)
 - `CODEX__*`: Codex bot section in the same `.env` (normally `CODEX__DISCORD_TOKEN`, plus optional `CODEX__DEFAULT_MODEL`, `CODEX__DEFAULT_MODE`, `CODEX__DEFAULT_WORKSPACE_DIR`, `CODEX__MAX_INPUT_TOKENS_BEFORE_COMPACT`, `CODEX__CODEX_BIN`)
 - `CLAUDE__*`: Claude bot section in the same `.env` (normally `CLAUDE__DISCORD_TOKEN`, plus optional `CLAUDE__DEFAULT_MODEL`, `CLAUDE__DEFAULT_MODE`, `CLAUDE__DEFAULT_WORKSPACE_DIR`, `CLAUDE__CLAUDE_BIN`)
@@ -247,20 +283,23 @@ Important knobs:
 - `ENABLE_CONFIG_CMD`: enable/disable `!config` command (default `false`)
 - `CONFIG_ALLOWLIST`: allowed keys for `!config key=value` (comma-separated, or `*` to allow all)
 - `SLASH_PREFIX`: shared/global slash prefix; default `cx` in shared mode (e.g. `/cx_status`)
-- `CODEX__SLASH_PREFIX` / `CLAUDE__SLASH_PREFIX` / `ANTIGRAVITY__SLASH_PREFIX` / `ZCODE__SLASH_PREFIX`: dedicated-bot slash prefix overrides; defaults are `cx`, `cc`, `ag`, and `zc`
+- `CODEX__SLASH_PREFIX` / `CLAUDE__SLASH_PREFIX` / `ANTIGRAVITY__SLASH_PREFIX` / `ZCODE__SLASH_PREFIX` / `PI__SLASH_PREFIX` / `OMP__SLASH_PREFIX`: dedicated-bot slash prefix overrides; defaults are `cx`, `cc`, `ag`, `zc`, `pi`, and `omp`
 - `DEFAULT_UI_LANGUAGE`: default bot message language for new channels (`zh` or `en`, default `zh`)
+- `SHOW_REASONING`: stream model reasoning summaries onto the progress card (default `false`). The CLI has to emit reasoning events as well — for Codex, set `model_reasoning_summary = "detailed"` in `~/.codex/config.toml`. Note that `gpt-5.6` models (sol/terra/luna) emit no reasoning events under codex-cli 0.144.0, since their `models_cache.json` entries omit the `supports_reasoning_summaries` field the CLI requires; `gpt-5.4` does emit them.
 - `ONBOARDING_ENABLED_DEFAULT`: onboarding default for new channels (`true` or `false`, default `true`)
 - `DEFAULT_MODE`: `safe` or `dangerous`; the example `.env` now uses **`dangerous` by default** so local devs get full power out of the box. For shared / prod servers you should:
-  - change `CODEX__DEFAULT_MODE` / `CLAUDE__DEFAULT_MODE` / `ANTIGRAVITY__DEFAULT_MODE` / `ZCODE__DEFAULT_MODE` back to `safe` in `.env`, and only enable `/cx_mode dangerous` in trusted channels; or
+  - change `CODEX__DEFAULT_MODE` / `CLAUDE__DEFAULT_MODE` / `ANTIGRAVITY__DEFAULT_MODE` / `ZCODE__DEFAULT_MODE` / `PI__DEFAULT_MODE` / `OMP__DEFAULT_MODE` back to `safe` in `.env`, and only enable dangerous mode in trusted channels; or
   - run the bot in a private guild where you trust all members
 - `DEFAULT_WORKSPACE_DIR`: optional shared default workspace for all providers
-- `CODEX__DEFAULT_WORKSPACE_DIR` / `CLAUDE__DEFAULT_WORKSPACE_DIR` / `ANTIGRAVITY__DEFAULT_WORKSPACE_DIR` / `ZCODE__DEFAULT_WORKSPACE_DIR`: provider-specific default workspaces that override the shared default
+- `CODEX__DEFAULT_WORKSPACE_DIR` / `CLAUDE__DEFAULT_WORKSPACE_DIR` / `ANTIGRAVITY__DEFAULT_WORKSPACE_DIR` / `ZCODE__DEFAULT_WORKSPACE_DIR` / `PI__DEFAULT_WORKSPACE_DIR` / `OMP__DEFAULT_WORKSPACE_DIR`: provider-specific default workspaces that override the shared default
 - `CHILD_THREAD_WORKSPACE_MODE`: child thread workspace strategy; `inherit` reuses the parent channel's explicit workspace, while `separate` makes each child thread use its own provider default or `WORKSPACE_ROOT/<threadId>` fallback
 - `WORKSPACE_ROOT`: legacy fallback root used only when neither thread override nor provider default is configured
 - `CODEX_BIN`: codex command/path (default `codex`)
 - `CLAUDE_BIN`: claude command/path (default `claude`)
 - `ANTIGRAVITY_BIN`: agy command/path (default `agy`)
 - `ZCODE_BIN`: zcode command/path (default `zcode`)
+- `PI_BIN`: Pi command/path (default `pi`)
+- `OMP_BIN`: OMP command/path (default `omp`)
 - Codex provider defaults for `model`, `effort`, and `fast mode` are read from `~/.codex/config.toml`; unless `[features].fast_mode = false` is set explicitly, fast mode defaults to on, and channel-level `!model`, `!effort`, and `!fast` only override the current thread
 - `CODEX_TIMEOUT_MS`: default runner hard timeout (ms). Today all providers share this default; `0` disables timeout, and `/cx_timeout` / `!timeout` can still override it per thread.
 - `PROGRESS_UPDATES_ENABLED`: enable/disable live progress updates in channel (default `true`)
@@ -339,7 +378,7 @@ Default IDs:
 If you manage bot services manually:
 
 - The runtime now blocks dangerous `launchctl` operations for protected bot labels, or rewrites them to a safe restart helper
-- Prefer `scripts/restart-discord-bot-service.sh <codex|claude|antigravity|zcode|all>`
+- Prefer `scripts/restart-discord-bot-service.sh <codex|claude|antigravity|zcode|pi|omp|wechat|all>`
 
 Check service and logs:
 
@@ -441,7 +480,7 @@ npm run send:channel -- --channel 1487823042121040036 --content "hello" --provid
 Notes:
 
 - By default it reuses the current `.env` Discord token, proxy settings, and `BOT_PROVIDER`
-- Use `--provider shared|codex|claude|antigravity` to choose a specific token group
+- Use `--provider shared|codex|claude|antigravity|zcode|pi|omp` to choose a specific token group
 - Choose exactly one content source: `--content`, `--content-file`, or `--stdin`
 
 ## Standalone runtime notes

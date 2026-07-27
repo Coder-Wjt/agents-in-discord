@@ -16,6 +16,7 @@ import {
   readCodexModelCatalog,
   readCodexProfileCatalog,
   readClaudeModelCatalog,
+  readPiFamilyModelCatalog,
   readProviderModelCatalog,
   renderMissingDiscordTokenHint,
   writeAntigravityModelSetting,
@@ -247,8 +248,10 @@ test('readCodexModelCatalog reports CLI catalog errors', () => {
 });
 
 test('readClaudeModelCatalog reads aliases and effort levels from Claude CLI help', () => {
+  const homeDir = path.join(makeTempRoot(), 'home');
   const catalog = readClaudeModelCatalog({
     claudeBin: 'claude-test',
+    env: { HOME: homeDir },
     now: () => 3000,
     execFileSyncFn(bin, args) {
       assert.equal(bin, 'claude-test');
@@ -289,6 +292,52 @@ test('readClaudeModelCatalog reads aliases and effort levels from Claude CLI hel
     ],
     error: null,
   });
+});
+
+test('readClaudeModelCatalog reads wrapped Claude help and configured local model names', () => {
+  const rootDir = makeTempRoot();
+  const homeDir = path.join(rootDir, 'home');
+  const settingsDir = path.join(homeDir, '.claude');
+  fs.mkdirSync(settingsDir, { recursive: true });
+  fs.writeFileSync(path.join(settingsDir, 'settings.json'), JSON.stringify({
+    model: null,
+    env: {
+      ANTHROPIC_DEFAULT_OPUS_MODEL: 'claude-opus-4-8',
+      ANTHROPIC_DEFAULT_OPUS_MODEL_NAME: 'claude-opus-5',
+      ANTHROPIC_DEFAULT_SONNET_MODEL: 'claude-sonnet-4-6',
+    },
+  }));
+
+  const catalog = readClaudeModelCatalog({
+    claudeBin: 'claude-test-wrapped',
+    env: { HOME: homeDir },
+    now: () => 3100,
+    execFileSyncFn() {
+      return [
+        '  --effort <level>                      Effort level for the current session',
+        '                                        (low, medium, high, xhigh, max)',
+        '  --model <model>                       Model for the current session. Provide',
+        '                                        an alias for the latest model (e.g.',
+        "                                        'fable', 'opus', or 'sonnet') or a",
+        '                                        model\'s full name (e.g.',
+        "                                        'claude-fable-5').",
+        '  -n, --name <name>                     Set a display name for this session',
+      ].join('\n');
+    },
+  });
+
+  assert.deepEqual(catalog.models.map((model) => model.slug), [
+    'fable',
+    'opus',
+    'sonnet',
+    'claude-fable-5',
+    'claude-opus-4-8',
+    'claude-opus-5',
+    'claude-sonnet-4-6',
+  ]);
+  assert.deepEqual(catalog.models[0].supportedReasoningLevels, ['low', 'medium', 'high', 'xhigh', 'max']);
+  assert.equal(catalog.models.find((model) => model.slug === 'claude-opus-5')?.visibility, 'settings');
+  assert.equal(catalog.error, null);
 });
 
 test('readClaudeDefaults reads ~/.claude/settings.json and reports malformed settings', () => {
@@ -651,4 +700,95 @@ test('createDiscordClient applies Discord intents and optional REST proxy agent'
   assert.deepEqual(client.options.intents, ['guilds', 'messages', 'content']);
   assert.deepEqual(client.options.partials, ['channel', 'message']);
   assert.equal(client.agent, restProxyAgent);
+});
+
+test('readPiFamilyModelCatalog reads models from the CLI JSON catalog', () => {
+  const calls = [];
+  const catalog = readPiFamilyModelCatalog({
+    provider: 'omp',
+    bin: '/usr/local/bin/omp',
+    execFileSyncFn: (bin, args) => {
+      calls.push({ bin, args });
+      return JSON.stringify({
+        models: [
+          {
+            provider: 'openai-codex',
+            id: 'gpt-5.6-sol',
+            selector: 'openai-codex/gpt-5.6-sol',
+            name: 'GPT-5.6-Sol',
+            thinking: ['low', 'medium', 'high', 'xhigh', 'max'],
+          },
+          {
+            provider: 'zenmux',
+            id: 'glm-5',
+            selector: 'zenmux/glm-5',
+            name: 'GLM-5',
+            thinking: ['auto', 'bogus-level'],
+          },
+        ],
+      });
+    },
+    now: () => 1_000,
+  });
+
+  assert.deepEqual(calls, [{ bin: '/usr/local/bin/omp', args: ['models', '--json'] }]);
+  assert.equal(catalog.error, null);
+  assert.deepEqual(catalog.models.map((model) => model.slug), [
+    'openai-codex/gpt-5.6-sol',
+    'zenmux/glm-5',
+  ]);
+  assert.equal(catalog.models[0].displayName, 'GPT-5.6-Sol');
+  assert.deepEqual(catalog.models[0].supportedReasoningLevels, ['low', 'medium', 'high', 'xhigh', 'max']);
+  // Unknown thinking levels are dropped so the panel cannot offer an unsettable value.
+  assert.deepEqual(catalog.models[1].supportedReasoningLevels, ['auto']);
+});
+
+test('readPiFamilyModelCatalog caches per provider and reports failures', () => {
+  let callCount = 0;
+  const execFileSyncFn = () => {
+    callCount += 1;
+    return JSON.stringify({ models: [{ id: 'gpt-5.6-sol', selector: 'openai-codex/gpt-5.6-sol' }] });
+  };
+
+  const first = readPiFamilyModelCatalog({ provider: 'pi', bin: 'pi-cached', execFileSyncFn, now: () => 5_000 });
+  const second = readPiFamilyModelCatalog({ provider: 'pi', bin: 'pi-cached', execFileSyncFn, now: () => 5_100 });
+  assert.equal(callCount, 1);
+  assert.deepEqual(first.models, second.models);
+
+  const failed = readPiFamilyModelCatalog({
+    provider: 'omp',
+    bin: 'omp-missing',
+    execFileSyncFn: () => { throw new Error('spawn omp-missing ENOENT'); },
+    now: () => 6_000,
+  });
+  assert.deepEqual(failed.models, []);
+  assert.match(failed.error, /ENOENT/);
+
+  const unparseable = readPiFamilyModelCatalog({
+    provider: 'omp',
+    bin: 'omp-garbage',
+    execFileSyncFn: () => 'not json',
+    now: () => 7_000,
+  });
+  assert.deepEqual(unparseable.models, []);
+  assert.match(unparseable.error, /unparseable/);
+});
+
+test('readProviderModelCatalog routes pi and omp to the Pi-family reader', () => {
+  const bins = [];
+  const read = (provider) => readProviderModelCatalog({
+    provider,
+    piBin: 'pi-routed',
+    ompBin: 'omp-routed',
+    execFileSyncFn: (bin) => {
+      bins.push(bin);
+      return JSON.stringify({ models: [{ selector: `${provider}/model-a` }] });
+    },
+    now: () => Date.now() + Math.random(),
+    ttlMs: 0,
+  });
+
+  assert.deepEqual(read('pi').models.map((m) => m.slug), ['pi/model-a']);
+  assert.deepEqual(read('omp').models.map((m) => m.slug), ['omp/model-a']);
+  assert.deepEqual(bins, ['pi-routed', 'omp-routed']);
 });

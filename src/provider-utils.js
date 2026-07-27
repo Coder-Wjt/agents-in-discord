@@ -64,6 +64,16 @@ export function buildRunnerArgs({
       mode,
     });
   }
+  if (normalizedProvider === 'pi' || normalizedProvider === 'omp') {
+    return buildPiFamilyArgs({
+      provider: normalizedProvider,
+      sessionId,
+      prompt,
+      mode,
+      model,
+      effort,
+    });
+  }
 
   return buildCodexArgs({
     sessionId,
@@ -167,5 +177,29 @@ function buildZCodeArgs({
   const args = ['--prompt', prompt, '--cwd', workspaceDir];
   if (sessionId) args.push('--resume', sessionId);
   args.push('--mode', mode === 'dangerous' ? 'yolo' : 'edit', '--json', '--no-color');
+  return args;
+}
+
+function buildPiFamilyArgs({
+  provider,
+  sessionId,
+  prompt,
+  mode,
+  model,
+  effort,
+}) {
+  const isOmp = provider === 'omp';
+  const args = ['-p', '--mode', 'json'];
+  if (isOmp) {
+    args.push('--approval-mode', mode === 'dangerous' ? 'yolo' : 'write');
+  } else if (mode === 'dangerous') {
+    args.push('--approve');
+  } else {
+    args.push('--no-approve', '--tools', 'read');
+  }
+  if (model) args.push('--model', model);
+  if (effort) args.push('--thinking', effort);
+  if (sessionId) args.push(isOmp ? '--resume' : '--session', sessionId);
+  args.push(prompt);
   return args;
 }

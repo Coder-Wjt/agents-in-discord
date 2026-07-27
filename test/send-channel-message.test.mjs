@@ -22,8 +22,27 @@ test('parseSendChannelMessageArgs accepts channel, content, provider, and json f
     stdin: false,
     json: true,
     provider: 'codex',
+    nonce: '',
     help: false,
   });
+});
+
+test('parseSendChannelMessageArgs accepts a bounded nonce and rejects unsafe values', () => {
+  const parsed = parseSendChannelMessageArgs([
+    '--channel', '123456789012345678',
+    '--content', 'retry-safe report',
+    '--nonce', 'f4dd93b1c73042aa9784a4195',
+  ]);
+
+  assert.equal(parsed.nonce, 'f4dd93b1c73042aa9784a4195');
+  assert.throws(
+    () => parseSendChannelMessageArgs(['--channel', '123456789012345678', '--content', 'x', '--nonce', 'x'.repeat(26)]),
+    /invalid --nonce/i,
+  );
+  assert.throws(
+    () => parseSendChannelMessageArgs(['--channel', '123456789012345678', '--content', 'x', '--nonce', 'bad nonce']),
+    /invalid --nonce/i,
+  );
 });
 
 test('parseSendChannelMessageArgs rejects invalid input combinations', () => {

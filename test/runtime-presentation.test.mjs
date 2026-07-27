@@ -41,6 +41,18 @@ test('runtime presentation formats runtime/session/permission labels', () => {
     presentation.formatPermissionsLabel({ provider: 'codex', mode: 'safe' }, 'zh'),
     '沙盒自动审查（workspace-write，approval auto_review）',
   );
+  assert.equal(
+    presentation.formatPermissionsLabel({ provider: 'pi', mode: 'safe' }, 'en'),
+    'read-only tools (--no-approve --tools read)',
+  );
+  assert.equal(
+    presentation.formatPermissionsLabel({ provider: 'omp', mode: 'safe' }, 'en'),
+    'write approval mode (--approval-mode write)',
+  );
+  assert.equal(
+    presentation.formatPermissionsLabel({ provider: 'omp', mode: 'dangerous' }, 'en'),
+    'full access (--approval-mode yolo)',
+  );
 });
 
 test('runtime presentation localizes and renders process/progress helper lines', () => {
@@ -81,4 +93,19 @@ test('runtime presentation wraps progress list mutation with configured limits',
   assert.match(presentation.formatCompletedStepsSummary(completed), /step b/);
   assert.match(presentation.formatCompletedStepsSummary(completed), /step c/);
   assert.doesNotMatch(presentation.formatCompletedStepsSummary(completed), /step a/);
+});
+
+test('createRuntimePresentation passes showReasoning into narration extraction', () => {
+  const ev = {
+    type: 'item.completed',
+    item: { id: 'rs_1', type: 'reasoning', text: '**Reading the config**' },
+  };
+
+  // The narration helpers previously forwarded no options, so SHOW_REASONING
+  // had no effect on the process stream even when enabled.
+  const off = createRuntimePresentation({ showReasoning: false });
+  assert.equal(off.extractProcessNarrationFromEvent(ev), '');
+
+  const on = createRuntimePresentation({ showReasoning: true });
+  assert.equal(on.extractProcessNarrationFromEvent(ev), '**Reading the config**');
 });

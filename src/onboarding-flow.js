@@ -10,7 +10,7 @@ import {
 } from './platforms/inbound-event.js';
 import { assertInteractionResponse } from './platforms/interaction-response.js';
 
-const PROVIDER_CHOICES = Object.freeze(['codex', 'claude', 'antigravity', 'zcode']);
+const PROVIDER_CHOICES = Object.freeze(['codex', 'claude', 'antigravity', 'zcode', 'pi', 'omp']);
 
 function formatWorkspaceSourceLabel(source, language) {
   const value = String(source || '').trim().toLowerCase();
@@ -262,11 +262,13 @@ export function createOnboardingFlow({
     if (current === 2) {
       if (botProvider) return null;
       const activeProvider = getSessionProvider(session);
-      return createCommandActionRow(PROVIDER_CHOICES.map((provider) => createCommandButton({
-        id: buildOnboardingButtonId('set_provider', current, userId, provider),
-        label: provider,
-        style: activeProvider === provider ? 'primary' : 'secondary',
-      })));
+      return Array.from({ length: Math.ceil(PROVIDER_CHOICES.length / 5) }, (_, index) => (
+        createCommandActionRow(PROVIDER_CHOICES.slice(index * 5, index * 5 + 5).map((provider) => createCommandButton({
+          id: buildOnboardingButtonId('set_provider', current, userId, provider),
+          label: provider,
+          style: activeProvider === provider ? 'primary' : 'secondary',
+        })))
+      ));
     }
 
     if (current === 3) {
@@ -321,7 +323,8 @@ export function createOnboardingFlow({
     ];
 
     const configRow = buildOnboardingConfigRow(current, key, userId, session, lang);
-    if (configRow) rows.push(configRow);
+    if (Array.isArray(configRow)) rows.push(...configRow);
+    else if (configRow) rows.push(configRow);
     return rows;
   }
 
@@ -332,7 +335,7 @@ export function createOnboardingFlow({
       ? [
         'Interactive controls are unavailable. Continue with text commands:',
         current === 1 ? '• `!language <zh|en>`' : null,
-        current === 2 && !botProvider ? '• `!provider <codex|claude|antigravity|zcode>`' : null,
+        current === 2 && !botProvider ? '• `!provider <codex|claude|antigravity|zcode|pi|omp>`' : null,
         current === 3 ? '• `!setdir <absolute-path|default>`' : null,
         current === 4 ? '• `!status` and `!doctor`' : null,
         '• `!onboarding` shows the current guide again.',
@@ -340,7 +343,7 @@ export function createOnboardingFlow({
       : [
         '当前平台没有可用的交互控件，请改用文本命令继续：',
         current === 1 ? '• `!language <zh|en>`' : null,
-        current === 2 && !botProvider ? '• `!provider <codex|claude|antigravity|zcode>`' : null,
+        current === 2 && !botProvider ? '• `!provider <codex|claude|antigravity|zcode|pi|omp>`' : null,
         current === 3 ? '• `!setdir <绝对路径|default>`' : null,
         current === 4 ? '• `!status` 与 `!doctor`' : null,
         '• `!onboarding` 可重新查看当前引导。',

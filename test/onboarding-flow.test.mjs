@@ -214,12 +214,22 @@ test('createOnboardingFlow builds provider buttons in shared mode', () => {
 
   const rows = flow.buildOnboardingActionRows(2, 'thread-1', '12345', session, 'zh');
 
-  assert.equal(rows.length, 2);
+  assert.equal(rows.length, 3);
   assert.deepEqual(
-    rows[1].components.map((component) => component.label),
-    ['codex', 'claude', 'antigravity', 'zcode'],
+    rows.slice(1).flatMap((row) => row.components.map((component) => component.label)),
+    ['codex', 'claude', 'antigravity', 'zcode', 'pi', 'omp'],
   );
   assert.equal(rows[1].components[1].style, 'primary');
+  assert.ok(rows.every((row) => row.components.length <= 5));
+});
+
+test('createOnboardingFlow fallback advertises every shared-mode provider', () => {
+  const session = { language: 'en', provider: 'codex', onboardingEnabled: true };
+  const flow = createFlow({ session });
+
+  const view = flow.buildOnboardingView(2, 'thread-1', '12345', session, { id: 'thread-1' }, 'en');
+
+  assert.match(view.fallbackText, /!provider <codex\|claude\|antigravity\|zcode\|pi\|omp>/);
 });
 
 test('createOnboardingFlow hides provider buttons when bot provider is locked', () => {

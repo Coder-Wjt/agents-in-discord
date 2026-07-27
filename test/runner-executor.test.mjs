@@ -104,6 +104,154 @@ test('createRunnerExecutor reads Antigravity stdout and conversation id', async 
   assert.deepEqual(result.finalAnswerMessages, ['Antigravity done']);
 });
 
+test('createRunnerExecutor completes an OMP JSON turn and preserves its session id', async () => {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.killed = false;
+  const spawnCalls = [];
+
+  const executor = createRunnerExecutor({
+    spawnEnv: process.env,
+    ensureDir: () => {},
+    normalizeProvider: testNormalizeProvider,
+    getSessionProvider: (session) => session.provider,
+    getProviderBin: () => 'omp',
+    getSessionId: (session) => session.runnerSessionId,
+    resolveModelSetting: () => ({ value: null, source: 'provider' }),
+    resolveReasoningEffortSetting: () => ({ value: null, source: 'provider' }),
+    resolveTimeoutSetting: () => ({ timeoutMs: 0 }),
+    resolveCompactStrategySetting: () => ({ strategy: 'hard' }),
+    resolveCompactEnabledSetting: () => ({ enabled: false }),
+    resolveNativeCompactTokenLimitSetting: () => ({ tokens: 0 }),
+    normalizeTimeoutMs: (value) => Number(value || 0),
+    safeError: (err) => String(err?.message || err),
+    stopChildProcess: () => {},
+    startSessionProgressBridge: () => () => {},
+    extractAgentMessageText,
+    isFinalAnswerLikeAgentMessage,
+    spawnFn: (bin, args) => {
+      spawnCalls.push({ bin, args });
+      setImmediate(() => {
+        child.stdout.emit('data', Buffer.from([
+          '{"type":"session","version":3,"id":"019-omp-session","cwd":"/tmp/workspace"}',
+          '{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"OMP_DONE"}],"usage":{"input":8,"output":2,"totalTokens":10},"stopReason":"stop"}}',
+          '',
+        ].join('\n')));
+        child.emit('close', 0, null);
+      });
+      return child;
+    },
+  });
+
+  const result = await executor.runProviderTask({
+    session: { provider: 'omp', mode: 'dangerous', runnerSessionId: null },
+    workspaceDir: '/tmp/workspace',
+    prompt: 'hello',
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.threadId, '019-omp-session');
+  assert.deepEqual(result.finalAnswerMessages, ['OMP_DONE']);
+  assert.deepEqual(result.usage, { input: 8, output: 2, totalTokens: 10 });
+  assert.equal(spawnCalls[0].bin, 'omp');
+  assert.deepEqual(spawnCalls[0].args, ['-p', '--mode', 'json', '--approval-mode', 'yolo', 'hello']);
+});
+
+test('createRunnerExecutor rejects Pi-family model errors even when the CLI exits zero', async () => {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.killed = false;
+
+  const executor = createRunnerExecutor({
+    spawnEnv: process.env,
+    ensureDir: () => {},
+    normalizeProvider: testNormalizeProvider,
+    getSessionProvider: (session) => session.provider,
+    getProviderBin: () => 'pi',
+    getSessionId: () => null,
+    resolveModelSetting: () => ({ value: null, source: 'provider' }),
+    resolveReasoningEffortSetting: () => ({ value: null, source: 'provider' }),
+    resolveTimeoutSetting: () => ({ timeoutMs: 0 }),
+    resolveCompactStrategySetting: () => ({ strategy: 'hard' }),
+    resolveCompactEnabledSetting: () => ({ enabled: false }),
+    resolveNativeCompactTokenLimitSetting: () => ({ tokens: 0 }),
+    normalizeTimeoutMs: (value) => Number(value || 0),
+    safeError: (err) => String(err?.message || err),
+    stopChildProcess: () => {},
+    startSessionProgressBridge: () => () => {},
+    extractAgentMessageText,
+    isFinalAnswerLikeAgentMessage,
+    spawnFn: () => {
+      setImmediate(() => {
+        child.stdout.emit('data', Buffer.from(
+          '{"type":"message_end","message":{"role":"assistant","content":[],"stopReason":"error","errorMessage":"provider unavailable"}}\n',
+        ));
+        child.emit('close', 0, null);
+      });
+      return child;
+    },
+  });
+
+  const result = await executor.runProviderTask({
+    session: { provider: 'pi', mode: 'safe' },
+    workspaceDir: '/tmp/workspace',
+    prompt: 'hello',
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error, 'provider unavailable');
+});
+
+test('createRunnerExecutor rejects incomplete Pi-family output even when the CLI exits zero', async () => {
+  for (const stdout of [
+    'not-json\n',
+    '{"type":"session","id":"pi-session","cwd":"/tmp/workspace"}\n',
+  ]) {
+    const child = new EventEmitter();
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    child.killed = false;
+    const executor = createRunnerExecutor({
+      spawnEnv: process.env,
+      ensureDir: () => {},
+      normalizeProvider: testNormalizeProvider,
+      getSessionProvider: (session) => session.provider,
+      getProviderBin: () => 'pi',
+      getSessionId: (session) => session.runnerSessionId,
+      resolveModelSetting: () => ({ value: null, source: 'provider' }),
+      resolveReasoningEffortSetting: () => ({ value: null, source: 'provider' }),
+      resolveTimeoutSetting: () => ({ timeoutMs: 0 }),
+      resolveCompactStrategySetting: () => ({ strategy: 'hard' }),
+      resolveCompactEnabledSetting: () => ({ enabled: false }),
+      resolveNativeCompactTokenLimitSetting: () => ({ tokens: 0 }),
+      normalizeTimeoutMs: (value) => Number(value || 0),
+      safeError: (err) => String(err?.message || err),
+      stopChildProcess: () => {},
+      startSessionProgressBridge: () => () => {},
+      extractAgentMessageText,
+      isFinalAnswerLikeAgentMessage,
+      spawnFn: () => {
+        setImmediate(() => {
+          child.stdout.emit('data', Buffer.from(stdout));
+          child.emit('close', 0, null);
+        });
+        return child;
+      },
+    });
+
+    const result = await executor.runProviderTask({
+      session: { provider: 'pi', mode: 'safe', runnerSessionId: null },
+      workspaceDir: '/tmp/workspace',
+      prompt: 'hello',
+    });
+
+    assert.equal(result.ok, false);
+    assert.match(result.error, /Pi JSON stream/);
+  }
+});
+
 test('createRunnerExecutor parses pretty-printed ZCode JSON and preserves its session', async () => {
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
@@ -910,10 +1058,10 @@ test('createRunnerExecutor extends Codex goal completion grace while final outpu
 
   assert.equal(killed, true);
   assert.equal(result.ok, true);
-  assert.deepEqual(result.finalAnswerMessages, [
-    '第一段总结已经出来。',
-    '第二段验证结果也完整出来。',
-  ]);
+  // The grace period still let both segments arrive; the newest is the reply
+  // and the one it superseded is kept as progress.
+  assert.deepEqual(result.finalAnswerMessages, ['第二段验证结果也完整出来。']);
+  assert.ok(result.messages.includes('第一段总结已经出来。'));
 });
 
 test('createRunnerExecutor lets Codex finish a blocker final answer before stopping', async () => {
@@ -997,8 +1145,9 @@ test('createRunnerExecutor lets Codex finish a blocker final answer before stopp
 
   assert.equal(killed, true);
   assert.equal(result.ok, true);
+  // Here the second message extends the first, so keeping only the newest also
+  // avoids emitting the truncated version alongside the complete one.
   assert.deepEqual(result.finalAnswerMessages, [
-    '目标未完成。实体手机 60 秒真实 JSON 仍缺，不能关闭 goal。',
     '目标未完成。实体手机 60 秒真实 JSON 仍缺，不能关闭 goal。还需要补上这份验收记录后再交付。',
   ]);
 });

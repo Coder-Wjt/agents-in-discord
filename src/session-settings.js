@@ -338,7 +338,7 @@ export function parseReasoningEffortInput(value, { allowDefault = false } = {}) 
   const raw = String(value || '').trim().toLowerCase();
   if (!raw) return null;
   if (allowDefault && raw === 'default') return 'default';
-  if (['low', 'medium', 'high', 'xhigh'].includes(raw)) return raw;
+  if (['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'auto'].includes(raw)) return raw;
   return null;
 }
 

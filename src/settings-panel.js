@@ -657,13 +657,12 @@ export function createSettingsPanel({
     switch (activeSection) {
       case 'provider': {
         if (botProvider) return [];
-        return [
-          createCommandActionRow(['codex', 'claude', 'antigravity', 'zcode'].map((provider) => createCommandButton({
+        return chunk(['codex', 'claude', 'antigravity', 'zcode', 'pi', 'omp'], 5)
+          .map((providers) => createCommandActionRow(providers.map((provider) => createCommandButton({
             id: buildSettingsComponentId('set', 'provider', provider, userId),
             label: provider,
             style: snapshot.provider === provider ? 'primary' : 'secondary',
-          }))),
-        ];
+          }))));
       }
 
       case 'defaults': {

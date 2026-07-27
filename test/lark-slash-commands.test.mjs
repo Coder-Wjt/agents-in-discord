@@ -22,9 +22,11 @@ const syncScript = fileURLToPath(new URL('../scripts/sync-lark-slash-commands.mj
 test('Lark slash-command manifest renders the shared command surface with a provider prefix', () => {
   const manifest = buildLarkSlashCommandManifest({ slashPrefix: 'cx' });
 
-  assert.equal(manifest.length, 42);
+  assert.equal(manifest.length, 46);
   assert.equal(manifest.some((item) => item.command === 'cx_status'), true);
   assert.equal(manifest.some((item) => item.command === 'cx_abort'), true);
+  assert.equal(manifest.some((item) => item.command === 'cx_pi_sessions'), true);
+  assert.equal(manifest.some((item) => item.command === 'cx_omp_resume'), true);
   assert.equal(manifest.every((item) => item.command.length <= 64), true);
   assert.equal(manifest.every((item) => item.description.length <= 100), true);
 });

@@ -36,6 +36,8 @@ test('getProviderBin respects configured provider bins', () => {
   assert.equal(getProviderBin('claude', { claudeBin: '/bin/claude-custom' }), '/bin/claude-custom');
   assert.equal(getProviderBin('antigravity', { antigravityBin: '/bin/agy-custom' }), '/bin/agy-custom');
   assert.equal(getProviderBin('zcode', { zcodeBin: '/bin/zcode-custom' }), '/bin/zcode-custom');
+  assert.equal(getProviderBin('pi', { piBin: '/bin/pi-custom' }), '/bin/pi-custom');
+  assert.equal(getProviderBin('omp', { ompBin: '/bin/omp-custom' }), '/bin/omp-custom');
   assert.equal(getProviderBin('gemini', { codexBin: '/bin/codex-custom' }), '/bin/codex-custom');
 });
 

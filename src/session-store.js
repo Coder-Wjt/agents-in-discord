@@ -197,6 +197,7 @@ export function createSessionStore({
         runnerSessionId: null,
         codexThreadId: null,
         lastInputTokens: null,
+        lastObservedModel: null,
         model: null,
         effort: null,
         fastMode: null,
@@ -303,6 +304,10 @@ export function createSessionStore({
     }
     if (session.lastInputTokens === undefined) {
       session.lastInputTokens = null;
+      migrated = true;
+    }
+    if (session.lastObservedModel === undefined) {
+      session.lastObservedModel = null;
       migrated = true;
     }
     if (session.language === undefined) {

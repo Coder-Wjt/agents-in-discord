@@ -2,6 +2,8 @@ import { createClaudeProviderAdapter } from './providers/claude.js';
 import { createCodexProviderAdapter } from './providers/codex.js';
 import { createAntigravityProviderAdapter } from './providers/antigravity.js';
 import { createZCodeProviderAdapter } from './providers/zcode.js';
+import { createPiProviderAdapter } from './providers/pi.js';
+import { createOmpProviderAdapter } from './providers/omp.js';
 import { createProviderAdapterRegistry } from './providers/index.js';
 import {
   extractUnphasedCodexAgentMessage,
@@ -30,12 +32,60 @@ export function createRunnerEventParser({
     createZCodeProviderAdapter({
       parseEvent: (event, state) => handleZCodeRunnerEvent(event, state),
     }),
+    createPiProviderAdapter({
+      parseEvent: (event, state, ensureSessionBridge) => handlePiFamilyRunnerEvent(event, state, ensureSessionBridge),
+    }),
+    createOmpProviderAdapter({
+      parseEvent: (event, state, ensureSessionBridge) => handlePiFamilyRunnerEvent(event, state, ensureSessionBridge),
+    }),
   ]);
 
   return function handleRunnerEvent(provider, event, state, ensureSessionBridge) {
     const adapter = providerAdapters.get(normalizeProvider(provider));
     adapter.runtime.parseEvent(event, state, ensureSessionBridge);
   };
+}
+
+export function handlePiFamilyRunnerEvent(event, state, ensureSessionBridge = () => {}) {
+  const eventType = String(event?.type || '').trim().toLowerCase();
+  if (eventType === 'session') {
+    const sessionId = String(event?.id || event?.sessionId || event?.session_id || '').trim();
+    if (sessionId) {
+      state.threadId = sessionId;
+      state.meta.piFamilySawSession = true;
+      ensureSessionBridge(sessionId);
+    }
+    return;
+  }
+
+  if (eventType !== 'message_end') return;
+  const message = event?.message;
+  if (!message || String(message.role || '').trim().toLowerCase() !== 'assistant') return;
+  state.meta.piFamilyAssistantEnded = true;
+
+  const stopReason = String(message.stopReason || message.stop_reason || '').trim().toLowerCase();
+  if (stopReason === 'error') {
+    const error = String(message.errorMessage || message.error_message || 'Pi-family model request failed').trim();
+    state.meta.piFamilyError = error;
+    state.logs.push(error);
+  }
+
+  const textParts = [];
+  const thinkingParts = [];
+  for (const part of Array.isArray(message.content) ? message.content : []) {
+    const type = String(part?.type || '').trim().toLowerCase();
+    if (type === 'text') {
+      const text = String(part?.text || '').trim();
+      if (text) textParts.push(text);
+    } else if (type === 'thinking') {
+      const thinking = String(part?.thinking || part?.text || '').trim();
+      if (thinking) thinkingParts.push(thinking);
+    }
+  }
+  for (const thinking of thinkingParts) appendUniqueText(state.reasonings, thinking);
+  const text = textParts.join('\n\n').trim();
+  if (text) appendUniqueText(state.finalAnswerMessages, text);
+  if (message.usage && typeof message.usage === 'object') state.usage = message.usage;
 }
 
 export function handleZCodeRunnerEvent(event, state) {
@@ -91,7 +141,7 @@ export function handleCodexRunnerEvent(event, state, ensureSessionBridge, {
         appendPendingCodexAgentMessage(state, unphasedText);
         break;
       }
-      if (isFinalAnswerLikeAgentMessage(item)) appendUniqueText(state.finalAnswerMessages, text);
+      if (isFinalAnswerLikeAgentMessage(item)) appendCodexFinalAnswer(state, text);
       else appendUniqueText(state.messages, text);
       break;
     }
@@ -106,16 +156,22 @@ export function handleCodexRunnerEvent(event, state, ensureSessionBridge, {
     case 'agent_message':
     case 'assistant_message':
     case 'message': {
+      // `response_item/message` replays the whole conversation, user turns
+      // included (observed: 127 user + 8 developer entries in one session).
+      // Only assistant turns are the agent speaking; without this the reply
+      // could end up being the user's own prompt echoed back.
+      const role = String(event?.role || '').trim().toLowerCase();
+      if (role && role !== 'assistant') break;
       const text = extractAgentMessageText(event);
       if (!text) break;
-      if (isFinalAnswerLikeAgentMessage(event)) appendUniqueText(state.finalAnswerMessages, text);
+      if (isFinalAnswerLikeAgentMessage(event)) appendCodexFinalAnswer(state, text);
       else appendUniqueText(state.messages, text);
       break;
     }
     case 'task_complete': {
       const text = String(event.last_agent_message || '').trim();
       if (matchesAnyComparableText(state.messages, text)) break;
-      if (text) appendUniqueText(state.finalAnswerMessages, text);
+      if (text) appendCodexFinalAnswer(state, text);
       break;
     }
     case 'reasoning.delta':
@@ -227,6 +283,25 @@ function appendUniqueText(list, text) {
   const previous = String(list?.[list.length - 1] || '').trim();
   if (normalizeComparableText(previous) === normalizeComparableText(next)) return;
   list.push(next);
+}
+
+// Long `codex exec resume` sessions label nearly every agent_message
+// `phase: "final_answer"` — 118 of them in one observed 1h21m run. Appending
+// each one built a 69k-character reply that concatenated the whole session
+// transcript. Only the newest is the actual answer; the ones it supersedes were
+// mid-task updates, so they move to `messages` (progress) instead.
+function appendCodexFinalAnswer(state, text) {
+  const next = String(text || '').trim();
+  if (!next) return;
+  const list = Array.isArray(state.finalAnswerMessages) ? state.finalAnswerMessages : [];
+  const previous = String(list[list.length - 1] || '').trim();
+  if (previous && normalizeComparableText(previous) === normalizeComparableText(next)) return;
+  if (previous) {
+    list.pop();
+    appendUniqueText(state.messages, previous);
+  }
+  list.push(next);
+  state.finalAnswerMessages = list;
 }
 
 function appendPendingCodexAgentMessage(state, text) {

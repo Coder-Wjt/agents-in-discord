@@ -161,10 +161,24 @@ export function createReportFormatters({
         ? `${value} _(env default)_`
         : `${value} _(环境默认)_`;
     }
+    if (source === 'runtime observed') {
+      return language === 'en'
+        ? `\`${value}\` (runtime observed)`
+        : `\`${value}\`（实际运行）`;
+    }
     if (language === 'en') {
       return `\`${value}\` (${formatSettingSourceLabel(source, language)})`;
     }
     return `\`${value}\`（${formatSettingSourceLabel(source, language)}）`;
+  }
+
+  function resolveReportedModelSetting(session) {
+    const configured = resolveModelSetting(session);
+    const observed = String(session?.lastObservedModel || '').trim();
+    if (getSessionProvider(session) === 'claude' && observed) {
+      return { value: observed, source: 'runtime observed' };
+    }
+    return configured;
   }
 
   function formatResolvedCodexProfileLabel(setting, language = 'en') {
@@ -643,7 +657,7 @@ export function createReportFormatters({
     const lang = normalizeUiLanguage(language);
     const provider = getSessionProvider(session);
     const defaults = getProviderDefaults(provider);
-    const modelSetting = resolveModelSetting(session);
+    const modelSetting = resolveReportedModelSetting(session);
     const codexProfileSetting = resolveCodexProfileSetting(session);
     const effortSetting = resolveReasoningEffortSetting(session);
     const cliHealth = getCliHealth(provider);
@@ -816,7 +830,7 @@ export function createReportFormatters({
     const lang = normalizeUiLanguage(language);
     const provider = getSessionProvider(session);
     const defaults = getProviderDefaults(provider);
-    const modelSetting = resolveModelSetting(session);
+    const modelSetting = resolveReportedModelSetting(session);
     const effortSetting = resolveReasoningEffortSetting(session);
     const effortValue = getReasoningEffortLevels(provider).length
       ? formatProgressSettingValue(effortSetting, defaults.effort, lang)
@@ -1300,7 +1314,7 @@ export function createReportFormatters({
         supportsThreads && (provider === 'codex' || provider === 'claude') ? `• \`${slashRef('fork')} [name]\` / \`!fork [name]\` — create a native ${getProviderDisplayName(provider)} fork in a new ${childConversation}` : null,
         supportsThreads && provider === 'codex' ? `• \`${slashRef('side')} action:<start|status|close> name:<optional>\` / \`!side [start|status|close] [name]\` — open or manage a temporary Codex side conversation` : null,
         provider === 'codex' ? `• \`${slashRef('goal')} action:<status|set|pause|resume|done|clear|budget>\` / \`!goal <status|objective|pause|resume|done|clear>\` — manage the current Codex goal; active goals continue until marked complete or blocked` : null,
-        !botProvider ? '• `!provider <codex|claude|antigravity|zcode|status>` — switch provider for current channel' : null,
+        !botProvider ? '• `!provider <codex|claude|antigravity|zcode|pi|omp|status>` — switch provider for current channel' : null,
         '',
         '**Workspace**',
         '• `!setdir <path|browse|default|status>` — set or clear current thread workspace',
@@ -1359,7 +1373,7 @@ export function createReportFormatters({
       supportsThreads && (provider === 'codex' || provider === 'claude') ? `• \`${slashRef('fork')} [name]\` / \`!fork [name]\` — 用 ${getProviderDisplayName(provider)} 原生 fork 创建新 ${childConversation}` : null,
       supportsThreads && provider === 'codex' ? `• \`${slashRef('side')} action:<start|status|close> name:<可选>\` / \`!side [start|status|close] [name]\` — 开启或管理临时 Codex side conversation` : null,
       provider === 'codex' ? `• \`${slashRef('goal')} action:<status|set|pause|resume|done|clear|budget>\` / \`!goal <状态|目标|暂停|恢复|完成|清除>\` — 管理当前 Codex goal；active 时应持续推进直到标记完成或报告阻塞` : null,
-      !botProvider ? '• `!provider <codex|claude|antigravity|zcode|status>` — 切换当前频道 provider' : null,
+      !botProvider ? '• `!provider <codex|claude|antigravity|zcode|pi|omp|status>` — 切换当前频道 provider' : null,
       '',
       '**工作目录**',
       '• `!setdir <path|browse|default|status>` — 设置或清除当前 thread 的 workspace',
