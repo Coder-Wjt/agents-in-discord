@@ -29,6 +29,7 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 - Added `npm run check:lark`, a secret-free deployment preflight that shares production configuration parsing, validates local SDK/CLI availability, and can optionally verify CLI or SDK credentials, bot identity, and the versioned tenant-scope baseline without starting consumers or sending messages.
 - Added an explicit-write `smoke:lark-dm` driver: the default is a no-message preflight, while `--apply` verifies ordinary private prompts, parameterized native commands, and unknown slash-path fallback without exposing identifiers, credentials, or message bodies.
 - Added an explicit-write `smoke:lark-denial` driver: the default is a no-message identity preflight, while `--apply` synthesizes an unauthorized shared-card action, sends and reads back one real private bot denial, and asserts zero shared-card updates and zero extra event consumers without exposing identifiers or message bodies.
+- Added `smoke:lark-denial-live` for the real second-user acceptance: its read-only preflight discovers the single active runtime/group, member count, and owner-only allowlist; explicit preparation writes one shared card only with at least two users, reuses the production consumer, records a boolean-only private-delivery receipt, and verifies that the shared-card hash stayed unchanged.
 - Added an explicit-write `smoke:lark-webhook-edge` driver: the default is a local dependency preflight, while `--apply` uses a temporary public TLS tunnel and synthetic random secrets to verify encrypted challenges/events, invalid-signature rejection, and listener restart recovery without changing the Lark app configuration.
 - Added Lark task-status reactions through the shared message-delivery status port.
 - Added Lark group reply-chain child conversations for shared Codex/Claude fork and Codex side flows, including stable `root_id` session keys, root-message rename/cleanup markers, recent-output replay, failure compensation, and card-action context restoration.
@@ -48,6 +49,7 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 - Accepted Node.js 18 for the Lark implementation; any future Slack runtime upgrade remains a separate decision.
 - Changed successful Lark Card 2.0 form completion to keep the submitted form as a Card 2.0 saved acknowledgement and send the refreshed Card 1.0 Settings panel as a new message, avoiding an unsupported in-place schema downgrade.
 - Changed non-form `ephemeral` responses from an existing private Lark card to update that private card in place, including after a process restart when only the embedded source-conversation context remains.
+- Kept live Lark denial receipts local and instance-isolated with mode `0600`; they retain the prepared shared-card correlation needed for verification but never store the denied actor or private message/chat identifiers.
 
 ### Removed
 
@@ -98,6 +100,8 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 - Verified the credentialed synthetic private-denial rehearsal with one real bot DM read back successfully, zero shared-card updates, and zero extra event consumers. This does not replace the remaining second-user click on a real shared card.
 - Re-ran the expanded checkpoint with `npm run test:lark` at 123/123 and `npm run test:progress` at 847/847; credential-verified readiness and the no-tunnel webhook edge preflight also passed.
 - Re-ran the private-denial checkpoint with `npm run test:lark` at 127/127 and `npm run test:progress` at 851/851; credential-verified readiness remained at scopes 9/9, events 2/2, callbacks 1/1, menu keys 7/7, and native slash commands 46/46.
+- Ran the live private-denial preflight against the active production CLI runtime: one accessible group and the owner-only allowlist were found, but the group currently contains only one user, so preparation correctly sent no card and created no acceptance state.
+- Re-ran the live-denial checkpoint with `npm run test:lark` at 139/139 and `npm run test:progress` at 863/863; both suites completed with zero failures, cancellations, or skips.
 
 ## [0.14.0] - 2026-07-25
 

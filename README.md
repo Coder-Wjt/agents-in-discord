@@ -128,12 +128,19 @@ npm run smoke:lark-webhook-edge -- --apply
 # 私密拒绝默认只预检；显式 --apply 才向当前 CLI 用户发送一条真实 bot 私聊
 npm run smoke:lark-denial
 npm run smoke:lark-denial -- --apply
+# 真实第二用户点击默认只预检；群内已有第二用户后才允许 prepare
+npm run smoke:lark-denial-live
+npm run smoke:lark-denial-live -- --prepare --wait-ms 600000
+# 也可以先 prepare，第二用户点击后再单独运行 --verify
+npm run smoke:lark-denial-live -- --verify
 # 确认只读差异后才执行：npm run sync:lark-commands -- --apply
 ```
 
 `smoke:lark-webhook-edge` 的 `--apply` 使用临时 TryCloudflare HTTPS 隧道和随机合成 token/key，验证公网健康探针、加密 challenge、签名/加密事件、错误签名通用拒绝以及 listener 重启恢复；它不会读取生产凭证或修改飞书应用配置。该 smoke 只能证明公网 TLS/回源边缘，不能替代开放平台真实菜单、slash command、卡片 action 和重启验收。
 
 `smoke:lark-denial` 要求所选 `lark-cli` profile 的 bot/user identity 均 ready。显式 `--apply` 会合成一次未授权群卡片动作，向当前 CLI 用户发送并读取回验一条真实 bot 私聊，同时断言共享卡片更新为 0、额外事件消费者为 0；报告不输出身份、会话、消息标识或正文。它是有凭证的合成回调演练，不能替代第二位用户点击真实共享卡片的验收。
+
+`smoke:lark-denial-live` 用于完成第二用户真实点击闭环。默认只读发现唯一活动 Lark 实例、现有群会话、群成员数和 owner-only allowlist；只有群内至少有两位真实用户时，显式 `--prepare` 才发送一张共享验收卡。生产 consumer 在拒绝私聊成功后会把不含被拒用户或私聊消息标识的布尔回执写入本机忽略提交的 `data/` 状态；`--verify` 再通过 bot API 校验私聊与群聊分离、被拒操作者不是 owner 且共享卡片哈希未变化。该工具不会启动第二套事件消费者，报告也不输出 app/chat/user/message ID、profile、凭证或卡片正文。
 
 然后启动：
 

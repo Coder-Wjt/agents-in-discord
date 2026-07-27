@@ -35,7 +35,7 @@
 | 凭证与线上应用 | 已通过 | tenant scopes 9/9、事件 2/2、卡片回调 1/1、菜单键 7/7、原生命令 46/46 | command spec 或应用版本变更后重新运行只读审计 |
 | 私聊命令闭环 | 已通过 | 主动消息、`!status`、`!settings`、`/cx_status`、普通 prompt、带参数命令和未知 `/path` prompt 回退已验证 | 应用版本或命令表变化后重跑自动 smoke |
 | 原生卡片与表单 | 已通过 | 卡片发送/原位更新、select、Card 2.0 校验与成功保存、私密响应及跨重启上下文恢复已验证 | 应用版本或卡片 schema 变化后重跑 |
-| 群聊与 reply chain | 部分通过 | 隔离群已验证 @/未 @、fork/side、新根与链内回复；side 关闭后同一交互卡片根原位写入锁定标记；有凭证的合成拒绝演练验证真实私聊发送/回读、共享更新 0、额外消费者 0 | 由第二位不具备操作权限的用户点击真实共享卡片，确认拒绝仅进入其私聊 |
+| 群聊与 reply chain | 部分通过 | 隔离群已验证 @/未 @、fork/side、新根与链内回复；side 关闭后同一交互卡片根原位写入锁定标记；有凭证的合成拒绝演练验证真实私聊发送/回读、共享更新 0、额外消费者 0；live preflight 已确认唯一活动实例、唯一群、owner-only allowlist，但当前群用户数为 1，因此拒绝 prepare | 第二位不具备操作权限的用户加入现有群后运行 live prepare/verify，确认拒绝仅进入其私聊 |
 | 附件与任务控制 | 已通过 | 真实图片已下载并作为原生图片输入被精确理解；真实长任务取消后 reaction 从 `THINKING` 更新为 `No` | 应用权限或 transport 变化后重跑 |
 | 恢复与指标 | 已通过 | 自动化覆盖重连、自愈和连接/投递快照；真实 CLI SIGTERM 已验证空闲及运行中任务退出；真实 consumer-loss 已验证主进程内 self-heal；受控代理断网验证同一主进程 reconnect/reconnected、3/3 consumers 恢复，`!status` 显示重试 1、自愈 0、投递 1/2/0 和脱敏最近失败；临时代理修复不再持久化到 `.env` | transport、代理或投递实现变化后重跑 |
 | Webhook 公网部署 | 待验收 | 本地自动化覆盖 challenge、token、签名、解密、去重、body/timeout/health 边界；临时公网 TLS smoke 已覆盖加密 challenge、签名/加密事件、错误签名拒绝和 listener 重启恢复 | 在生产 TLS 反向代理后完成开放平台真实签名/加密事件、菜单、slash command、卡片 action 与重启恢复 smoke |
@@ -135,7 +135,23 @@ npm run smoke:lark-denial -- --apply
 
 默认只检查所选 `lark-cli` profile 的 bot/user identity，不发送消息。显式 `--apply` 会合成一次未授权群卡片 action，向当前 CLI 用户发送并读取回验一条真实 bot 私聊，断言共享卡片更新为 0 且没有启动额外事件消费者；输出只包含布尔值和计数。因为它没有使用第二位用户，也没有接收真实开放平台 callback，所以只能作为步骤 6 前的安全演练，不能把该步骤标记为通过。
 
-2026-07-27 的 CLI transport 隔离验收已完成这三个自动用例；同日群聊 smoke 还完成了步骤 4、11、12 和 15，其中新建 side 的根消息为无控件原生卡片，关闭后在同一消息 ID 上原位显示 `🔒 Codex side conversation closed`。不要复用旧的普通文本根来判断关闭标记修复是否生效。该测试群的 bot tenant token 调用飞书“列群历史消息”接口会返回 `230027 / user_unauthorized`，因此 fork 的可选“最近一次 agent 输出”重放会无警告跳过；新根、fork session、origin notice 和后续链内消息不受影响。后续复测已完成步骤 7 和 8：成功表单按“旧 Card 2.0 确认 + 新 Settings 卡”收口，跨进程重启后的旧 Workspace Browser 控件只更新私聊卡且不改变原会话绑定；有凭证的合成拒绝演练也验证了真实 bot 私聊发送/回读、共享更新 0 和额外消费者 0。当前仍待步骤 6 的第二用户真实点击，以及步骤 16 的公网 Webhook 闭环。
+第二用户加入现有隔离群后，使用 live 驱动完成真实 callback：
+
+```bash
+# 无写入：检查唯一活动实例、唯一群、成员数和 owner-only allowlist
+npm run smoke:lark-denial-live
+
+# 写入一张共享验收卡并等待最多 10 分钟；期间只允许第二用户点击
+npm run smoke:lark-denial-live -- --prepare --wait-ms 600000
+
+# 或分两步执行：prepare 后由第二用户点击，再运行 verify
+npm run smoke:lark-denial-live -- --prepare
+npm run smoke:lark-denial-live -- --verify
+```
+
+`--prepare` 只有在群内至少存在两位真实用户时才会写入，并复用当前生产 consumer，不启动新的 `card.action.trigger` 消费者。生产入口只在待验收卡匹配、操作者不同于 owner、私聊发送成功且私聊 chat 与群聊分离时，将布尔回执写入忽略提交且权限为 `0600` 的本地 `data/` 状态；不会保存被拒用户或私聊 message/chat ID。`--verify` 读取原共享消息并比较规范化卡片哈希，证明共享卡没有被拒绝路径修改。当前真实 preflight 检测到活动实例 1、可访问群 1、群用户 1、owner-only allowlist 正常，因此没有发送验收卡，也没有创建状态文件。
+
+2026-07-27 的 CLI transport 隔离验收已完成这三个自动用例；同日群聊 smoke 还完成了步骤 4、11、12 和 15，其中新建 side 的根消息为无控件原生卡片，关闭后在同一消息 ID 上原位显示 `🔒 Codex side conversation closed`。不要复用旧的普通文本根来判断关闭标记修复是否生效。该测试群的 bot tenant token 调用飞书“列群历史消息”接口会返回 `230027 / user_unauthorized`，因此 fork 的可选“最近一次 agent 输出”重放会无警告跳过；新根、fork session、origin notice 和后续链内消息不受影响。后续复测已完成步骤 7 和 8：成功表单按“旧 Card 2.0 确认 + 新 Settings 卡”收口，跨进程重启后的旧 Workspace Browser 控件只更新私聊卡且不改变原会话绑定；有凭证的合成拒绝演练也验证了真实 bot 私聊发送/回读、共享更新 0 和额外消费者 0。live 驱动已准备好生产回执和共享卡哈希核验，但当前群只有一位用户，尚未执行写入。当前仍待步骤 6 的第二用户真实点击，以及步骤 16 的公网 Webhook 闭环。
 
 在隔离测试 chat 中依次验证：
 
