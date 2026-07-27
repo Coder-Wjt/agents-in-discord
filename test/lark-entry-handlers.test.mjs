@@ -245,6 +245,39 @@ test('Lark entry handler routes card form submits through shared modal handlers'
   }]);
 });
 
+test('Lark entry handler logs only a safe prefix and length for unrecognized card actions', async () => {
+  const warnings = [];
+  const normalizer = createLarkInboundEventNormalizer();
+  const handler = createLarkEntryHandlers({
+    accessPolicy: {
+      isAllowedUser: () => true,
+      isAllowedChannel: () => true,
+      isAllowedInteractionChannel: async () => true,
+    },
+    interactionResponse: createInteractionResponse(),
+    messageDelivery: { reply: async () => {} },
+    normalizeMessageEvent: normalizer.normalizeMessage,
+    normalizeInteractionEvent: normalizer.normalizeInteraction,
+    getSession: () => ({}),
+    resolveSecurityContext: () => ({ profile: 'team', mentionOnly: false }),
+    handleCommand: async () => {},
+    enqueuePrompt: async () => {},
+    logger: { log() {}, warn: (message) => warnings.push(message), error() {} },
+  });
+
+  await handler.handleInteractionCreate({
+    messageId: 'om_card',
+    chatId: 'oc_1',
+    actorId: 'ou_user',
+    action: { tag: 'button', value: { id: 'mystery:private-value' } },
+  });
+
+  assert.deepEqual(warnings, [
+    '[interaction-unhandled] platform=lark kind=button componentPrefix=mystery componentLength=21',
+  ]);
+  assert.doesNotMatch(warnings[0], /private-value/);
+});
+
 test('Lark entry handler deduplicates card actions and bot-menu retries by event id', async () => {
   let actionCount = 0;
   let menuCount = 0;

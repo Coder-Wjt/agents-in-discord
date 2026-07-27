@@ -110,6 +110,21 @@ test('Lark CLI card action normalization maps component ids and selected values'
   assert.equal(event.action.option, 'gpt-5.6');
 });
 
+test('Lark CLI card action normalization omits empty select fields on buttons', () => {
+  const event = normalizeLarkCliCardActionEvent({
+    event_id: 'evt_button',
+    message_id: 'om_card',
+    chat_id: 'oc_1',
+    operator_id: 'ou_user',
+    action_tag: 'button',
+    action_value: JSON.stringify({ id: 'onb:workspace_browse:3:ou_user' }),
+    option: null,
+  });
+
+  assert.equal(event.action.tag, 'button');
+  assert.equal(Object.hasOwn(event.action, 'option'), false);
+});
+
 test('Lark CLI card action normalization preserves form submissions', () => {
   const event = normalizeLarkCliCardActionEvent({
     event_id: 'evt_form',

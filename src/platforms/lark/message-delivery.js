@@ -242,6 +242,14 @@ export function createLarkMessageDelivery({
     });
   }
 
+  async function completeModal(target, payload) {
+    const completion = typeof renderer.renderModalCompletion === 'function'
+      ? renderer.renderModalCompletion(payload)
+      : payload;
+    await edit(target, completion);
+    return deliver(target, payload);
+  }
+
   function startTyping() {
     return () => {};
   }
@@ -281,5 +289,6 @@ export function createLarkMessageDelivery({
     setMessageStatus,
     getMetricsSnapshot,
     resolveMessageTarget,
+    completeModal,
   });
 }

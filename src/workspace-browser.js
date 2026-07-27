@@ -336,6 +336,7 @@ export function createWorkspaceBrowser({
   resolveProviderDefaultWorkspace = () => ({ workspaceDir: null, source: 'unset' }),
   formatWorkspaceUpdateReport = () => '',
   formatDefaultWorkspaceUpdateReport = () => '',
+  logger = null,
 } = {}) {
   const responsePort = assertInteractionResponse(interactionResponse);
   const browsers = new Map();
@@ -687,13 +688,15 @@ export function createWorkspaceBrowser({
     const values = getInboundInteractionValues(interaction);
     const session = key ? getSession(key, { conversation: interaction?.conversation || null }) : null;
     const language = normalizeLanguage(getSessionLanguage(session));
+    logger?.log?.(`[workspace-browser] action=${parsed.action} stateFound=${Boolean(state)} keyPresent=${Boolean(key)} contextMatch=${Boolean(state && key && state.channelId === key)}`);
 
     if (!state || !key || state.channelId !== key) {
       browsers.delete(parsed.token);
-      await responsePort.respond(interaction, createCommandMessageView({
+      const response = await responsePort.respond(interaction, createCommandMessageView({
         content: formatBrowserExpired(language),
         visibility: 'ephemeral',
       }));
+      logger?.log?.(`[workspace-browser] expiredResponseCompleted=true responsePresent=${Boolean(response)}`);
       return true;
     }
 

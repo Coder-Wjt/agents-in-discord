@@ -63,6 +63,13 @@ export function createCapabilityAwareMessageDelivery({
   if (typeof resolvedDelivery.resolveMessageTarget === 'function') {
     policy.resolveMessageTarget = (messageId) => resolvedDelivery.resolveMessageTarget(messageId);
   }
+  if (typeof resolvedDelivery.completeModal === 'function') {
+    policy.completeModal = (target, payload) => (
+      resolvedCapabilities.messageEdits
+        ? resolvedDelivery.completeModal(target, payload)
+        : resolvedDelivery.send(target, payload)
+    );
+  }
   return markPolicy(assertMessageDelivery(policy), 'message-delivery', resolvedCapabilities);
 }
 

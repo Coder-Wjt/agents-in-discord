@@ -144,7 +144,7 @@ export function createCapabilityAwareCommandViewRenderer({
     resolvedCapabilities,
     { formatUnsupportedControls },
   );
-  return markPolicy(assertCommandViewRenderer({
+  const policy = {
     renderActionRows(rows = []) {
       const adapted = adaptMessage(createCommandMessageView({ rows }));
       return resolvedRenderer.renderActionRows(adapted.rows);
@@ -156,7 +156,13 @@ export function createCapabilityAwareCommandViewRenderer({
       }
       return resolvedRenderer.renderModal(view);
     },
-  }), 'command-view', resolvedCapabilities);
+  };
+  if (typeof resolvedRenderer.renderModalCompletion === 'function') {
+    policy.renderModalCompletion = (view) => (
+      resolvedRenderer.renderModalCompletion(adaptMessage(view))
+    );
+  }
+  return markPolicy(assertCommandViewRenderer(policy), 'command-view', resolvedCapabilities);
 }
 
 function createDefaultModalFallback(view) {

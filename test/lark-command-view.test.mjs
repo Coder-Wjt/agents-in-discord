@@ -91,3 +91,15 @@ test('Lark command view renderer maps shared modals to Card 2.0 forms', () => {
   assert.equal(form.elements[1].form_action_type, 'submit');
   assert.equal(form.elements[1].name, 'aid_modal_submit:stgm:model:ou_user');
 });
+
+test('Lark command view renderer keeps modal completion acknowledgements on Card 2.0', () => {
+  const renderer = createLarkCommandViewRenderer();
+  const rendered = renderer.renderModalCompletion(createCommandMessageView({
+    content: '✅ compact 阈值已更新。这是最新的设置面板。',
+  }));
+
+  assert.equal(rendered.interactive, true);
+  assert.equal(rendered.card.schema, '2.0');
+  assert.equal(rendered.card.header.title.content, '表单已提交');
+  assert.match(rendered.card.body.elements[0].content, /最新设置面板/);
+});

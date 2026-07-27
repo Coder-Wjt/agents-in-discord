@@ -41,6 +41,7 @@ function createDelivery(calls) {
       return `@${userId}`;
     },
     setMessageStatus: async (...args) => calls.push(['setMessageStatus', ...args]),
+    completeModal: async (...args) => calls.push(['completeModal', ...args]),
   };
 }
 
@@ -70,11 +71,27 @@ test('runtime capability policy preserves supported delivery operations', async 
 
   await delivery.edit(target, 'updated');
   await delivery.setMessageStatus(target, 'dequeued');
+  await delivery.completeModal(target, 'saved');
 
   assert.deepEqual(calls, [
     ['edit', target, 'updated'],
     ['setMessageStatus', target, 'dequeued'],
+    ['completeModal', target, 'saved'],
   ]);
+});
+
+test('runtime capability policy degrades modal completion to a fresh send without edits', async () => {
+  const calls = [];
+  const base = createDelivery(calls);
+  const delivery = createCapabilityAwareMessageDelivery({
+    capabilities: createPlatformCapabilities(),
+    messageDelivery: base,
+  });
+  const target = { id: 'message-1' };
+
+  await delivery.completeModal(target, 'saved');
+
+  assert.deepEqual(calls, [['send', target, 'saved']]);
 });
 
 test('runtime capability policy removes inbound attachments when unsupported', () => {

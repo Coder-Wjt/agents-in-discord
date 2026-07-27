@@ -114,6 +114,7 @@ function createBrowser({
   removeFavoriteWorkspace = () => ({ changed: false, favorites: [] }),
   formatWorkspaceUpdateReport = () => '',
   formatDefaultWorkspaceUpdateReport = () => '',
+  logger = null,
 } = {}) {
   const browser = createWorkspaceBrowser({
     interactionResponse,
@@ -138,6 +139,7 @@ function createBrowser({
     }),
     formatWorkspaceUpdateReport,
     formatDefaultWorkspaceUpdateReport,
+    logger,
   });
   return {
     ...browser,
@@ -208,6 +210,33 @@ test('createWorkspaceBrowser builds a selector payload with child directory opti
     payload.components[1].components[0].data.options.map((option) => option.label),
     ['repo-a', 'repo-b'],
   );
+});
+
+test('createWorkspaceBrowser reports only boolean state diagnostics for a missing browser token', async () => {
+  const rootDir = createTempWorkspace();
+  const session = { provider: 'codex', language: 'zh', workspaceDir: rootDir };
+  const logs = [];
+  const browser = createBrowser({
+    rootDir,
+    session,
+    logger: { log: (message) => logs.push(message) },
+  });
+  const updates = [];
+  const replies = [];
+
+  await browser.handleWorkspaceBrowserInteraction(createComponentInteraction({
+    customId: 'wsp:btn:up:missing1:12345:1:0',
+    updates,
+    replies,
+  }));
+
+  assert.deepEqual(logs, [
+    '[workspace-browser] action=up stateFound=false keyPresent=true contextMatch=false',
+    '[workspace-browser] expiredResponseCompleted=true responsePresent=false',
+  ]);
+  assert.equal(updates.length, 0);
+  assert.equal(replies.length, 1);
+  assert.match(replies[0].content, /路径选择器已经过期/);
 });
 
 test('createWorkspaceBrowser navigates into a child directory and applies it as workspace', async () => {

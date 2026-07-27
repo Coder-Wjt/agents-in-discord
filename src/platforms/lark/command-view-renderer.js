@@ -123,6 +123,34 @@ function buildModalCard(view) {
   };
 }
 
+function buildModalCompletionCard(view) {
+  const content = String(view?.content || '');
+  const isChinese = /[\u3400-\u9fff]/u.test(content);
+  const summary = isChinese ? '表单已提交' : 'Form submitted';
+  const message = isChinese
+    ? '✅ 已保存。最新设置面板见下一条消息。'
+    : '✅ Saved. The latest settings panel is in the next message.';
+  return {
+    schema: '2.0',
+    config: {
+      update_multi: true,
+      width_mode: 'default',
+      enable_forward: false,
+      summary: { content: summary },
+    },
+    header: {
+      title: plainText(summary),
+      template: 'green',
+      icon: { tag: 'standard_icon', token: 'success_colorful' },
+    },
+    body: {
+      direction: 'vertical',
+      padding: '12px 12px 20px 12px',
+      elements: [{ tag: 'markdown', content: message }],
+    },
+  };
+}
+
 export function createLarkCommandViewRenderer() {
   return assertCommandViewRenderer({
     renderActionRows(rows = []) {
@@ -152,6 +180,16 @@ export function createLarkCommandViewRenderer() {
         card: buildModalCard(view),
         interactive: true,
         visibility: 'public',
+      };
+    },
+    renderModalCompletion(view) {
+      const content = String(view?.content || '');
+      return {
+        content,
+        text: content,
+        card: buildModalCompletionCard(view),
+        interactive: true,
+        visibility: view?.visibility || 'public',
       };
     },
   });

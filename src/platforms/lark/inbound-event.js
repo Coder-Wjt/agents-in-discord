@@ -196,7 +196,7 @@ export function createLarkInboundEventNormalizer({
       ? 'command'
       : modalSubmission
         ? 'modal'
-        : (actionTag.includes('select') || interaction?.action?.option !== undefined ? 'select' : 'button');
+        : (actionTag.includes('select') || normalizeId(interaction?.action?.option) ? 'select' : 'button');
     const responseTarget = {
       platformId: 'lark',
       id: conversationId,

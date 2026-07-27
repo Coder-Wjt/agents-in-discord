@@ -107,7 +107,7 @@ test('Lark inbound normalizer maps card buttons and selects to component interac
     messageId: 'om_card',
     chatId: 'oc_group',
     actorId: 'ou_user',
-    action: { tag: 'button', value: { id: 'settings:open' } },
+    action: { tag: 'button', value: { id: 'settings:open' }, option: null },
   });
   const select = normalizer.normalizeInteraction({
     id: 'evt_select',

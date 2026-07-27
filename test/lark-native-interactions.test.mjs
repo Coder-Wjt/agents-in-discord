@@ -116,8 +116,9 @@ test('Lark ephemeral component responses move to a private card without changing
           }));
           return;
         }
-        await adapter.interactionResponse.update(interaction, createCommandMessageView({
+        await adapter.interactionResponse.respond(interaction, createCommandMessageView({
           content: 'Private settings updated',
+          visibility: 'ephemeral',
         }));
       },
     },
@@ -332,7 +333,10 @@ test('Lark foundation opens and submits a shared modal through an in-place Card 
   assert.equal(calls[1].card.body.elements[0].elements[0].default_value, 'gpt-5.4');
   assert.deepEqual(submissions, ['gpt-5.6']);
   assert.equal(calls[2].kind, 'updateCard');
-  assert.equal(calls[2].card.elements[0].content, 'Saved gpt-5.6');
+  assert.equal(calls[2].card.schema, '2.0');
+  assert.match(calls[2].card.body.elements[0].content, /latest settings panel/i);
+  assert.equal(calls[3].kind, 'send');
+  assert.equal(calls[3].input.text, 'Saved gpt-5.6');
 });
 
 test('Lark foundation routes a native bot menu event through the shared command router', async () => {

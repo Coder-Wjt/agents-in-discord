@@ -993,6 +993,7 @@ const appContext = createAppContext({
       resolveProviderDefaultWorkspace,
       resolveChildThreadWorkspaceMode,
       setChildThreadWorkspaceMode,
+      logger: console,
     },
     slashRouterOptions: {
       getProviderDisplayName,

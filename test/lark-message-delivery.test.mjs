@@ -278,6 +278,40 @@ test('Lark message delivery sends and updates native interactive cards', async (
   assert.equal(delivery.resolveMessageTarget('om_card').chatId, 'oc_1');
 });
 
+test('Lark message delivery completes Card 2.0 forms before sending a fresh settings card', async () => {
+  const calls = [];
+  const channel = {
+    async send(chatId, input, options) {
+      calls.push({ kind: 'send', chatId, input, options });
+      return { messageId: 'om_latest', chatId };
+    },
+    async updateCard(messageId, card) {
+      calls.push({ kind: 'updateCard', messageId, card });
+    },
+  };
+  const delivery = createLarkMessageDelivery({ getChannel: () => channel });
+  const target = {
+    chatId: 'oc_1',
+    messageId: 'om_form',
+    isCard: true,
+  };
+
+  const result = await delivery.completeModal(target, createCommandMessageView({
+    content: '✅ compact 阈值已更新。这是最新的设置面板。',
+    rows: [createCommandActionRow([
+      createCommandButton({ id: 'settings:default', label: '跟随默认阈值' }),
+    ])],
+  }));
+
+  assert.equal(calls[0].kind, 'updateCard');
+  assert.equal(calls[0].messageId, 'om_form');
+  assert.equal(calls[0].card.schema, '2.0');
+  assert.equal(calls[1].kind, 'send');
+  assert.equal(calls[1].input.card.schema, undefined);
+  assert.equal(calls[1].input.card.elements[1].actions[0].value.id, 'settings:default');
+  assert.equal(result.messageId, 'om_latest');
+});
+
 test('splitForLark keeps chunks within the configured size', () => {
   const chunks = splitForLark('a'.repeat(4500), 4000);
   assert.equal(chunks.length, 2);

@@ -181,6 +181,7 @@ export function normalizeLarkCliCardActionEvent(event) {
   }
   const value = parseJsonValue(event?.action_value);
   const options = String(event?.options || '').split(',').map((item) => item.trim()).filter(Boolean);
+  const option = normalizeId(event?.option);
   const hasFormValue = event?.form_value && (
     typeof event.form_value === 'object' || String(event.form_value).trim()
   );
@@ -199,8 +200,8 @@ export function normalizeLarkCliCardActionEvent(event) {
       value,
       tag: String(event?.action_tag || 'unknown'),
       name: normalizeId(event?.action_name),
-      option: normalizeId(event?.option),
       options,
+      ...(option ? { option } : {}),
       ...(hasFormValue ? { formValue: parseJsonValue(event.form_value) } : {}),
     },
     token: normalizeId(event?.token),

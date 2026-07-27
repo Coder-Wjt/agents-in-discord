@@ -39,6 +39,12 @@ export function createLarkInteractionResponse({ messageDelivery } = {}) {
   async function respond(interaction, view) {
     const target = interaction?.responseTarget || interaction;
     if (interaction?.kind === 'modal' && target?.messageId) {
+      if (typeof messageDelivery.completeModal === 'function') {
+        return messageDelivery.completeModal(target, view);
+      }
+      return messageDelivery.send(target, view);
+    }
+    if (isEphemeralView(view) && isDirectInteraction(interaction) && target?.messageId) {
       return messageDelivery.edit(target, view);
     }
     if (isEphemeralView(view) && !isDirectInteraction(interaction)) {

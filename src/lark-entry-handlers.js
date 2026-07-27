@@ -203,7 +203,11 @@ export function createLarkEntryHandlers({
     const commandButton = isButton ? parseCommandActionButtonId(componentId) : null;
     const isOnboarding = isButton && isOnboardingButtonId(componentId);
     const isSettingsPanel = !isModal && isSettingsPanelComponentId(componentId);
-    if (!isSettingsModal && !isGoalModal && !isWorkspaceBusy && !isWorkspaceBrowser && !commandButton && !isOnboarding && !isSettingsPanel) return;
+    if (!isSettingsModal && !isGoalModal && !isWorkspaceBusy && !isWorkspaceBrowser && !commandButton && !isOnboarding && !isSettingsPanel) {
+      const componentPrefix = String(componentId || '').split(':', 1)[0].replace(/[^a-z0-9_-]/gi, '').slice(0, 24) || 'unknown';
+      logger.warn?.(`[interaction-unhandled] platform=lark kind=${event.kind} componentPrefix=${componentPrefix} componentLength=${String(componentId || '').length}`);
+      return;
+    }
     const rawEventId = resolveRawEventId(event.raw);
     if (rawEventId && dropDuplicate(`interaction:${rawEventId}`)) return;
 
