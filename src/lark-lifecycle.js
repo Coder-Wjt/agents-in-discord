@@ -169,29 +169,57 @@ export function createLarkLifecycle({
     lastReason = reason;
     nextRetryAt = null;
     shutdownController.abort();
+    logger.log(`🛑 Lark shutdown started (reason=${reason}).`);
     if (selfHealTimer) {
       clearTimeoutFn(selfHealTimer);
       selfHealTimer = null;
     }
-    try {
-      cancelAllChannelWork();
-    } catch (error) {
-      recordError(error);
-      logger.error(`Lark shutdown could not cancel active work: ${safeError(error)}`);
-    }
     shutdownPromise = (async () => {
+      try {
+        const cancellationResults = await cancelAllChannelWork(reason);
+        const incomplete = Array.isArray(cancellationResults)
+          ? cancellationResults.filter((result) => result?.exited === false)
+          : [];
+        if (incomplete.length) {
+          const error = new Error(`${incomplete.length} active task process(es) did not confirm exit.`);
+          recordError(error);
+          logger.error(`Lark shutdown could not confirm all active work stopped: ${safeError(error)}`);
+        } else {
+          logger.log(`✅ Lark active work cancellation complete (reason=${reason}).`);
+        }
+      } catch (error) {
+        recordError(error);
+        logger.error(`Lark shutdown could not cancel active work: ${safeError(error)}`);
+      }
+
+      let disconnected = true;
       try {
         await client?.disconnect?.();
       } catch (error) {
+        disconnected = false;
         recordError(error);
         logger.error(`Lark disconnect failed during ${reason}: ${safeError(error)}`);
       } finally {
         lifecycleState = 'idle';
         selfHealInFlight = false;
       }
+      logger.log(disconnected
+        ? `✅ Lark shutdown complete (reason=${reason}).`
+        : `⚠️ Lark shutdown complete with disconnect errors (reason=${reason}).`);
       return client;
     })();
     return shutdownPromise;
+  }
+
+  function shutdownFromSignal(reason) {
+    void shutdownClient(reason).then(
+      () => processRef.exit?.(0),
+      (error) => {
+        recordError(error);
+        logger.error(`Lark shutdown failed during ${reason}: ${safeError(error)}`);
+        processRef.exit?.(1);
+      },
+    );
   }
 
   function getHealthSnapshot() {
@@ -250,14 +278,15 @@ export function createLarkLifecycle({
       });
     }
     processRef.once('SIGTERM', () => {
-      void shutdownClient('SIGTERM');
+      shutdownFromSignal('SIGTERM');
     });
     processRef.once('SIGINT', () => {
-      void shutdownClient('SIGINT');
+      shutdownFromSignal('SIGINT');
     });
   }
 
   const lifecycleApi = {
+    handlesProcessSignals: true,
     bootClient,
     loginClientWithRetry: connectWithRetry,
     scheduleSelfHeal,

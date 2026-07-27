@@ -101,7 +101,9 @@ test('Lark lifecycle fails fast for transport-declared fatal errors', async () =
 test('Lark lifecycle keeps graceful signal shutdown when self-heal is disabled', async () => {
   const persistentHandlers = new Map();
   const oneShotHandlers = new Map();
-  let cancelCalls = 0;
+  const cancelReasons = [];
+  const exits = [];
+  const logs = [];
   let disconnectCalls = 0;
   const lifecycle = createLarkLifecycle({
     createClient: () => ({
@@ -109,12 +111,13 @@ test('Lark lifecycle keeps graceful signal shutdown when self-heal is disabled',
       async disconnect() { disconnectCalls += 1; },
     }),
     bindClientHandlers() {},
-    cancelAllChannelWork() { cancelCalls += 1; },
+    cancelAllChannelWork(reason) { cancelReasons.push(reason); },
     selfHealEnabled: false,
-    logger: { log() {}, warn() {}, error() {} },
+    logger: { log(message) { logs.push(String(message)); }, warn() {}, error() {} },
     processRef: {
       on(name, handler) { persistentHandlers.set(name, handler); },
       once(name, handler) { oneShotHandlers.set(name, handler); },
+      exit(code) { exits.push(code); },
     },
   });
 
@@ -127,10 +130,53 @@ test('Lark lifecycle keeps graceful signal shutdown when self-heal is disabled',
   oneShotHandlers.get('SIGTERM')();
   await lifecycle.shutdownClient('test-await');
 
-  assert.equal(cancelCalls, 1);
+  assert.deepEqual(cancelReasons, ['SIGTERM']);
   assert.equal(disconnectCalls, 1);
+  assert.deepEqual(exits, [0]);
+  assert.equal(logs.some((line) => line.includes('shutdown started (reason=SIGTERM)')), true);
+  assert.equal(logs.some((line) => line.includes('active work cancellation complete (reason=SIGTERM)')), true);
+  assert.equal(logs.some((line) => line.includes('shutdown complete (reason=SIGTERM)')), true);
   assert.equal(lifecycle.getHealthSnapshot().state, 'idle');
   assert.equal(lifecycle.getHealthSnapshot().lastReason, 'SIGTERM');
+});
+
+test('Lark signal shutdown waits for active work cancellation before disconnect and exit', async () => {
+  const oneShotHandlers = new Map();
+  const events = [];
+  let releaseCancellation;
+  const cancellation = new Promise((resolve) => { releaseCancellation = resolve; });
+  const lifecycle = createLarkLifecycle({
+    createClient: () => ({
+      async connect() {},
+      async disconnect() { events.push('disconnect'); },
+    }),
+    bindClientHandlers() {},
+    cancelAllChannelWork() {
+      events.push('cancel-start');
+      return cancellation.then(() => {
+        events.push('cancel-complete');
+        return [{ exited: true, forced: true }];
+      });
+    },
+    selfHealEnabled: false,
+    logger: { log() {}, warn() {}, error() {} },
+    processRef: {
+      on() {},
+      once(name, handler) { oneShotHandlers.set(name, handler); },
+      exit(code) { events.push(`exit:${code}`); },
+    },
+  });
+
+  await lifecycle.bootClient('test');
+  lifecycle.setupProcessSelfHeal();
+  oneShotHandlers.get('SIGTERM')();
+  await Promise.resolve();
+
+  assert.deepEqual(events, ['cancel-start']);
+  releaseCancellation();
+  await lifecycle.shutdownClient('await-test');
+
+  assert.deepEqual(events, ['cancel-start', 'cancel-complete', 'disconnect', 'exit:0']);
 });
 
 test('Lark lifecycle clears pending self-heal and suppresses restarts during shutdown', async () => {

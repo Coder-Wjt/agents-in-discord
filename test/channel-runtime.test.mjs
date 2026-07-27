@@ -13,12 +13,15 @@ test('createChannelRuntimeStore tracks active run and cancellation', () => {
   const state = store.getChannelState('thread-1');
   state.queue.push({ id: 'job-1' });
 
-  const child = {
-    pid: 12345,
-    killed: false,
-    kill() {
-      this.killed = true;
-    },
+  const child = new EventEmitter();
+  child.pid = 12345;
+  child.killed = false;
+  child.exitCode = null;
+  child.signalCode = null;
+  child.kill = function kill(signal) {
+    this.killed = true;
+    this.signalCode = signal;
+    this.emit('close', null, signal);
   };
 
   store.setActiveRun(state, { id: 'message-1' }, 'hello world', child, 'exec');
@@ -93,10 +96,11 @@ test('stopChildProcess escalates when SIGTERM does not close the process', async
     return true;
   };
 
-  stopChildProcess(child, 5);
-  await new Promise((resolve) => setTimeout(resolve, 25));
+  const result = await stopChildProcess(child, 5);
 
   assert.deepEqual(signals, ['SIGTERM', 'SIGKILL']);
+  assert.equal(result.exited, true);
+  assert.equal(result.forced, true);
 });
 
 test('stopChildProcess does not escalate after the process closes', async () => {
@@ -113,10 +117,11 @@ test('stopChildProcess does not escalate after the process closes', async () => 
     return true;
   };
 
-  stopChildProcess(child, 5);
-  await new Promise((resolve) => setTimeout(resolve, 25));
+  const result = await stopChildProcess(child, 5);
 
   assert.deepEqual(signals, ['SIGTERM']);
+  assert.equal(result.exited, true);
+  assert.equal(result.forced, false);
 });
 
 test('stopChildProcess ignores duplicate stop requests while shutdown is pending', async () => {
@@ -135,9 +140,41 @@ test('stopChildProcess ignores duplicate stop requests while shutdown is pending
     return true;
   };
 
-  stopChildProcess(child, 5);
-  stopChildProcess(child, 5);
-  await new Promise((resolve) => setTimeout(resolve, 25));
+  const first = stopChildProcess(child, 5);
+  const second = stopChildProcess(child, 5);
+  assert.equal(first, second);
+  await first;
 
   assert.deepEqual(signals, ['SIGTERM', 'SIGKILL']);
+});
+
+test('createChannelRuntimeStore waits for active child escalation during cancel-all', async () => {
+  const signals = [];
+  const child = new EventEmitter();
+  child.pid = 12345;
+  child.exitCode = null;
+  child.signalCode = null;
+  child.kill = (signal) => {
+    signals.push(signal);
+    if (signal === 'SIGKILL') {
+      child.signalCode = signal;
+      child.emit('close', null, signal);
+    }
+    return true;
+  };
+  const store = createChannelRuntimeStore({
+    cloneProgressPlan: (plan) => (plan ? JSON.parse(JSON.stringify(plan)) : null),
+    truncate: (text, max) => (text.length <= max ? text : text.slice(0, max)),
+    childKillGraceMs: 5,
+  });
+  const state = store.getChannelState('thread-stubborn');
+  store.setActiveRun(state, { id: 'message-1' }, 'long task', child, 'exec');
+
+  const results = await store.cancelAllChannelWork('SIGTERM');
+
+  assert.deepEqual(signals, ['SIGTERM', 'SIGKILL']);
+  assert.equal(results.length, 1);
+  assert.equal(results[0].exited, true);
+  assert.equal(results[0].forced, true);
+  assert.equal(state.activeRun.cancelRequested, true);
 });

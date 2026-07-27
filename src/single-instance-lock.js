@@ -92,10 +92,12 @@ export function createSingleInstanceLock({
     }
   }
 
-  function setupCleanupHandlers() {
+  function setupCleanupHandlers({ handleSignals = true } = {}) {
     processRef.on('exit', () => {
       release();
     });
+
+    if (!handleSignals) return;
 
     for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGQUIT']) {
       processRef.on(signal, () => {

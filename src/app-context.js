@@ -457,7 +457,9 @@ export async function bootApp({
   reason = 'startup',
 } = {}) {
   singleInstanceLock?.acquire?.();
-  singleInstanceLock?.setupCleanupHandlers?.();
+  singleInstanceLock?.setupCleanupHandlers?.({
+    handleSignals: lifecycle?.handlesProcessSignals !== true,
+  });
   lifecycle?.setupProcessSelfHeal?.();
   if (typeof lifecycle?.bootClient === 'function') {
     return lifecycle.bootClient(reason);

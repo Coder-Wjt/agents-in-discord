@@ -106,3 +106,30 @@ test('createSingleInstanceLock exits without takeover when another process is al
   const parsed = JSON.parse(fs.readFileSync(lockFile, 'utf8'));
   assert.equal(parsed.pid, 555);
 });
+
+test('createSingleInstanceLock can leave terminating signals to a graceful lifecycle', () => {
+  const rootDir = makeTempRoot();
+  const dataDir = path.join(rootDir, 'data');
+  const lockFile = path.join(dataDir, 'bot.lock');
+  const handlers = new Map();
+  const lock = createSingleInstanceLock({
+    dataDir,
+    lockFile,
+    rootDir,
+    ensureDir: (dir) => fs.mkdirSync(dir, { recursive: true }),
+    logger: createLogger(),
+    processRef: {
+      pid: 777,
+      kill() {},
+      on(name, handler) { handlers.set(name, handler); },
+      exit() {},
+    },
+  });
+
+  lock.acquire();
+  lock.setupCleanupHandlers({ handleSignals: false });
+
+  assert.deepEqual([...handlers.keys()], ['exit']);
+  handlers.get('exit')();
+  assert.equal(fs.existsSync(lockFile), false);
+});

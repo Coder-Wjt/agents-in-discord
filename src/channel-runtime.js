@@ -9,6 +9,9 @@ export function createChannelRuntimeStore({
   cloneProgressPlan,
   truncate,
   promptPreviewChars = 120,
+  stopChildProcessFn = stopChildProcess,
+  childKillGraceMs = 3000,
+  childKillWaitMs = 1000,
 } = {}) {
   const channelStates = new Map();
 
@@ -61,12 +64,17 @@ export function createChannelRuntimeStore({
 
     let cancelledRunning = false;
     let pid = null;
+    let completion = Promise.resolve({ exited: true, alreadyStopped: true });
     if (state.activeRun) {
       state.activeRun.cancelRequested = true;
       cancelledRunning = true;
       pid = state.activeRun.child?.pid ?? null;
       if (state.activeRun.child) {
-        stopChildProcess(state.activeRun.child);
+        completion = stopChildProcessFn(
+          state.activeRun.child,
+          childKillGraceMs,
+          childKillWaitMs,
+        );
       }
     }
 
@@ -76,13 +84,16 @@ export function createChannelRuntimeStore({
       cancelledRunning,
       pid,
       clearedQueued: queued,
+      completion,
     };
   }
 
   function cancelAllChannelWork(reason = 'system') {
+    const completions = [];
     for (const key of channelStates.keys()) {
-      cancelChannelWork(key, reason);
+      completions.push(cancelChannelWork(key, reason).completion);
     }
+    return Promise.all(completions);
   }
 
   function getRuntimeSnapshot(key) {
@@ -150,30 +161,58 @@ export function createChannelRuntimeStore({
   };
 }
 
-export function stopChildProcess(child, killGraceMs = 3000) {
-  if (!child) return;
+export function stopChildProcess(child, killGraceMs = 3000, killWaitMs = 1000) {
+  if (!child) return Promise.resolve({ exited: true, alreadyStopped: true });
   let exited = child.exitCode !== null && child.exitCode !== undefined;
   exited = exited || Boolean(child.signalCode);
-  if (exited) return;
-  if (child[STOP_CHILD_PROCESS_STATE]?.stopping) return;
-  child[STOP_CHILD_PROCESS_STATE] = { stopping: true };
-  const markExited = () => {
+  if (exited) return Promise.resolve({ exited: true, alreadyStopped: true });
+  if (child[STOP_CHILD_PROCESS_STATE]?.promise) return child[STOP_CHILD_PROCESS_STATE].promise;
+
+  let resolveCompletion;
+  let graceTimer = null;
+  let killWaitTimer = null;
+  let forced = false;
+  const promise = new Promise((resolve) => {
+    resolveCompletion = resolve;
+  });
+  child[STOP_CHILD_PROCESS_STATE] = { stopping: true, promise };
+
+  const finish = (result) => {
+    if (exited) return;
     exited = true;
+    if (graceTimer) clearTimeout(graceTimer);
+    if (killWaitTimer) clearTimeout(killWaitTimer);
     if (child[STOP_CHILD_PROCESS_STATE]) {
       child[STOP_CHILD_PROCESS_STATE].stopping = false;
     }
+    resolveCompletion({ forced, ...result });
+  };
+  const markExited = (code, signal) => {
+    finish({ exited: true, code: code ?? null, signal: signal || child.signalCode || null });
   };
   child.once?.('exit', markExited);
   child.once?.('close', markExited);
   try {
     child.kill?.('SIGTERM');
-  } catch {
-    return;
+  } catch (error) {
+    finish({ exited: false, error });
+    return promise;
   }
-  setTimeout(() => {
+  if (exited) return promise;
+
+  graceTimer = setTimeout(() => {
+    if (exited) return;
+    forced = true;
     try {
-      if (!exited) child.kill?.('SIGKILL');
-    } catch {
+      child.kill?.('SIGKILL');
+    } catch (error) {
+      finish({ exited: false, error });
+      return;
     }
-  }, killGraceMs).unref?.();
+    if (exited) return;
+    killWaitTimer = setTimeout(() => {
+      finish({ exited: false, timedOut: true });
+    }, Math.max(100, Number(killWaitMs) || 1000));
+  }, Math.max(0, Number(killGraceMs) || 0));
+  return promise;
 }

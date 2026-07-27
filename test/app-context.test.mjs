@@ -451,11 +451,15 @@ test('createAppContext wires factories and cross-links composition dependencies'
 
 test('bootApp acquires lock sets cleanup and boots lifecycle', async () => {
   const events = [];
+  const cleanupOptions = [];
 
   await bootApp({
     singleInstanceLock: {
       acquire: () => events.push('lock.acquire'),
-      setupCleanupHandlers: () => events.push('lock.cleanup'),
+      setupCleanupHandlers: (options) => {
+        cleanupOptions.push(options);
+        events.push('lock.cleanup');
+      },
     },
     lifecycle: {
       setupProcessSelfHeal: () => events.push('lifecycle.heal'),
@@ -470,4 +474,23 @@ test('bootApp acquires lock sets cleanup and boots lifecycle', async () => {
     'lifecycle.heal',
     'lifecycle.boot:restart',
   ]);
+  assert.deepEqual(cleanupOptions, [{ handleSignals: true }]);
+});
+
+test('bootApp leaves terminating signals to graceful platform lifecycles', async () => {
+  const cleanupOptions = [];
+
+  await bootApp({
+    singleInstanceLock: {
+      acquire() {},
+      setupCleanupHandlers: (options) => cleanupOptions.push(options),
+    },
+    lifecycle: {
+      handlesProcessSignals: true,
+      setupProcessSelfHeal() {},
+      async bootClient() {},
+    },
+  });
+
+  assert.deepEqual(cleanupOptions, [{ handleSignals: false }]);
 });
