@@ -172,6 +172,7 @@ test('Lark ephemeral component responses move to a private card without changing
 
 test('Lark permission denials are delivered privately without replacing the shared card', async () => {
   const calls = [];
+  const receipts = [];
   let settingsCalls = 0;
   const channel = {
     on() {},
@@ -199,6 +200,9 @@ test('Lark permission denials are delivered privately without replacing the shar
     },
     entryHandlerOptions: {
       logger: { log() {}, warn() {}, error() {} },
+      async onPermissionDenied(event, receipt) {
+        receipts.push({ event, receipt });
+      },
       getSession: () => ({}),
       resolveSecurityContext: () => ({ profile: 'team', mentionOnly: false }),
       handleCommand: async () => {},
@@ -235,6 +239,11 @@ test('Lark permission denials are delivered privately without replacing the shar
   assert.equal(calls[1].kind, 'send');
   assert.equal(calls[1].receiveId, 'ou_intruder');
   assert.deepEqual(calls[1].input, { text: '⛔ 没有权限。' });
+  assert.equal(receipts.length, 1);
+  assert.equal(receipts[0].event.actor.id, 'ou_intruder');
+  assert.equal(receipts[0].receipt.delivery, 'private');
+  assert.equal(receipts[0].receipt.response.messageId, 'om_denied');
+  assert.equal(receipts[0].receipt.response.chatId, 'oc_intruder_dm');
 });
 
 test('Lark foundation opens and submits a shared modal through an in-place Card 2.0 form', async () => {
