@@ -93,3 +93,18 @@ test('runtime presentation wraps progress list mutation with configured limits',
   assert.match(presentation.formatCompletedStepsSummary(completed), /step c/);
   assert.doesNotMatch(presentation.formatCompletedStepsSummary(completed), /step a/);
 });
+
+test('createRuntimePresentation passes showReasoning into narration extraction', () => {
+  const ev = {
+    type: 'item.completed',
+    item: { id: 'rs_1', type: 'reasoning', text: '**Reading the config**' },
+  };
+
+  // The narration helpers previously forwarded no options, so SHOW_REASONING
+  // had no effect on the process stream even when enabled.
+  const off = createRuntimePresentation({ showReasoning: false });
+  assert.equal(off.extractProcessNarrationFromEvent(ev), '');
+
+  const on = createRuntimePresentation({ showReasoning: true });
+  assert.equal(on.extractProcessNarrationFromEvent(ev), '**Reading the config**');
+});

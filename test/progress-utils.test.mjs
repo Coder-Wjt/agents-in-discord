@@ -1004,3 +1004,20 @@ test('extractProcessNarrationFromEvent classifies tool activity through stream a
   };
   assert.equal(extractProcessNarrationFromEvent(wrappedCommand), '');
 });
+
+test('extractProcessNarrationFromEvent surfaces reasoning only when showReasoning is on', () => {
+  // Codex can run long stretches of tool calls with no agent_message at all
+  // (one observed turn: 93 function calls, 98 reasoning items, zero messages).
+  // Reasoning is the only narration available there.
+  const ev = {
+    type: 'item.completed',
+    item: { id: 'rs_1', type: 'reasoning', text: '**Checking the workspace layout**' },
+  };
+
+  assert.equal(extractProcessNarrationFromEvent(ev), '');
+  assert.equal(extractProcessNarrationFromEvent(ev, { showReasoning: false }), '');
+  assert.equal(
+    extractProcessNarrationFromEvent(ev, { showReasoning: true }),
+    '**Checking the workspace layout**',
+  );
+});

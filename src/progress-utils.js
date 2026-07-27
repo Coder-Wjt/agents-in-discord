@@ -1199,7 +1199,15 @@ export function extractRawProgressTextFromEvent(ev, options = {}) {
       const text = extractEventTextPreview(item, options);
       return !text || isLowSignalProcessText(text) ? '' : text;
     }
-    if (itemType === 'reasoning') return '';
+    if (itemType === 'reasoning') {
+      // Reasoning is the only thing Codex emits during long tool-calling
+      // stretches — one observed turn ran 93 function calls and 98 reasoning
+      // items without a single agent_message, leaving the card silent. Honour
+      // SHOW_REASONING here so those stretches can be narrated when asked for.
+      if (!options.showReasoning) return '';
+      const text = extractEventTextPreview(item, options);
+      return !text || isLowSignalProcessText(text) ? '' : text;
+    }
     if (itemType === 'message') return '';
     if (isCommandExecutionType(itemType)) {
       const command = summarizeCommandActivity(item, options);

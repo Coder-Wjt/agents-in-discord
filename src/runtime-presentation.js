@@ -189,11 +189,19 @@ export function createRuntimePresentation({
   }
 
   function extractRawProgressTextFromEvent(ev, runtimeOptions = {}) {
-    return extractRawProgressTextFromEventBase(ev, runtimeOptions);
+    return extractRawProgressTextFromEventBase(ev, {
+      showReasoning,
+      previewChars: progressTextPreviewChars,
+      ...runtimeOptions,
+    });
   }
 
   function extractProcessNarrationFromEvent(ev, runtimeOptions = {}) {
-    return extractProcessNarrationFromEventBase(ev, runtimeOptions);
+    return extractProcessNarrationFromEventBase(ev, {
+      showReasoning,
+      previewChars: progressTextPreviewChars,
+      ...runtimeOptions,
+    });
   }
 
   function cloneProgressPlan(planState) {
