@@ -12,7 +12,7 @@ function makeTempRoot() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'agents-in-discord-runtime-env-'));
 }
 
-test('autoRepairProxyEnv infers local SOCKS proxy and persists missing keys', () => {
+test('autoRepairProxyEnv infers local SOCKS proxy without persisting runtime repairs by default', () => {
   const rootDir = makeTempRoot();
   const envFilePath = path.join(rootDir, '.env');
   const env = {
@@ -28,6 +28,19 @@ test('autoRepairProxyEnv infers local SOCKS proxy and persists missing keys', ()
   assert.equal(env.ALL_PROXY, 'socks5h://127.0.0.1:7890');
   assert.equal(env.all_proxy, 'socks5h://127.0.0.1:7890');
   assert.match(result.logs.join('\n'), /inferred SOCKS proxy/);
+  assert.doesNotMatch(result.logs.join('\n'), /persisted updates into \.env/);
+  assert.equal(fs.existsSync(envFilePath), false);
+});
+
+test('autoRepairProxyEnv only persists repaired proxy keys when explicitly requested', () => {
+  const rootDir = makeTempRoot();
+  const envFilePath = path.join(rootDir, '.env');
+  const env = {
+    HTTP_PROXY: 'http://127.0.0.1:7890',
+  };
+
+  const result = autoRepairProxyEnv(envFilePath, { env, persist: true });
+
   assert.match(result.logs.join('\n'), /persisted updates into \.env/);
 
   const content = fs.readFileSync(envFilePath, 'utf8');

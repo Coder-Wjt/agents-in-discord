@@ -359,6 +359,8 @@ SOCKS_PROXY=socks5h://127.0.0.1:7891
 
 `npm install` 会自动运行 `npm run patch-ws`，让 Discord Gateway WebSocket 可以使用自定义 agent。
 
+代理键的大小写补齐与本地 SOCKS 推断只作用于当前进程，不会自动写回 `.env`。通过 systemd 或 shell 临时注入代理做断网 smoke 后，清除外部环境并重启服务即可恢复直连，不会把临时代理固化到项目配置。
+
 ## 本地服务
 
 macOS 上推荐用仓库自带脚本重启 bot 服务。

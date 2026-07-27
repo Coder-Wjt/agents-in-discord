@@ -2,7 +2,7 @@ import path from 'node:path';
 
 import { persistEnvUpdates } from './env-file-updater.js';
 
-export function autoRepairProxyEnv(envFilePath, { env = process.env } = {}) {
+export function autoRepairProxyEnv(envFilePath, { env = process.env, persist = false } = {}) {
   const logs = [];
   const updates = {};
 
@@ -25,8 +25,8 @@ export function autoRepairProxyEnv(envFilePath, { env = process.env } = {}) {
   const repairedKeys = Object.keys(updates);
   if (repairedKeys.length) {
     logs.push(`🛠️ Proxy auto-repair: filled ${repairedKeys.join(', ')}`);
-    persistEnvUpdates(envFilePath, updates);
-    if (envFilePath) {
+    if (persist && envFilePath) {
+      persistEnvUpdates(envFilePath, updates);
       logs.push(`🛠️ Proxy auto-repair: persisted updates into ${path.basename(envFilePath)}`);
     }
   }

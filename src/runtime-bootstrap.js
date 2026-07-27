@@ -890,7 +890,7 @@ export function configureRuntimeProxy({
   globalTarget = globalThis,
 } = {}) {
   const logs = [];
-  const proxyRepair = autoRepairProxyEnvFn(envFilePath, { env });
+  const proxyRepair = autoRepairProxyEnvFn(envFilePath, { env, persist: false });
   if (Array.isArray(proxyRepair?.logs) && proxyRepair.logs.length) {
     logs.push(...proxyRepair.logs);
   }

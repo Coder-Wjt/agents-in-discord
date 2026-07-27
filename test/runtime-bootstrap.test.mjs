@@ -616,6 +616,7 @@ test('configureRuntimeProxy wires repaired proxy settings into agents and logs',
 
   assert.equal(repairs[0].envFilePath, '/tmp/.env');
   assert.equal(repairs[0].options.env, env);
+  assert.equal(repairs[0].options.persist, false);
   assert.deepEqual(result.restProxyAgent, { kind: 'http', uri: 'http://127.0.0.1:7890' });
   assert.deepEqual(result.wsProxyAgent, { kind: 'socks', uri: 'socks5h://127.0.0.1:7891' });
   assert.deepEqual(dispatcherCalls, [{ kind: 'http', uri: 'http://127.0.0.1:7890' }]);
