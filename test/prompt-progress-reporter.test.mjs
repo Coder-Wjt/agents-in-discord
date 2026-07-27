@@ -1159,12 +1159,61 @@ test('createPromptProgressReporterFactory streams phased Codex final_answer narr
   await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(harness.streamed, ['第一阶段：读完了配置。']);
 
-  // Pushes are throttled, so the retired message queues until the window opens.
-  harness.advance(1_500);
+  // Stage messages are not rate limited, so no clock advance is needed here.
   send('全部完成。');
   await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(harness.streamed, ['第一阶段：读完了配置。', '第二阶段：改完了代码。']);
 
   // The newest stays out of the stream so the reply is not duplicated.
   assert.ok(!harness.streamed.includes('全部完成。'));
+});
+
+test('createPromptProgressReporterFactory sends Codex stage messages whole and in order', async () => {
+  const harness = createHarness({
+    factoryOptions: { presentation: createRealPresentation() },
+  });
+
+  await harness.reporter.start();
+  harness.channelState.activeRun.phase = 'exec';
+
+  const send = (message) => harness.reporter.onEvent({
+    type: 'item.completed',
+    item: { id: `m_${message.slice(0, 6)}`, type: 'agent_message', phase: 'final_answer', message },
+  });
+
+  // Multi-paragraph stages must keep their structure: the process stream would
+  // have flattened these newlines into spaces.
+  send('阶段一完成。\n\n- 改了 A\n- 改了 B');
+  send('阶段二完成。\n\n```js\nconst x = 1;\n```');
+  send('全部结束。');
+  await harness.reporter.finish({ ok: true });
+
+  assert.deepEqual(harness.streamed, [
+    '阶段一完成。\n\n- 改了 A\n- 改了 B',
+    '阶段二完成。\n\n```js\nconst x = 1;\n```',
+  ]);
+});
+
+test('createPromptProgressReporterFactory keeps every Codex stage past the stream queue cap', async () => {
+  const harness = createHarness({
+    factoryOptions: { presentation: createRealPresentation() },
+  });
+
+  await harness.reporter.start();
+  harness.channelState.activeRun.phase = 'exec';
+
+  // The process stream caps its queue at 80 entries and drops the oldest. A long
+  // run can retire far more stages than that, and none may be silently lost.
+  for (let index = 0; index < 95; index += 1) {
+    harness.reporter.onEvent({
+      type: 'item.completed',
+      item: { id: `m_${index}`, type: 'agent_message', phase: 'final_answer', message: `阶段 ${index}` },
+    });
+  }
+  await harness.reporter.finish({ ok: true });
+
+  // 95 sent, the newest held back as the reply.
+  assert.equal(harness.streamed.length, 94);
+  assert.equal(harness.streamed[0], '阶段 0');
+  assert.equal(harness.streamed.at(-1), '阶段 93');
 });

@@ -923,6 +923,26 @@ export function createPromptProgressReporterFactory({
       return true;
     };
 
+    // Stage messages are sent in arrival order and never dropped, so a long run
+    // reads as a sequence of completed stages rather than one final wall of text.
+    let stageDeliveryChain = Promise.resolve();
+    const deliverStageMessage = (text) => {
+      if (typeof onStreamProcessMessageForRun !== 'function') return Promise.resolve();
+      stageDeliveryChain = stageDeliveryChain.then(async () => {
+        try {
+          await onStreamProcessMessageForRun(text, {
+            message,
+            session,
+            channelState,
+            language: lang,
+          });
+        } catch {
+          // A dropped stage message must not stall the ones behind it.
+        }
+      });
+      return stageDeliveryChain;
+    };
+
     const appendPendingCodexAgentMessage = (value) => {
       const text = normalizeProgressText(value);
       const key = normalizeActivityKey(text);
@@ -1044,10 +1064,15 @@ export function createPromptProgressReporterFactory({
         );
         if (phasedNarration) {
           const safe = sanitizeProgressDisplayText(phasedNarration);
-          if (safe && appendActivity(safe)) {
+          if (safe) {
             events += 1;
-            if (lastActivityPushAt === 0) void pushOneStreamActivity({ force: true });
-            else void pushOneStreamActivity();
+            // A retired final_answer is a completed stage of the task, not a
+            // one-line activity: send it whole and unthrottled instead of
+            // routing it through the process stream, which collapses newlines
+            // and drops entries under its rate limit and queue cap.
+            void deliverStageMessage(safe);
+            latestStep = truncate(safe.replace(/\s+/g, ' ').trim(), progressTextPreviewChars);
+            latestStepAt = now();
             syncActiveRun();
             void emit(false);
           }
@@ -1170,6 +1195,9 @@ export function createPromptProgressReporterFactory({
       if (failedStreamActivity && pendingStreamActivities[0] === failedStreamActivity) {
         await pushOneStreamActivity({ force: true });
       }
+      // Let queued stage messages land before the final card, so they cannot be
+      // reordered after the reply or lost when the run ends.
+      await stageDeliveryChain;
       stopped = true;
       pendingStreamActivities.length = 0;
       pendingCodexAgentMessages.length = 0;
