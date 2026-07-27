@@ -88,6 +88,16 @@ function formatLatestAgentReplayContent(text, conversationSpawn, language = 'zh'
   return chunks.length ? chunks : [combined.slice(0, 1900).trim()];
 }
 
+function isOptionalParentHistoryUnavailableError(error) {
+  const code = String(
+    error?.code
+    || error?.response?.data?.code
+    || error?.cause?.code
+    || '',
+  ).trim().toLowerCase();
+  return code === 'user_unauthorized' || code === '230027';
+}
+
 async function replayLatestParentAgentMessage(childConversation, {
   conversationSpawn,
   source,
@@ -109,6 +119,13 @@ async function replayLatestParentAgentMessage(childConversation, {
     }
     return { ok: true, sourceMessageId: latest.id || null, messages };
   } catch (err) {
+    if (isOptionalParentHistoryUnavailableError(err)) {
+      return {
+        ok: false,
+        skipped: true,
+        reason: 'parent_history_unavailable',
+      };
+    }
     return {
       ok: false,
       skipped: false,

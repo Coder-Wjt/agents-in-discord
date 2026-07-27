@@ -63,6 +63,7 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 - Made Lark startup reject placeholder credentials and invalid selected-transport domain/path/numeric settings instead of silently falling back, while applying the configured text chunk limit through the platform delivery port.
 - Corrected the Lark permission baseline to cover group-at/DM receive, bot send, message update/recall, resource access, and reaction read/write operations actually used by the adapter.
 - Sent Lark fork/side reply-chain roots as content-only native cards and preserved their card target metadata during rename/archive, so side close can update the existing root in place instead of failing with `This message is NOT a card.`
+- Treated Lark message-history error `230027 / user_unauthorized` as an unavailable optional fork replay instead of showing a misleading user reauthorization warning after the native fork already succeeded; unexpected history failures remain visible.
 
 ### Verified
 
@@ -74,9 +75,10 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 - Verified the explicit-write P2P smoke driver end to end for an ordinary prompt, a parameterized native command, and unknown slash-path prompt fallback.
 - Verified an isolated group mention-only flow with no response to an unmentioned message and an associated response after mentioning the bot; a generated image was downloaded and understood through native image input; a real workspace-lock wait was cancelled with `THINKING` transitioning to the valid `No` reaction.
 - Verified real Lark fork and Codex side reply chains with independent session bindings and in-chain replies. After the content-only root-card fix, a newly opened side closed by updating the same interactive root message in place to `🔒 Codex side conversation closed`, with both parent and child session metadata persisted as closed.
+- Verified a new real Lark fork after the history-access fallback: the interactive root and fork session were created, the success report remained associated with that root, and no latest-output replay authorization warning was emitted.
 - Verified real CLI-transport SIGTERM with `SELF_HEAL_ENABLED=false` for both an idle instance and a controlled active task registered through the production channel runtime. The active child deliberately ignored SIGTERM, was removed by bounded SIGKILL escalation before parent exit, all three event consumers stopped, the instance lock was released, and the supervised single consumer reconnected after restoration.
 - Verified real CLI consumer-loss recovery by terminating the message-event consumer: the lifecycle recorded `channel_error`, self-healed without replacing the main process, restored all three direct consumers, and returned to exactly six wrapper/worker consumer processes without duplicates.
-- Re-ran the current checkpoint with `npm run test:lark` at 116/116 and the shared `test:progress` suite at 387/387; earlier Foundation/conformance and platform input/security/presentation/topology checkpoints remain recorded at 14/14, 14/14, and 201/25/196/54. Credential-verified readiness, syntax checks, safe-reply checks, and `git diff --check` also passed; the deployment checklist now isolates the remaining successful form/private-permission/restart, real network outage, status-metric, and public-webhook smoke.
+- Re-ran the current checkpoint with `npm run test:lark` at 116/116 and the shared `test:progress` suite at 388/388; earlier Foundation/conformance and platform input/security/presentation/topology checkpoints remain recorded at 14/14, 14/14, and 201/25/196/54. Credential-verified readiness, syntax checks, safe-reply checks, and `git diff --check` also passed; the deployment checklist now isolates the remaining successful form/private-permission/restart, real network outage, status-metric, and public-webhook smoke.
 
 ## [0.13.0] - 2026-07-21
 

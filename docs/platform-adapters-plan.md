@@ -133,12 +133,12 @@
 本次提交前的验证结果：
 
 - `npm run test:lark`：116/116 通过。
-- `npm run test:progress`：387/387 通过。
+- `npm run test:progress`：388/388 通过。
 - `test:platform-foundation` 与 `test:platform-conformance`：分别 14/14、14/14 通过。
 - `test:platform-inputs`、`test:platform-security`、`test:platform-presentation`、`test:platform-topology`：分别 201/201、25/25、196/196、54/54 通过。
 - `npm run check:lark -- --verify-credentials --json`：通过；tenant scopes 9/9、事件 2/2、卡片回调 1/1、机器人菜单事件键 7/7、原生 slash commands 42/42，且无 errors/warnings。
 - 真实隔离私聊已覆盖 `!status` 收发、Settings 卡片及原位更新、select/Card 2.0 回调、机器人菜单、`/cx_status`、普通 prompt、带参数原生命令、未知 slash-path 回退和无效 Codex profile 校验路径。
-- 真实隔离群聊已覆盖 @/未 @、图片下载与原生图片理解、长任务取消/reaction、fork/side reply chain，以及 side 关闭后同一原生卡片根消息原位写入锁定标记。
+- 真实隔离群聊已覆盖 @/未 @、图片下载与原生图片理解、长任务取消/reaction、fork/side reply chain，以及 side 关闭后同一原生卡片根消息原位写入锁定标记；飞书历史列表 `230027` 时 fork 的可选最近输出重放会安静降级，不影响 fork 成功报告。
 - `git diff --check` 通过；提交范围不包含 App Secret、token、测试 chat ID 或用户 ID。
 
 阶段边界：上述结果证明当前实现具备试运行条件，但不等同于完整生产验收。成功表单保存、无权限用户的私密拒绝、私密响应跨重启、真实断网重连、`!status` 投递指标和真实公网 Webhook 仍按部署检查清单逐项验收。

@@ -107,7 +107,7 @@ npm run smoke:lark-dm -- --apply
 
 工具依次发送普通 prompt、带 `status` 参数的 provider 前缀原生命令和未知 `/path` prompt，并按关联回复自动核验。报告仅包含 identity/scope 布尔值、用例名、轮询次数和耗时，不输出 app/chat/user/message ID、profile 名称、凭证或消息正文。
 
-2026-07-27 的 CLI transport 隔离验收已完成这三个自动用例；同日群聊 smoke 还完成了步骤 4、11、12 和 15，其中新建 side 的根消息为无控件原生卡片，关闭后在同一消息 ID 上原位显示 `🔒 Codex side conversation closed`。不要复用旧的普通文本根来判断关闭标记修复是否生效。
+2026-07-27 的 CLI transport 隔离验收已完成这三个自动用例；同日群聊 smoke 还完成了步骤 4、11、12 和 15，其中新建 side 的根消息为无控件原生卡片，关闭后在同一消息 ID 上原位显示 `🔒 Codex side conversation closed`。不要复用旧的普通文本根来判断关闭标记修复是否生效。该测试群的 bot tenant token 调用飞书“列群历史消息”接口会返回 `230027 / user_unauthorized`，因此 fork 的可选“最近一次 agent 输出”重放会无警告跳过；新根、fork session、origin notice 和后续链内消息不受影响。
 
 在隔离测试 chat 中依次验证：
 

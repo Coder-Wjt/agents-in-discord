@@ -207,6 +207,72 @@ test('createCodexForkThread replays the latest parent agent message into the for
   assert.doesNotMatch(threadMessages[1].content, /older answer/);
 });
 
+test('createProviderForkThread quietly skips optional replay when Lark history access is unavailable', async () => {
+  const childSession = {};
+  const sent = [];
+  const historyError = new Error('access denied for this operation');
+  historyError.code = 'user_unauthorized';
+  const conversationSpawn = {
+    canSpawn: () => true,
+    async spawn() {
+      return {
+        id: 'platform:v1:lark:tenant_1:oc_group:om_root',
+        raw: {
+          platformId: 'lark',
+          chatId: 'oc_group',
+          rootId: 'om_root',
+          threadId: 'om_root',
+        },
+      };
+    },
+    async rename() { return { ok: true, renamed: true }; },
+    async remove() { return { ok: true, removed: true }; },
+    async archive() { return { ok: true, archived: true }; },
+    async send(conversation, payload) {
+      sent.push({ conversation, payload });
+      return { messageId: `om_sent_${sent.length}` };
+    },
+    async listRecentMessages() {
+      throw historyError;
+    },
+    splitText: (text) => [text],
+    createPromptMessage() { throw new Error('prompt message should not be created'); },
+    formatUserMention: (userId) => `<at user_id="${userId}">${userId}</at>`,
+    formatConversationReference: () => 'Lark reply chain',
+  };
+
+  const result = await createProviderForkThreadBase({
+    key: 'platform:v1:lark:tenant_1:oc_group:',
+    session: { provider: 'codex', language: 'zh' },
+    source: createForkSource(),
+    parentSessionId: 'parent-session',
+    provider: 'codex',
+    getSession: () => childSession,
+    commandActions: {
+      bindForkedSession(currentSession, binding) {
+        currentSession.runnerSessionId = binding.sessionId;
+        return binding;
+      },
+    },
+    async forkCodexThread() {
+      return { threadId: 'fork-session' };
+    },
+    conversationSpawn,
+    conversationPresentation,
+  });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.latestAgentReplay, {
+    ok: false,
+    skipped: true,
+    reason: 'parent_history_unavailable',
+  });
+  assert.equal(sent.length, 1);
+  const report = formatCodexForkResult(result, 'zh', conversationPresentation);
+  assert.doesNotMatch(report, /最近一次 agent 输出转发失败/);
+  assert.doesNotMatch(report, /access denied/);
+});
+
 test('parseForkTextInput treats its only argument as the requested thread name', () => {
   assert.deepEqual(parseForkTextInput('  Demo   fork  '), { threadName: 'Demo fork' });
   assert.deepEqual(parseForkTextInput(''), { threadName: '' });
