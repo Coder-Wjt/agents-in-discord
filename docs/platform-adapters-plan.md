@@ -43,6 +43,7 @@
 - 本机模式可用 `LARK_TRANSPORT=cli` 复用官方 `lark-cli` 的加密持久凭证和事件总线；`auto` 在未提供 App ID/Secret 时自动选择 CLI，服务器仍可显式选择 SDK。
 - 服务器可显式选择 `LARK_TRANSPORT=webhook`，通过官方 dispatcher 验证 verification token；配置 encrypt key 后再验证签名并解密 encrypted payload。本地 listener 默认绑定 loopback，支持固定 path、body limit，以及请求头、完整请求和 keep-alive 超时边界。
 - Webhook transport 提供与回调 POST 路径分离的 `GET /healthz` 运维探针，只返回连接状态和平台/transport 标识，不暴露凭证或事件内容。
+- `smoke:lark-webhook-live` 为生产 Webhook 提供只读 preflight 和显式 prepare/observe/verify：challenge 必须通过校验并成功生成响应，签名证据必须来自实际签名头，加密请求必须成功完成 challenge 或 dispatcher；共享 handler 也必须成功处理真实消息、原生 slash、菜单或卡片 action 后才记录 `0600` 布尔回执。runtime boot fingerprint 与本机/公网健康变化用于区分应用和反向代理恢复；状态不保存 URL、签名、正文或平台标识。
 - SDK safety pipeline 与平台入口共同按 message/event ID 做有界去重；CLI、Webhook 重投以及机器人菜单重试不会重复进入 command/prompt 核心。
 - Lark 会话从首版使用 `platform:v1:lark:<tenant>:<chat>:<thread>`；reply chain 以 canonical `root_id` 作为子会话键，即使事件同时提供 `thread_id` 也保持稳定。session、进程锁、workspace lock 和 project-upgrade 状态均按平台与实例隔离。
 - 群聊已启用 `threads` capability，将共享 Codex/Claude fork 和 Codex side lifecycle 映射为新根消息下的 reply chain；私聊明确降级为不可创建子会话。
@@ -632,7 +633,7 @@ Lark 从首个可运行版本起使用上述限定键，Discord 仍继续使用�
 
 - 当前应用的 credential-verified readiness 已通过：tenant scopes 9/9、事件 2/2、卡片回调 1/1、机器人菜单 7/7、原生 slash commands 46/46，且已配置当前应用作用域内的单用户 allowlist。
 - 隔离私聊已验证主动消息、`!status` 收发、`!settings` 卡片及原位更新、select/Card 2.0 回调、机器人菜单事件、`/cx_status` 关联回复、普通 prompt、带参数原生命令和未知 slash-path 回退；不存在的 Codex profile 也正确进入表单校验错误路径。
-- 隔离群聊已验证 @/未 @、真实图片、长任务取消/reaction、fork/side reply chain 和 side 根卡片关闭标记；Settings 成功保存和私密响应跨重启也已完成。受控本机代理 smoke 已验证真实断网后同一主进程 reconnect/reconnected、3/3 consumers 恢复，以及 `!status` 的重试和消息投递指标。真实第二用户拒绝现已有 `smoke:lark-denial-live` 的 prepare/observe/verify 闭环：复用生产 consumer、仅在群内至少两位用户时发送共享卡、记录不含被拒用户或私聊标识的本地布尔回执，并校验共享卡哈希不变；当前 preflight 检测到现有群仅一位用户，因此尚未写入。真实公网 Webhook smoke 也仍待生产凭证和 callback 配置。CLI transport 的空闲实例与受控运行中任务退出已在 `SELF_HEAL_ENABLED=false` 下完成真实 SIGTERM 验收，包含忽略 SIGTERM 子进程的有界 SIGKILL 收敛。完成其余项目后，阶段 6 才从“验收中”更新为“已完成”。
+- 隔离群聊已验证 @/未 @、真实图片、长任务取消/reaction、fork/side reply chain 和 side 根卡片关闭标记；Settings 成功保存和私密响应跨重启也已完成。受控本机代理 smoke 已验证真实断网后同一主进程 reconnect/reconnected、3/3 consumers 恢复，以及 `!status` 的重试和消息投递指标。真实第二用户拒绝已通过 `smoke:lark-denial-live` 的 prepare/observe/verify 闭环：生产 card consumer 收到不同于 owner 的操作者回调，拒绝私聊发送成功且与群聊分离，共享卡片哈希保持不变；驱动支持精确 `--group-name` 选择和发送后服务端卡片哈希基线。真实公网 Webhook 现也已有 `smoke:lark-webhook-live`：强制生产 Webhook/encrypt key/公网健康条件，只记录真实已验证请求、成功处理的消息/slash/菜单/卡片事件和应用/代理恢复布尔证据；当前生产仍为 CLI transport 且缺少 Webhook secrets/callback，因此只读 preflight 在网络访问和状态写入前拒绝。CLI transport 的空闲实例与受控运行中任务退出已在 `SELF_HEAL_ENABLED=false` 下完成真实 SIGTERM 验收，包含忽略 SIGTERM 子进程的有界 SIGKILL 收敛。完成公网 Webhook 真实闭环后，阶段 6 才从“验收中”更新为“已完成”。
 
 ### 阶段 7：迁移与统一运维（进行中）
 
@@ -645,8 +646,7 @@ Lark 从首个可运行版本起使用上述限定键，Discord 仍继续使用�
 
 ### P0：完成飞书生产验收并发布
 
-- 让第二位真实用户加入现有隔离群，先运行 `smoke:lark-denial-live` 无写入预检，再执行 prepare/observe/verify：由未加入 allowlist 的第二用户点击共享验收卡，确认生产 callback 只产生分离的私聊拒绝且共享卡哈希不变。
-- 补齐公网 Webhook 所需的 App Secret、verification token、encrypt key 和开放平台 callback 配置，在 TLS 反向代理后完成真实签名事件、加密事件、机器人菜单、slash command、卡片 action 与应用/代理重启恢复 smoke。
+- 补齐公网 Webhook 所需的 App Secret、verification token、encrypt key 和开放平台 callback 配置，在 TLS 反向代理后运行 `smoke:lark-webhook-live` prepare/observe/verify，完成真实 challenge/签名/加密事件、机器人菜单、slash command、卡片 action 与应用/代理重启恢复 smoke。
 - 完成剩余 smoke 后重新运行 credential-verified readiness、`test:lark`、`test:progress`、语法/格式/原子提交检查，并记录应用版本、region、transport、时间和非敏感结果。
 - 对 smoke 发现的问题只做飞书 Adapter、transport 或平台契约内的修复；若需要修改共享核心，先补跨 Discord/Lark 的边界与回归测试。
 - 复核 README、环境变量示例、权限/事件基线和运维清单与实际发布应用一致，随后准备版本号、发布说明和可回滚部署步骤。
@@ -695,6 +695,7 @@ LARK_WEBHOOK_HOST=127.0.0.1
 LARK_WEBHOOK_PORT=3000
 LARK_WEBHOOK_PATH=/lark/events
 LARK_WEBHOOK_HEALTH_PATH=/healthz
+LARK_WEBHOOK_PUBLIC_URL=https://bot.example.com/lark/events
 LARK_WEBHOOK_MAX_BODY_BYTES=1048576
 LARK_WEBHOOK_HEADERS_TIMEOUT_MS=10000
 LARK_WEBHOOK_REQUEST_TIMEOUT_MS=15000

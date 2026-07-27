@@ -180,12 +180,15 @@ npm run sync:lark-commands -- --dry-run
 # The webhook edge preflight opens no tunnel by default; --apply creates a temporary TLS tunnel.
 npm run smoke:lark-webhook-edge
 npm run smoke:lark-webhook-edge -- --apply
+# Real production webhook acceptance is read-only by default; prepare only creates a local boolean receipt window.
+npm run smoke:lark-webhook-live -- --public-url https://bot.example.com/lark/events
+npm run smoke:lark-webhook-live -- --prepare --public-url https://bot.example.com/lark/events --wait-ms 1200000
 # The private-denial command is preflight-only by default; --apply sends one real bot DM to the current CLI user.
 npm run smoke:lark-denial
 npm run smoke:lark-denial -- --apply
 # The real second-user click is preflight-only by default; prepare is allowed only after a second user joins.
 npm run smoke:lark-denial-live
-npm run smoke:lark-denial-live -- --prepare --wait-ms 600000
+npm run smoke:lark-denial-live -- --group-name 'isolated acceptance group' --prepare --wait-ms 600000
 # Or prepare first, then run --verify after the second user clicks.
 npm run smoke:lark-denial-live -- --verify
 # Only after reviewing the read-only drift:
@@ -194,9 +197,11 @@ npm run smoke:lark-denial-live -- --verify
 
 With `--apply`, `smoke:lark-webhook-edge` uses a temporary TryCloudflare HTTPS tunnel and random synthetic token/key values to verify the public health probe, encrypted URL challenge, signed/encrypted event dispatch, generic invalid-signature rejection, and listener restart recovery. It neither reads production credentials nor changes the Lark app configuration. This proves the public TLS/origin edge only; real Open Platform menu, slash-command, card-action, and restart acceptance is still required.
 
+`smoke:lark-webhook-live` accepts only the single active production webhook runtime, configured App Secret/verification token/encrypt key, and a public HTTPS URL matching the production callback path. Its default mode checks local and public health without writing state. Explicit `--prepare` creates a mode-`0600` local boolean receipt window without sending a message or starting another consumer. The production entry records a challenge only after validation and successful response generation, records signature evidence only when an actual signature header verifies, and requires an encrypted request to complete either challenge handling or dispatcher invocation successfully. Message, native slash-command, bot-menu, and card-action evidence is recorded only after the shared handler successfully processes the real event. State stores no URL, signature, decrypted body, or app/user/chat/message/event ID. With `--wait-ms`, restart the application and reverse proxy separately and perform only real Open Platform actions during the observation window; synthetic callbacks are never reported as production acceptance. Preparation and a later `--verify --wait-ms` can also be run separately.
+
 `smoke:lark-denial` requires ready bot and user identities on the selected `lark-cli` profile. Explicit `--apply` synthesizes an unauthorized shared-group-card action, sends and reads back one real bot DM to the current CLI user, and asserts zero shared-card updates and zero extra event consumers. Its report excludes identity, chat, message, and body data. This is a credentialed synthetic callback rehearsal, not a substitute for a second user clicking a real shared card.
 
-`smoke:lark-denial-live` closes the real second-user-click loop. Its default read-only preflight discovers the single active Lark runtime, known group, user count, and owner-only allowlist. Explicit `--prepare` sends a shared acceptance card only when at least two real users are present. After the production consumer successfully sends the private denial, it stores a boolean-only receipt under ignored local `data/` state without the denied actor or private-message identifiers; `--verify` then proves that the private chat differs from the group, the denied actor differs from the owner, and the shared-card hash is unchanged. It starts no additional event consumer and reports no app/chat/user/message IDs, profile, credentials, or card body.
+`smoke:lark-denial-live` closes the real second-user-click loop. Its default read-only preflight discovers the single active Lark runtime and a group from session state; `--group-name` can select one exact bot-accessible new isolation group before it has a session, without printing or persisting that name. Explicit `--prepare` sends a shared acceptance card only when at least two real users are present, then immediately reads back the server-normalized card as the hash baseline so platform conversion is not mistaken for click-time mutation. After the production consumer successfully sends the private denial, it stores a boolean-only receipt under ignored local `data/` state without the denied actor or private-message identifiers; `--verify` proves that the private chat differs from the group, the denied actor differs from the owner, and the shared-card hash is unchanged. The second tester must also be inside the app availability scope, or Lark rejects the bot DM with error `230013`. It starts no additional event consumer and reports no app/chat/user/message IDs, profile, credentials, or card body.
 
 Then start the runtime:
 
@@ -231,13 +236,15 @@ LARK_WEBHOOK_HOST=127.0.0.1
 LARK_WEBHOOK_PORT=3000
 LARK_WEBHOOK_PATH=/lark/events
 LARK_WEBHOOK_HEALTH_PATH=/healthz
+# Optional live-smoke input; alternatively pass --public-url each time.
+LARK_WEBHOOK_PUBLIC_URL=https://bot.example.com/lark/events
 LARK_WEBHOOK_MAX_BODY_BYTES=1048576
 LARK_WEBHOOK_HEADERS_TIMEOUT_MS=10000
 LARK_WEBHOOK_REQUEST_TIMEOUT_MS=15000
 LARK_WEBHOOK_KEEP_ALIVE_TIMEOUT_MS=5000
 ```
 
-The reverse proxy must preserve the raw request body and `x-lark-*` headers. The listener separately bounds header receipt, complete request receipt, and idle keep-alive time so slow clients cannot occupy sockets indefinitely; the header timeout cannot exceed the complete request timeout. Run `npm run smoke:lark-webhook-edge -- --apply` to verify a temporary public TLS/origin path, then use the deployment checklist for the production reverse proxy and real Open Platform event acceptance.
+The reverse proxy must preserve the raw request body and `x-lark-*` headers. The listener separately bounds header receipt, complete request receipt, and idle keep-alive time so slow clients cannot occupy sockets indefinitely; the header timeout cannot exceed the complete request timeout. Run `npm run smoke:lark-webhook-edge -- --apply` to verify a temporary public TLS/origin path, then use `smoke:lark-webhook-live` to record real production Open Platform events and application/proxy recovery evidence.
 
 Use `LARK_CLI_PROFILE` to select a profile when the CLI has multiple apps, and `LARK_CLI_BIN` to override the executable path. Use `LARK_DOMAIN=feishu` for mainland Feishu and `LARK_DOMAIN=lark` for international Lark; these domain settings apply to SDK WebSocket and webhook mode, while CLI mode follows the selected profile's brand.
 
@@ -277,6 +284,7 @@ Important knobs:
 - `LARK_APP_ID` / `LARK_APP_SECRET` / `LARK_DOMAIN`: SDK credentials and `feishu|lark` region selection
 - `LARK_WEBHOOK_VERIFICATION_TOKEN` / `LARK_WEBHOOK_ENCRYPT_KEY`: webhook verification and optional encrypted-event key
 - `LARK_WEBHOOK_HOST` / `LARK_WEBHOOK_PORT` / `LARK_WEBHOOK_PATH` / `LARK_WEBHOOK_HEALTH_PATH` / `LARK_WEBHOOK_MAX_BODY_BYTES`: local webhook listener, separate GET health probe, and request-size limit
+- `LARK_WEBHOOK_PUBLIC_URL`: optional public callback URL used only by `smoke:lark-webhook-live`; it is not a listener setting
 - `LARK_WEBHOOK_HEADERS_TIMEOUT_MS` / `LARK_WEBHOOK_REQUEST_TIMEOUT_MS` / `LARK_WEBHOOK_KEEP_ALIVE_TIMEOUT_MS`: slow-header, complete-request, and idle keep-alive bounds for the webhook HTTP server
 - `LARK_EVENT_DEDUP_WINDOW_MS` / `LARK_EVENT_DEDUP_MAX_ENTRIES`: duplicate event retention and bounded in-memory cache size
 - `LARK_ALLOWED_CHAT_IDS` / `LARK_ALLOWED_TENANT_IDS` / `LARK_ALLOWED_USER_IDS`: Lark access control; falls back to the corresponding shared allowlist when unset

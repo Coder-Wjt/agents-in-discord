@@ -125,12 +125,15 @@ npm run sync:lark-commands -- --dry-run
 # Webhook 公网边缘预检默认不创建隧道；显式 --apply 才创建临时 TLS 隧道
 npm run smoke:lark-webhook-edge
 npm run smoke:lark-webhook-edge -- --apply
+# 生产 Webhook 真实事件验收：默认只读，prepare 才创建本机布尔回执窗口
+npm run smoke:lark-webhook-live -- --public-url https://bot.example.com/lark/events
+npm run smoke:lark-webhook-live -- --prepare --public-url https://bot.example.com/lark/events --wait-ms 1200000
 # 私密拒绝默认只预检；显式 --apply 才向当前 CLI 用户发送一条真实 bot 私聊
 npm run smoke:lark-denial
 npm run smoke:lark-denial -- --apply
 # 真实第二用户点击默认只预检；群内已有第二用户后才允许 prepare
 npm run smoke:lark-denial-live
-npm run smoke:lark-denial-live -- --prepare --wait-ms 600000
+npm run smoke:lark-denial-live -- --group-name '隔离验收群' --prepare --wait-ms 600000
 # 也可以先 prepare，第二用户点击后再单独运行 --verify
 npm run smoke:lark-denial-live -- --verify
 # 确认只读差异后才执行：npm run sync:lark-commands -- --apply
@@ -138,9 +141,11 @@ npm run smoke:lark-denial-live -- --verify
 
 `smoke:lark-webhook-edge` 的 `--apply` 使用临时 TryCloudflare HTTPS 隧道和随机合成 token/key，验证公网健康探针、加密 challenge、签名/加密事件、错误签名通用拒绝以及 listener 重启恢复；它不会读取生产凭证或修改飞书应用配置。该 smoke 只能证明公网 TLS/回源边缘，不能替代开放平台真实菜单、slash command、卡片 action 和重启验收。
 
+`smoke:lark-webhook-live` 只接受当前唯一活动的生产 Webhook runtime、已配置的 App Secret/verification token/encrypt key，以及与生产 callback path 匹配的公网 HTTPS URL。默认仅检查本机与公网健康，不写状态；显式 `--prepare` 才创建权限为 `0600` 的本机布尔回执窗口，不发送消息也不启动额外 consumer。生产入口仅在 challenge 通过校验并成功生成响应后记录 challenge，只有实际签名头校验成功时才记录签名证据，加密请求也必须成功完成 challenge 或 dispatcher；真实消息、原生 slash command、机器人菜单或卡片 action 则只在共享 handler 成功处理后记录。状态不会保存 URL、签名、解密正文或任何 app/user/chat/message/event ID。配合 `--wait-ms` 时需在观察窗口内分别重启应用和反向代理，并只执行真实开放平台操作；合成 callback 不会被文档或报告当作生产验收。也可先 prepare，随后运行带 `--wait-ms` 的 `--verify`。
+
 `smoke:lark-denial` 要求所选 `lark-cli` profile 的 bot/user identity 均 ready。显式 `--apply` 会合成一次未授权群卡片动作，向当前 CLI 用户发送并读取回验一条真实 bot 私聊，同时断言共享卡片更新为 0、额外事件消费者为 0；报告不输出身份、会话、消息标识或正文。它是有凭证的合成回调演练，不能替代第二位用户点击真实共享卡片的验收。
 
-`smoke:lark-denial-live` 用于完成第二用户真实点击闭环。默认只读发现唯一活动 Lark 实例、现有群会话、群成员数和 owner-only allowlist；只有群内至少有两位真实用户时，显式 `--prepare` 才发送一张共享验收卡。生产 consumer 在拒绝私聊成功后会把不含被拒用户或私聊消息标识的布尔回执写入本机忽略提交的 `data/` 状态；`--verify` 再通过 bot API 校验私聊与群聊分离、被拒操作者不是 owner 且共享卡片哈希未变化。该工具不会启动第二套事件消费者，报告也不输出 app/chat/user/message ID、profile、凭证或卡片正文。
+`smoke:lark-denial-live` 用于完成第二用户真实点击闭环。默认只读发现唯一活动 Lark 实例和 session 中的群，也可用 `--group-name` 精确选择一个 bot 可访问但尚未产生 session 的新隔离群，报告不会输出或持久化群名。只有群内至少有两位真实用户时，显式 `--prepare` 才发送一张共享验收卡；发送后立即回读飞书服务端规范化后的卡片作为哈希基线，避免把平台转换误判为点击修改。生产 consumer 在拒绝私聊成功后会把不含被拒用户或私聊消息标识的布尔回执写入本机忽略提交的 `data/` 状态；`--verify` 再校验私聊与群聊分离、被拒操作者不是 owner 且共享卡片哈希未变化。第二测试用户还必须位于应用可用范围内，否则飞书会以 `230013` 拒绝 bot 私聊。该工具不会启动第二套事件消费者，报告也不输出 app/chat/user/message ID、profile、凭证或卡片正文。
 
 然后启动：
 
@@ -175,13 +180,15 @@ LARK_WEBHOOK_HOST=127.0.0.1
 LARK_WEBHOOK_PORT=3000
 LARK_WEBHOOK_PATH=/lark/events
 LARK_WEBHOOK_HEALTH_PATH=/healthz
+# 可选，仅供 live smoke 读取；也可每次通过 --public-url 传入
+LARK_WEBHOOK_PUBLIC_URL=https://bot.example.com/lark/events
 LARK_WEBHOOK_MAX_BODY_BYTES=1048576
 LARK_WEBHOOK_HEADERS_TIMEOUT_MS=10000
 LARK_WEBHOOK_REQUEST_TIMEOUT_MS=15000
 LARK_WEBHOOK_KEEP_ALIVE_TIMEOUT_MS=5000
 ```
 
-反向代理必须原样转发请求体和 `x-lark-*` 请求头。listener 会分别限制请求头接收、完整请求接收和 keep-alive 空闲时间，避免慢连接长期占用 socket；请求头超时不能大于完整请求超时。可先运行 `npm run smoke:lark-webhook-edge -- --apply` 验证临时公网 TLS/回源，再按 checklist 完成生产反向代理和开放平台真实事件验收。
+反向代理必须原样转发请求体和 `x-lark-*` 请求头。listener 会分别限制请求头接收、完整请求接收和 keep-alive 空闲时间，避免慢连接长期占用 socket；请求头超时不能大于完整请求超时。可先运行 `npm run smoke:lark-webhook-edge -- --apply` 验证临时公网 TLS/回源，再用 `smoke:lark-webhook-live` 记录生产开放平台真实事件与应用/代理恢复证据。
 
 CLI 有多个应用配置时可用 `LARK_CLI_PROFILE` 选择 profile；`LARK_CLI_BIN` 可覆盖命令路径。中国大陆飞书使用 `LARK_DOMAIN=feishu`，国际版 Lark 使用 `LARK_DOMAIN=lark`（这两个变量影响 SDK WebSocket 和 Webhook，CLI 模式跟随 profile 的 brand）。
 

@@ -30,7 +30,9 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 - Added an explicit-write `smoke:lark-dm` driver: the default is a no-message preflight, while `--apply` verifies ordinary private prompts, parameterized native commands, and unknown slash-path fallback without exposing identifiers, credentials, or message bodies.
 - Added an explicit-write `smoke:lark-denial` driver: the default is a no-message identity preflight, while `--apply` synthesizes an unauthorized shared-card action, sends and reads back one real private bot denial, and asserts zero shared-card updates and zero extra event consumers without exposing identifiers or message bodies.
 - Added `smoke:lark-denial-live` for the real second-user acceptance: its read-only preflight discovers the single active runtime/group, member count, and owner-only allowlist; explicit preparation writes one shared card only with at least two users, reuses the production consumer, records a boolean-only private-delivery receipt, and verifies that the shared-card hash stayed unchanged.
+- Added exact `--group-name` selection to `smoke:lark-denial-live`, allowing a newly created bot-accessible isolation group to be tested before it has produced local session state without printing or persisting its name or ID.
 - Added an explicit-write `smoke:lark-webhook-edge` driver: the default is a local dependency preflight, while `--apply` uses a temporary public TLS tunnel and synthetic random secrets to verify encrypted challenges/events, invalid-signature rejection, and listener restart recovery without changing the Lark app configuration.
+- Added `smoke:lark-webhook-live` for real production Open Platform acceptance: read-only preflight requires the single active webhook runtime, encryption, a matching public HTTPS callback URL, and local/public health; explicit preparation records only verified request, successfully handled message/slash/menu/card-event, application-restart, and reverse-proxy-recovery booleans without starting another consumer.
 - Added Lark task-status reactions through the shared message-delivery status port.
 - Added Lark group reply-chain child conversations for shared Codex/Claude fork and Codex side flows, including stable `root_id` session keys, root-message rename/cleanup markers, recent-output replay, failure compensation, and card-action context restoration.
 - Added platform-neutral health snapshots and Lark SDK/CLI/webhook connection, retry, self-heal, and message-delivery metrics to shared status reports.
@@ -50,6 +52,7 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 - Changed successful Lark Card 2.0 form completion to keep the submitted form as a Card 2.0 saved acknowledgement and send the refreshed Card 1.0 Settings panel as a new message, avoiding an unsupported in-place schema downgrade.
 - Changed non-form `ephemeral` responses from an existing private Lark card to update that private card in place, including after a process restart when only the embedded source-conversation context remains.
 - Kept live Lark denial receipts local and instance-isolated with mode `0600`; they retain the prepared shared-card correlation needed for verification but never store the denied actor or private message/chat identifiers.
+- Kept live Lark webhook receipts local, provider/instance-isolated, and mode `0600`; they store no public URL, signature, decrypted body, or app/user/chat/message/event identifier, and synthetic edge requests are not reported as production acceptance.
 
 ### Removed
 
@@ -75,6 +78,7 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 - Treated null or empty `option` fields emitted by `lark-cli` button callbacks as buttons instead of selects, restoring Onboarding and Workspace Browser actions on the CLI transport.
 - Kept expired Workspace Browser responses visible in the original private card after restart instead of relying on an associated reply that could be hidden from the main P2P message list.
 - Removed full component, user, and conversation identifiers from handled Lark card and bot-menu diagnostics; handled and unhandled controls now share the same bounded component prefix/length logging shape, while menus log only a sanitized command token.
+- Based live denial card verification on an immediate bot-API readback after send, so Lark's server-side card-schema normalization is part of the baseline instead of being misreported as a mutation caused by the second-user click.
 
 ### Verified
 
@@ -102,6 +106,11 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 - Re-ran the private-denial checkpoint with `npm run test:lark` at 127/127 and `npm run test:progress` at 851/851; credential-verified readiness remained at scopes 9/9, events 2/2, callbacks 1/1, menu keys 7/7, and native slash commands 46/46.
 - Ran the live private-denial preflight against the active production CLI runtime: one accessible group and the owner-only allowlist were found, but the group currently contains only one user, so preparation correctly sent no card and created no acceptance state.
 - Re-ran the live-denial checkpoint with `npm run test:lark` at 139/139 and `npm run test:progress` at 863/863; both suites completed with zero failures, cancellations, or skips.
+- Ran the live webhook preflight against the active production CLI runtime: it rejected the non-webhook transport before any network probe or acceptance-state write, so the still-missing production secrets/callback cannot be mistaken for completed acceptance.
+- Re-ran the webhook-live checkpoint with `npm run test:lark` at 149/149 and `npm run test:progress` at 873/873; both suites completed with zero failures, cancellations, or skips.
+- Ran the first real second-user click in a new two-user isolation group: the production card consumer received the action and entered the private-denial branch with the owner-only allowlist and 3/3 consumers intact, but Lark rejected the bot DM with `230013` because the second tester was outside the app availability scope. At that point, the receipt remained unverified pending the external scope correction and retry.
+- Re-ran the same real second-user card after publishing the expanded app availability scope and opening the bot P2P chat once: the production consumer observed the callback, the denied actor differed from the owner, the private delivery succeeded in a chat separate from the group, and the server-normalized shared-card hash stayed unchanged.
+- Re-ran the final code checkpoint with `npm run test:lark` at 150/150 and `npm run test:progress` at 874/874; failures, cancellations, and skips remained zero.
 
 ## [0.14.0] - 2026-07-25
 
