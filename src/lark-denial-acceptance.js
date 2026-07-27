@@ -134,13 +134,18 @@ export function verifyLarkDenialAcceptanceCard(payload, state) {
   const expectedMessageId = normalizeText(state?.messageId);
   const expectedHash = normalizeText(state?.cardHash);
   if (!expectedMessageId || !expectedHash) return false;
-  return normalizeMessageItems(payload).some((message) => {
+  return resolveLarkDenialAcceptanceCardHash(payload, expectedMessageId) === expectedHash;
+}
+
+export function resolveLarkDenialAcceptanceCardHash(payload, expectedMessageId) {
+  const targetMessageId = normalizeText(expectedMessageId);
+  if (!targetMessageId) return null;
+  for (const message of normalizeMessageItems(payload)) {
     const messageId = normalizeText(message?.message_id || message?.messageId);
     const card = readCardContent(message);
-    return messageId === expectedMessageId
-      && Boolean(card)
-      && hashLarkDenialAcceptanceCard(card) === expectedHash;
-  });
+    if (messageId === targetMessageId && card) return hashLarkDenialAcceptanceCard(card);
+  }
+  return null;
 }
 
 export function createLarkDenialAcceptanceRecorder({

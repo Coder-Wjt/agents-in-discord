@@ -9,6 +9,7 @@ import {
   createLarkDenialAcceptanceRecorder,
   hashLarkDenialAcceptanceCard,
   readLarkDenialAcceptanceState,
+  resolveLarkDenialAcceptanceCardHash,
   resolveLarkDenialAcceptanceStateFile,
   verifyLarkDenialAcceptanceCard,
   writeLarkDenialAcceptanceState,
@@ -57,6 +58,26 @@ test('Lark denial acceptance verifies that the prepared shared card stayed uncha
       }],
     },
   }, state), false);
+  const transformed = {
+    title: 'server-normalized',
+    elements: [{ tag: 'div' }],
+  };
+  const transformedPayload = {
+    data: {
+      items: [{
+        message_id: 'om_shared',
+        body: { content: JSON.stringify(transformed) },
+      }],
+    },
+  };
+  const transformedHash = resolveLarkDenialAcceptanceCardHash(
+    transformedPayload,
+    'om_shared',
+  );
+  assert.equal(verifyLarkDenialAcceptanceCard(transformedPayload, {
+    ...state,
+    cardHash: transformedHash,
+  }), true);
 });
 
 test('Lark denial acceptance recorder stores a private receipt without the denied actor or DM ids', async (t) => {

@@ -12,11 +12,12 @@ const rootDir = path.resolve(path.dirname(__filename), '..');
 
 function usage() {
   return [
-    'Usage: npm run smoke:lark-denial-live -- [--prepare | --verify] [--wait-ms <ms>] [--json]',
+    'Usage: npm run smoke:lark-denial-live -- [--prepare | --verify] [--group-name <exact-name>] [--wait-ms <ms>] [--json]',
     '',
     'Default: read-only preflight for the active Lark runtime and its single known group.',
     '--prepare: send one shared acceptance card only when the group has at least two users.',
     '--verify: prove a real unauthorized click produced a separate private delivery and left the shared card unchanged.',
+    '--group-name: select one exact bot-accessible group without printing or persisting its name or ID.',
     '--wait-ms: after --prepare, wait up to 600000ms for the production consumer to observe the click, then verify.',
     '',
     'The tool never starts an event consumer and never prints app/chat/user/message IDs, credentials, card bodies, or profile names.',

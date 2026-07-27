@@ -7,7 +7,7 @@ import { loadRuntimeEnv } from './env-loader.js';
 import { createLarkCliChannel } from './lark-cli-channel.js';
 import {
   buildLarkDenialAcceptanceCard,
-  hashLarkDenialAcceptanceCard,
+  resolveLarkDenialAcceptanceCardHash,
   verifyLarkDenialAcceptanceCard,
   writeLarkDenialAcceptanceState,
 } from './lark-denial-acceptance.js';
@@ -134,25 +134,42 @@ export async function runLarkDenialLiveSmoke({
     report.userReady = auth.userReady;
     if (!auth.ok) throw createLarkDenialLiveError('lark_denial_live_identity_unavailable');
 
-    let sessionState;
-    try {
-      sessionState = JSON.parse(fsImpl.readFileSync(runtime.sessionFile, 'utf8'));
-    } catch {
-      throw createLarkDenialLiveError('lark_denial_live_group_unavailable');
-    }
     const groupIds = [];
-    for (const chatId of extractLarkSessionConversationIds(sessionState)) {
-      try {
-        const payload = await executeCli([
-          'api', 'GET', `/open-apis/im/v1/chats/${encodeURIComponent(chatId)}`, '--as', 'bot',
-        ]);
-        const item = payload?.data?.items?.[0] || payload?.data || payload || {};
+    const requestedGroupName = String(options?.groupName || '').trim();
+    if (requestedGroupName) {
+      const payload = await executeCli([
+        'api', 'GET', '/open-apis/im/v1/chats?page_size=100', '--as', 'bot',
+      ]);
+      const items = Array.isArray(payload?.data?.items) ? payload.data.items : [];
+      for (const item of items) {
         const mode = String(
           item?.chat_mode || item?.chatMode || item?.chat_type || item?.chatType || '',
         ).trim().toLowerCase();
-        if (mode.includes('group')) groupIds.push(chatId);
+        const chatId = String(item?.chat_id || item?.chatId || '').trim();
+        if (mode.includes('group') && chatId && String(item?.name || '').trim() === requestedGroupName) {
+          groupIds.push(chatId);
+        }
+      }
+    } else {
+      let sessionState;
+      try {
+        sessionState = JSON.parse(fsImpl.readFileSync(runtime.sessionFile, 'utf8'));
       } catch {
-        // Ignore inaccessible historical conversations; one live group is required below.
+        throw createLarkDenialLiveError('lark_denial_live_group_unavailable');
+      }
+      for (const chatId of extractLarkSessionConversationIds(sessionState)) {
+        try {
+          const payload = await executeCli([
+            'api', 'GET', `/open-apis/im/v1/chats/${encodeURIComponent(chatId)}`, '--as', 'bot',
+          ]);
+          const item = payload?.data?.items?.[0] || payload?.data || payload || {};
+          const mode = String(
+            item?.chat_mode || item?.chatMode || item?.chat_type || item?.chatType || '',
+          ).trim().toLowerCase();
+          if (mode.includes('group')) groupIds.push(chatId);
+        } catch {
+          // Ignore inaccessible historical conversations; one live group is required below.
+        }
       }
     }
     report.groupCount = groupIds.length;
@@ -213,12 +230,26 @@ export async function runLarkDenialLiveSmoke({
       if (!sent?.messageId || !sent?.chatId) {
         throw createLarkDenialLiveError('lark_denial_live_prepare_failed');
       }
+      const preparedPayload = await executeCli([
+        'api',
+        'GET',
+        `/open-apis/im/v1/messages/${encodeURIComponent(String(sent.messageId))}`,
+        '--as',
+        'bot',
+      ]);
+      const preparedCardHash = resolveLarkDenialAcceptanceCardHash(
+        preparedPayload,
+        sent.messageId,
+      );
+      if (!preparedCardHash) {
+        throw createLarkDenialLiveError('lark_denial_live_prepare_failed');
+      }
       writeLarkDenialAcceptanceState(runtime.acceptanceFile, createLarkDenialPreparedState({
         chatId: sent.chatId,
         messageId: sent.messageId,
         componentId,
         ownerUserId: auth.actorOpenId,
-        cardHash: hashLarkDenialAcceptanceCard(card),
+        cardHash: preparedCardHash,
         now,
       }));
       report.prepared = true;

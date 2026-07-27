@@ -47,6 +47,12 @@ function createHarness(t, { userCount = 2 } = {}) {
       const contentIndex = args.indexOf('--content');
       sentCard = JSON.parse(args[contentIndex + 1]);
       payload = { data: { message_id: 'om_shared', chat_id: 'oc_group' } };
+    } else if (args.some((arg) => String(arg).includes('/open-apis/im/v1/chats?page_size='))) {
+      payload = {
+        data: {
+          items: [{ chat_id: 'oc_group', chat_mode: 'group', name: 'Codex测试群1' }],
+        },
+      };
     } else if (args.some((arg) => String(arg).includes('/open-apis/im/v1/messages/'))) {
       payload = {
         data: {
@@ -91,7 +97,7 @@ test('Lark live denial runner prepares, observes, and verifies one real-style ca
   const nowValue = Date.parse('2026-07-27T00:00:00.000Z');
   const prepare = await runLarkDenialLiveSmoke({
     ...harness,
-    options: { mode: 'prepare', waitMs: 0 },
+    options: { mode: 'prepare', groupName: 'Codex测试群1', waitMs: 0 },
     env: {},
     now: () => nowValue,
   });

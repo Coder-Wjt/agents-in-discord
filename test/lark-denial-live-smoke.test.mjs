@@ -22,20 +22,27 @@ test('Lark live denial smoke keeps writes and waiting explicit', () => {
     mode: 'preflight',
     help: false,
     json: false,
+    groupName: null,
     waitMs: 0,
   });
   assert.deepEqual(parseLarkDenialLiveSmokeArgs(['--prepare', '--wait-ms', '60000', '--json']), {
     mode: 'prepare',
     help: false,
     json: true,
+    groupName: null,
     waitMs: 60000,
   });
   assert.deepEqual(parseLarkDenialLiveSmokeArgs(['--verify']), {
     mode: 'verify',
     help: false,
     json: false,
+    groupName: null,
     waitMs: 0,
   });
+  assert.equal(
+    parseLarkDenialLiveSmokeArgs(['--group-name', 'Codex测试群1']).groupName,
+    'Codex测试群1',
+  );
   assert.throws(() => parseLarkDenialLiveSmokeArgs(['--prepare', '--verify']), /mutually exclusive/);
   assert.throws(() => parseLarkDenialLiveSmokeArgs(['--wait-ms', '1']), /requires --prepare/);
 });

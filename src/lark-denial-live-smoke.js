@@ -64,6 +64,7 @@ export function parseLarkDenialLiveSmokeArgs(argv = []) {
     mode: 'preflight',
     help: false,
     json: false,
+    groupName: null,
     waitMs: DEFAULT_WAIT_MS,
   };
   for (let index = 0; index < argv.length; index += 1) {
@@ -76,6 +77,13 @@ export function parseLarkDenialLiveSmokeArgs(argv = []) {
       options.mode = 'verify';
     } else if (arg === '--json') options.json = true;
     else if (arg === '--help' || arg === '-h') options.help = true;
+    else if (arg === '--group-name') {
+      index += 1;
+      if (argv[index] === undefined) throw new TypeError('--group-name requires a value.');
+      options.groupName = normalizeText(argv[index]);
+    } else if (arg.startsWith('--group-name=')) {
+      options.groupName = normalizeText(arg.slice('--group-name='.length));
+    }
     else if (arg === '--wait-ms') {
       index += 1;
       if (argv[index] === undefined) throw new TypeError('--wait-ms requires a value.');
@@ -109,6 +117,7 @@ export function discoverActiveLarkRuntime({
     try {
       const lock = JSON.parse(fsImpl.readFileSync(path.join(directory, filename), 'utf8'));
       if (!isProcessAlive(lock?.pid, processRef)) continue;
+      parsed.pid = Number(lock.pid);
     } catch {
       continue;
     }
