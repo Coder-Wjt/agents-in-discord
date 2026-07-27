@@ -18,7 +18,7 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 - Added bounded Lark webhook header, complete-request, and idle keep-alive timeouts to prevent slow clients from occupying listener sockets indefinitely.
 - Added bounded Lark message, card-action, and bot-menu event deduplication across SDK, CLI, and webhook delivery paths to prevent retried events from executing twice.
 - Added native Lark interactive cards for shared Settings, Onboarding, Workspace, conflict, and retry flows, with button/select action routing and in-place card updates on SDK, CLI, and webhook transports.
-- Added Card 2.0 form equivalents for shared modal views, including model, Codex profile, and compact-threshold input with in-place open and submit updates on all supported Lark transports.
+- Added Card 2.0 form equivalents for shared modal views, including model, Codex profile, and compact-threshold input with in-place open and validation updates on all supported Lark transports.
 - Added native Lark custom bot-menu command entry through `application.bot.menu_v6`, resolving the operator's direct chat and routing menu event keys through the shared command router on SDK, CLI, and webhook transports.
 - Extended the read-only Lark readiness check to audit the published bot version, delivery mode, required published events, and bot-menu configuration while keeping callback subscriptions and isolated-chat smoke tests as explicit manual checks when the application API cannot prove them.
 - Made Lark readiness compare the published bot menu against the versioned required `event_key` set instead of accepting any enabled non-empty menu.
@@ -32,6 +32,7 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 - Added Lark group reply-chain child conversations for shared Codex/Claude fork and Codex side flows, including stable `root_id` session keys, root-message rename/cleanup markers, recent-output replay, failure compensation, and card-action context restoration.
 - Added platform-neutral health snapshots and Lark SDK/CLI/webhook connection, retry, self-heal, and message-delivery metrics to shared status reports.
 - Added `BOT_PLATFORM`, `BOT_INSTANCE_ID`, Lark configuration, platform-and-instance state isolation, and `start:lark` / `dev:lark` / `test:lark` scripts.
+- Added privacy-safe Lark card diagnostics that log only normalized action kind, component prefix/length, workspace-browser state booleans, and response completion booleans without recording component payloads, identifiers, or message bodies.
 
 ### Changed
 
@@ -43,6 +44,8 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 - Made normalized inbound actor, conversation, attachments, reply references, and history metadata the only core message contract.
 - Kept Discord's legacy default filenames unchanged while namespacing Lark session data, locks, project-upgrade state, and heartbeat identifiers by platform and instance.
 - Accepted Node.js 18 for the Lark implementation; any future Slack runtime upgrade remains a separate decision.
+- Changed successful Lark Card 2.0 form completion to keep the submitted form as a Card 2.0 saved acknowledgement and send the refreshed Card 1.0 Settings panel as a new message, avoiding an unsupported in-place schema downgrade.
+- Changed non-form `ephemeral` responses from an existing private Lark card to update that private card in place, including after a process restart when only the embedded source-conversation context remains.
 
 ### Removed
 
@@ -65,6 +68,8 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 - Sent Lark fork/side reply-chain roots as content-only native cards and preserved their card target metadata during rename/archive, so side close can update the existing root in place instead of failing with `This message is NOT a card.`
 - Treated Lark message-history error `230027 / user_unauthorized` as an unavailable optional fork replay instead of showing a misleading user reauthorization warning after the native fork already succeeded; unexpected history failures remain visible.
 - Kept proxy auto-repair runtime-only by default, so temporary systemd/shell outage proxies can fill equivalent process environment keys without being persisted into `.env` and silently trapping future Lark consumers on a stopped local proxy.
+- Treated null or empty `option` fields emitted by `lark-cli` button callbacks as buttons instead of selects, restoring Onboarding and Workspace Browser actions on the CLI transport.
+- Kept expired Workspace Browser responses visible in the original private card after restart instead of relying on an associated reply that could be hidden from the main P2P message list.
 
 ### Verified
 
@@ -81,7 +86,11 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 - Verified real CLI consumer-loss recovery by terminating the message-event consumer: the lifecycle recorded `channel_error`, self-healed without replacing the main process, restored all three direct consumers, and returned to exactly six wrapper/worker consumer processes without duplicates.
 - Verified a controlled real CLI network outage through a switchable local CONNECT proxy: the same main process and 3/3 consumers entered reconnecting, recovered with a reconnected event, and continued receiving group commands. The next `!status` showed retries increasing from 0 to 1, self-heal restarts remaining 0, delivery counts of 1 succeeded / 2 failed / 0 in flight, and a credential-free latest failure.
 - Re-ran the isolated group image and cancellation paths after transport recovery: a generated three-band image was exposed as a native resource and answered in red/green/blue order; a controlled task reached `THINKING`, then `!cancel` replaced it with `No` while the main PID remained unchanged. The persisted reply-chain audit still returns four chains, two fork bindings, two closed side records, and one directly readable locked native side root.
-- Re-ran the merged checkpoint with `npm run test:lark` at 116/116 and the expanded shared `test:progress` suite at 838/838; earlier Foundation/conformance and platform input/security/presentation/topology checkpoints remain recorded at 14/14, 14/14, and 201/25/196/54. Credential-verified readiness, syntax checks, safe-reply checks, and `git diff --check` also passed; the deployment checklist now isolates the remaining successful form/private-permission/restart and public-webhook smoke.
+- Re-ran the merged checkpoint with `npm run test:lark` at 116/116 and the expanded shared `test:progress` suite at 838/838; earlier Foundation/conformance and platform input/security/presentation/topology checkpoints remain recorded at 14/14, 14/14, and 201/25/196/54. Credential-verified readiness, syntax checks, safe-reply checks, and `git diff --check` also passed; at that checkpoint the deployment checklist isolated successful form, private permission/restart, and public-webhook smoke as the remaining work.
+- Verified a real compact-threshold form save and reset-to-default flow: the submitted Card 2.0 form showed a saved acknowledgement, a fresh Settings card exposed the latest controls, and the persisted override was subsequently cleared.
+- Verified Onboarding-to-Workspace-Browser private navigation on the CLI transport, including correct button classification and restoration of the source group/reply-chain context.
+- Verified the private Workspace Browser restart boundary with an actual process replacement: the stale control updated the original private card to an expired state with zero remaining actions, produced zero new group messages, and preserved the workspace, runner-session, Codex-thread, and provider bindings.
+- Re-ran the completed checkpoint with `npm run test:lark` at 120/120 and `npm run test:progress` at 844/844; both suites passed with zero failures, cancellations, or skips.
 
 ## [0.14.0] - 2026-07-25
 

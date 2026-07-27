@@ -15,7 +15,17 @@
 
 当前绑定应用已按显式流程完成两次 additive `--apply`：初始 42 条命令上线后，合并 Pi/OMP session aliases 又先 dry-run 再新增 4 条。最近只读复核为 provisioning scopes 2/2、注册表 46/46 matched、missing/outdated/extra 均为 0，剩余容量 54/100。后续仅在 command spec 发生变化时重新审计并按需同步。
 
-最近一次 credential-verified readiness 已自动通过：tenant scopes 9/9、机器人版本已发布、WebSocket 接入方式正确、必需事件 2/2、卡片回调 1/1、机器人菜单 7/7、原生 slash commands 46/46，并已配置当前应用作用域内的单用户 allowlist。隔离私聊 smoke 已验证主动消息、用户 `!status` 入站和机器人回复闭环、`!settings` 原生卡片及原位更新、select 与 Card 2.0 表单回调、`settings`/`progress` 机器人菜单事件、普通 prompt、带参数原生命令、未知 slash-path prompt 回退，以及 `/cx_status` 原生命令的关联回复；表单提交不存在的 Codex profile `work` 时也按预期进入校验错误路径。隔离群聊已验证未 @ 不回复、@ bot 后关联回复、真实图片下载及原生图片理解、长任务取消与 `THINKING` 到 `No` reaction 更新、fork/side 独立 reply chain，以及 side 关闭后同一原生卡片根消息原位更新为锁定标记。CLI transport 还已在 `SELF_HEAL_ENABLED=false` 下完成空闲实例和受控运行中任务的真实 SIGTERM smoke；真实 consumer-loss smoke 也确认 lifecycle 在主进程不变的情况下完成 self-heal，恢复为 3 个直接消费者、6 个 wrapper/worker 进程且没有重复。受控本机 CONNECT 代理 smoke 进一步验证了同一主进程内的真实连接中断与恢复：断网期间 3 个消费者进入 reconnecting，恢复后出现 reconnected，`!status` 的重试计数从 0 增至 1、自愈重启保持 0，并报告成功 1、失败 2、进行中 0 及脱敏最近失败。复测发现的临时代理固化问题已修复：代理大小写补齐与本地 SOCKS 推断现在默认只修改当前进程环境，不再写回 `.env`；新源码重启后配置中代理键为 0、consumer 无代理且私聊探针恢复关联回复。其余成功表单保存、私密响应/权限拒绝/跨重启上下文恢复和公网 Webhook 仍按下方清单继续执行。
+最近一次 credential-verified readiness 已自动通过：tenant scopes 9/9、机器人版本已发布、WebSocket 接入方式正确、必需事件 2/2、卡片回调 1/1、机器人菜单 7/7、原生 slash commands 46/46，并已配置当前应用作用域内的单用户 allowlist。隔离私聊 smoke 已验证主动消息、用户 `!status` 入站和机器人回复闭环、`!settings` 原生卡片及原位更新、select 与 Card 2.0 表单回调、`settings`/`progress` 机器人菜单事件、普通 prompt、带参数原生命令、未知 slash-path prompt 回退，以及 `/cx_status` 原生命令的关联回复；表单提交不存在的 Codex profile `work` 时也按预期进入校验错误路径。隔离群聊已验证未 @ 不回复、@ bot 后关联回复、真实图片下载及原生图片理解、长任务取消与 `THINKING` 到 `No` reaction 更新、fork/side 独立 reply chain，以及 side 关闭后同一原生卡片根消息原位更新为锁定标记。CLI transport 还已在 `SELF_HEAL_ENABLED=false` 下完成空闲实例和受控运行中任务的真实 SIGTERM smoke；真实 consumer-loss smoke 也确认 lifecycle 在主进程不变的情况下完成 self-heal，恢复为 3 个直接消费者、6 个 wrapper/worker 进程且没有重复。受控本机 CONNECT 代理 smoke 进一步验证了同一主进程内的真实连接中断与恢复：断网期间 3 个消费者进入 reconnecting，恢复后出现 reconnected，`!status` 的重试计数从 0 增至 1、自愈重启保持 0，并报告成功 1、失败 2、进行中 0 及脱敏最近失败。复测发现的临时代理固化问题已修复：代理大小写补齐与本地 SOCKS 推断现在默认只修改当前进程环境，不再写回 `.env`；新源码重启后配置中代理键为 0、consumer 无代理且私聊探针恢复关联回复。成功表单保存、非表单私密响应和跨重启上下文恢复现已通过真实复测；剩余生产验收为无权限用户的私密拒绝，以及公网 Webhook 的真实签名/加密/重启恢复闭环。
+
+### 2026-07-27 Settings 与私密跨重启复测
+
+- Settings compact threshold 使用真实 Card 2.0 表单保存了一个非默认值；旧表单原位变为 Card 2.0“已保存”确认，同时发送新的 Card 1.0 Settings 卡承载最新控件。随后点击“跟随默认阈值”，持久化 override 已清除。
+- 该双消息完成流程用于规避飞书消息更新接口不支持 Card 2.0 原位降级为 Card 1.0；校验失败仍保留原 Card 2.0 表单，便于修正和重试。
+- CLI card callback 的 `option: null` 不再把 button 误判为 select；Onboarding 的 workspace browse 能进入真实私聊 Workspace Browser，并从卡内嵌上下文恢复原群聊/reply-chain session。
+- 在生成私聊 Workspace Browser 后替换真实 bot 进程，再点击旧卡控件：运行时明确进入 `stateFound=false` 的过期分支，原私聊卡被原位更新为无控件提示，群聊新增机器人消息为 0。
+- 跨重启点击前后，workspace、runner session、Codex thread 与 provider 绑定均保持不变；服务保持单实例，三个事件类型消费者全部恢复。
+- 本轮完整回归为 `npm run test:lark` 120/120、`npm run test:progress` 844/844，失败、取消和跳过均为 0。
+- 诊断日志仅记录 interaction kind、component 前缀/长度和 Workspace Browser 的状态/响应布尔值，不记录 action payload、消息正文或真实标识。
 
 ### 2026-07-27 验收矩阵
 
@@ -24,7 +34,7 @@
 | 本地依赖与配置 | 已通过 | CLI transport 可用，生产配置解析、placeholder/数值/path 校验与限制性用户 allowlist 生效 | 发布前复核运行实例使用同一配置来源 |
 | 凭证与线上应用 | 已通过 | tenant scopes 9/9、事件 2/2、卡片回调 1/1、菜单键 7/7、原生命令 46/46 | command spec 或应用版本变更后重新运行只读审计 |
 | 私聊命令闭环 | 已通过 | 主动消息、`!status`、`!settings`、`/cx_status`、普通 prompt、带参数命令和未知 `/path` prompt 回退已验证 | 应用版本或命令表变化后重跑自动 smoke |
-| 原生卡片与表单 | 部分通过 | 卡片发送/原位更新、select、Card 2.0 回调、无效 profile 校验已验证 | 补成功保存、私密响应、权限拒绝和跨重启上下文恢复 |
+| 原生卡片与表单 | 已通过 | 卡片发送/原位更新、select、Card 2.0 校验与成功保存、私密响应及跨重启上下文恢复已验证 | 应用版本或卡片 schema 变化后重跑 |
 | 群聊与 reply chain | 部分通过 | 隔离群已验证 @/未 @、fork/side、新根与链内回复；side 关闭后同一交互卡片根原位写入锁定标记 | 补不具备操作权限用户的群聊访问/私密拒绝场景 |
 | 附件与任务控制 | 已通过 | 真实图片已下载并作为原生图片输入被精确理解；真实长任务取消后 reaction 从 `THINKING` 更新为 `No` | 应用权限或 transport 变化后重跑 |
 | 恢复与指标 | 已通过 | 自动化覆盖重连、自愈和连接/投递快照；真实 CLI SIGTERM 已验证空闲及运行中任务退出；真实 consumer-loss 已验证主进程内 self-heal；受控代理断网验证同一主进程 reconnect/reconnected、3/3 consumers 恢复，`!status` 显示重试 1、自愈 0、投递 1/2/0 和脱敏最近失败；临时代理修复不再持久化到 `.env` | transport、代理或投递实现变化后重跑 |
@@ -107,7 +117,7 @@ npm run smoke:lark-dm -- --apply
 
 工具依次发送普通 prompt、带 `status` 参数的 provider 前缀原生命令和未知 `/path` prompt，并按关联回复自动核验。报告仅包含 identity/scope 布尔值、用例名、轮询次数和耗时，不输出 app/chat/user/message ID、profile 名称、凭证或消息正文。
 
-2026-07-27 的 CLI transport 隔离验收已完成这三个自动用例；同日群聊 smoke 还完成了步骤 4、11、12 和 15，其中新建 side 的根消息为无控件原生卡片，关闭后在同一消息 ID 上原位显示 `🔒 Codex side conversation closed`。不要复用旧的普通文本根来判断关闭标记修复是否生效。该测试群的 bot tenant token 调用飞书“列群历史消息”接口会返回 `230027 / user_unauthorized`，因此 fork 的可选“最近一次 agent 输出”重放会无警告跳过；新根、fork session、origin notice 和后续链内消息不受影响。
+2026-07-27 的 CLI transport 隔离验收已完成这三个自动用例；同日群聊 smoke 还完成了步骤 4、11、12 和 15，其中新建 side 的根消息为无控件原生卡片，关闭后在同一消息 ID 上原位显示 `🔒 Codex side conversation closed`。不要复用旧的普通文本根来判断关闭标记修复是否生效。该测试群的 bot tenant token 调用飞书“列群历史消息”接口会返回 `230027 / user_unauthorized`，因此 fork 的可选“最近一次 agent 输出”重放会无警告跳过；新根、fork session、origin notice 和后续链内消息不受影响。后续复测已完成步骤 7 和 8：成功表单按“旧 Card 2.0 确认 + 新 Settings 卡”收口，跨进程重启后的旧 Workspace Browser 控件只更新私聊卡且不改变原会话绑定。当前仍待步骤 6 的无权限用户真实拒绝，以及步骤 16 的公网 Webhook 闭环。
 
 在隔离测试 chat 中依次验证：
 
@@ -118,7 +128,7 @@ npm run smoke:lark-dm -- --apply
 5. 发送 `!settings`，卡片可显示，button/select 点击后能原位更新。
 6. 让不具备操作权限的用户点击共享卡片，拒绝结果应只发送到该用户与 bot 的私聊，共享卡片内容保持不变。
 7. 从群聊或 reply chain 触发一个带后续控件的非表单私密响应（可从 Onboarding 点击 workspace browse），确认私聊卡片中的 button/select 仍读写原群聊会话，而更新只发生在私聊卡片；在生成私聊卡片后重启一次进程再点击，以覆盖内存 target cache 丢失后的上下文恢复。
-8. 从 Settings 打开自定义 model、Codex profile 或 compact 阈值输入；Card 2.0 表单能在当前卡片原位显示，提交后保存值并刷新当前卡片。
+8. 从 Settings 打开自定义 model、Codex profile 或 compact 阈值输入；Card 2.0 表单能在当前卡片原位显示。校验失败时保留表单供修正；保存成功时旧表单原位显示 Card 2.0 确认，并发送新的 Card 1.0 Settings 卡承载最新控件。
 9. 点击至少一个事件型机器人菜单（建议 `status` 或 `settings`），结果能发送到操作者与 bot 的私聊并原位更新。
 10. 执行 provider 对应的原生 slash command（例如 `/cx_status`），确认它通过当前 chat/reply chain 会话返回结果；再执行一个带参数的命令，确认参数与同名 `!command` 一致。未知的 `/path` 文本不能被误识别为命令。
 11. 发送带图片的 prompt，资源能下载并作为原生图片输入传给 Codex。

@@ -4,7 +4,7 @@
 
 本项目目前以 Discord 作为消息入口，但核心能力——会话状态、Provider runner、频道队列、工作区绑定、跨进程锁、设置与安全策略——并不应绑定到单一聊天平台。
 
-本方案的目标是在保留 Discord 现有行为的前提下，引入稳定的平台抽象层，随后逐步支持 Slack 和飞书/Lark。截至 2026-07-27，平台契约、Discord Adapter、核心平台边界、统一 Foundation 组合和可复用 conformance suite 已落地；飞书/Lark 的功能实现、自动化回归、真实凭证 readiness 和部分隔离私聊 smoke 已完成。当前工作重点已从功能开发转为完整生产验收、运维收口和提交发布，Slack 仍是独立后续阶段。
+本方案的目标是在保留 Discord 现有行为的前提下，引入稳定的平台抽象层，随后逐步支持 Slack 和飞书/Lark。截至 2026-07-27，平台契约、Discord Adapter、核心平台边界、统一 Foundation 组合和可复用 conformance suite 已落地；飞书/Lark 的功能实现、自动化回归、真实凭证 readiness、成功表单保存和私密交互跨重启 smoke 已完成。当前工作重点已从功能开发转为剩余生产验收、运维收口和提交发布，Slack 仍是独立后续阶段。
 
 ## 实施状态
 
@@ -18,7 +18,7 @@
 | 阶段 3：Foundation 统一组合与 Discord 回归 | 已完成 | `03efc7c` | `createAppContext()` 通过单一 Foundation 获取平台服务并创建 Adapter，Discord 启动、配置、session 与用户可见行为保持兼容。 |
 | 阶段 4：第二平台准入准备 | 已完成 | `97ebfb7` | 已清理过渡 facade/别名和 raw fallback，把 Discord 组合收口到启动边界，并补齐可复用 Adapter conformance suite、无 Discord SDK 核心 smoke 与准入决策。 |
 | 阶段 5：Slack Adapter | 未开始 | — | Slack 仍是独立后续阶段，其 Node.js 基线单独决策。 |
-| 阶段 6：飞书/Lark Adapter | 功能完成，验收中 | 本阶段提交 | Node.js 18 消息、原生命令、机器人菜单、卡片/表单、私密响应、reaction、健康指标、reply-chain fork/side 和 Webhook 已完成；readiness 与部分真实私聊 smoke 已通过，完整隔离场景验收待完成。 |
+| 阶段 6：飞书/Lark Adapter | 功能完成，验收中 | 本阶段提交 | Node.js 18 消息、原生命令、机器人菜单、卡片/表单、私密响应、reaction、健康指标、reply-chain fork/side 和 Webhook 已完成；readiness、成功表单和私密跨重启 smoke 已通过，尚待无权限用户与公网 Webhook 真实验收。 |
 | 阶段 7：多平台迁移与统一运维 | 进行中 | 本阶段提交 | 已启用平台选择、限定会话键、平台/实例数据隔离及平台中立健康读取；Lark 已接入连接/投递指标，Discord key 迁移与其他平台指标仍待实现。 |
 
 当前已完成能力包括：
@@ -33,7 +33,7 @@
 - 共享 modal view 已映射为 Card 2.0 `form` + `input` + submit button；SDK raw event 与 CLI `form_value` 均规范化为共享 modal interaction，并路由回 Settings/Goal modal handlers。
 - `application.bot.menu_v6` 已接入双 transport；菜单 `event_key` 规范化为共享 command name，先解析操作者私聊 chat，再复用 command router 和原位卡片响应。
 - 版本化应用基线声明 `status`、`settings`、`progress`、`queue`、`cancel`、`new`、`onboarding` 七个机器人菜单事件键；readiness 会逐项检查已发布版本，避免任意空壳或错误命令菜单被误判为可用。
-- 群聊卡片产生的非表单 `ephemeral` 响应已映射为操作者私聊卡片；卡片内嵌原 chat/reply-chain 的限定上下文，进程重启丢失内存 target cache 后仍能恢复原 session，且共享卡片不会被私密结果或权限拒绝覆盖。Card 2.0 表单仍在当前卡片原位处理。
+- 群聊卡片产生的非表单 `ephemeral` 响应已映射为操作者私聊卡片；卡片内嵌原 chat/reply-chain 的限定上下文，进程重启丢失内存 target cache 后仍能恢复原 session，且共享卡片不会被私密结果或权限拒绝覆盖。来自已有私聊卡的非表单私密响应原位更新该私聊卡；Card 2.0 表单成功提交后保留原位确认并发送新的 Card 1.0 Settings 卡。
 - `npm run check:lark` 复用生产配置解析执行 secret-free 部署预检；可选 `--verify-credentials` 只读验证 CLI profile 或 SDK tenant token、bot info 和版本化 tenant-scope 基线，不启动消费者或发送消息。2026-07-27 当前环境的默认 CLI profile 已通过凭证与 bot identity 检查，权限基线为 9/9，并配置了当前应用作用域内的限制性用户 allowlist。
 - 真实凭证预检要求 chat/tenant/user allowlist 至少配置一项；空 allowlist 不会截断 tenant scopes、线上版本、事件、菜单和 slash command 的只读审计，但最终 readiness 必定失败，避免开放访问被误判为可部署。
 - 版本信息可读取但原生 slash command 注册表不可读取时，readiness 现在明确失败并指出 `application:app_slash_command:read`，不再把缺失的自动证据降级为人工确认。
@@ -69,7 +69,7 @@
 
 - Lark `modals` capability 已启用，但平台呈现为原消息内嵌 Card 2.0 表单，而不是 Discord 弹窗；共享 `createCommandModalView()` 无需复制业务逻辑。
 - 表单按钮通过 `name` 携带 modal ID，`form_value` 规范化为 `modal.getField()`；Settings model/profile/compact threshold 和 Goal modal submit 复用现有共享 handlers。
-- 打开表单与提交结果都更新原卡片；表单 schema 已通过当前 `lark-cli` dry-run，SDK/CLI 两条回调路径均有自动化覆盖。
+- 打开表单和校验失败都更新原卡片；保存成功时旧 Card 2.0 表单原位变为确认卡，再发送新的 Card 1.0 Settings 卡。这样既保留校验/重试，又避免飞书更新接口不支持 Card 2.0 原位降级到 Card 1.0。表单 schema 已通过当前 `lark-cli` dry-run，SDK/CLI 两条回调路径均有自动化覆盖。
 - 修复 Settings、Onboarding、Workspace Browser、workspace busy 和 Retry 等 user-bound component ID 只接受 Discord 数字 ID 的问题，现支持飞书 `ou_...` open ID。
 
 ### 2026-07-26 Lark 机器人菜单命令入口
@@ -105,8 +105,8 @@
 ### 2026-07-26 Lark 私密交互响应
 
 - 群聊卡片产生的非表单 `ephemeral` 响应不再覆盖共享卡片，而是发送到操作者与 bot 的私聊；权限和访问控制拒绝也使用同一私密投递语义。
-- 私聊卡片的 button、select 和 Card 2.0 submit action 内嵌原群聊/reply-chain 的限定会话上下文，发送期 target cache 丢失或进程重启后仍能恢复原 session；后续卡片更新继续作用于实际私聊消息。
-- Card 2.0 表单继续在当前卡片原位打开和提交，保留字段校验、修正及重试流程；从私聊卡片打开的表单仍携带原会话上下文。
+- 私聊卡片的 button、select 和 Card 2.0 submit action 内嵌原群聊/reply-chain 的限定会话上下文，发送期 target cache 丢失或进程重启后仍能恢复原 session；来自现有私聊卡的非表单私密响应直接编辑实际私聊消息，不再依赖关联回复。
+- Card 2.0 表单继续在当前卡片原位打开并保留字段校验、修正及重试流程；成功提交时原位确认并发送新的 Settings 卡。从私聊卡片打开的表单仍携带原会话上下文。
 - 上下文恢复只接受自洽的 Lark 限定 key；malformed JSON、Discord key 以及 tenant/chat/root 冲突值会被忽略并安全降级到实际交互所在私聊。
 - 自动化覆盖共享卡片不被私密响应或权限拒绝覆盖、无内存 cache 的 button/modal 上下文恢复及非法上下文降级；当前完整回归数字见本页“Lark 原生卡片交互”记录。
 
@@ -117,6 +117,16 @@
 - JSON 和文本报告只输出 transport、布尔凭证状态、非敏感 endpoint、数值边界与 allowlist 数量；API token、App Secret、App ID、bot/user ID 和 CLI profile 名称不会进入报告或错误文本。
 - 该阶段首次检查时，默认 CLI profile 的只读凭证、bot capability 和 bot open ID 可用性已通过，但 tenant-scope 基线为 8/9，缺少失败补偿所需的 `im:message:recall`，且 allowlist 为空。后续已补齐权限和限制性用户 allowlist；2026-07-27 的再次核验为 9/9 且 readiness 全部通过。
 - 配置、readiness、凭证脱敏、provider override、生产组合边界和默认文本分片限制均有自动化覆盖；真实凭证预检还会只读核对线上版本、接入方式、发布事件和机器人菜单，开放平台未返回的 card callback 列表会保留为显式人工检查；完整回归数字见本页“Lark 原生卡片交互”记录。
+
+### 2026-07-27 Lark Settings 与私密跨重启收口
+
+- 修复 `lark-cli` button callback 携带 `option: null` 时被误判为 select 的问题：CLI normalizer 省略空 option，平台 inbound normalizer 只在 option 非空或 action tag 为 select 时生成 select interaction。
+- 新增 Card 2.0 completion renderer 与 message-delivery `completeModal` 能力；capability policy 在支持消息编辑时执行“原 Card 2.0 确认 + 新 Card 1.0 面板”，不支持编辑的平台安全降级为新消息。
+- 真实 Settings 复测完成 compact threshold 非默认值保存、最新 Settings 卡刷新和恢复默认值，确认持久化 override 已清除且无 handler/schema 错误。
+- Onboarding workspace browse 在 CLI transport 上被正确识别为 button，私聊卡内嵌的原群聊/reply-chain 上下文能恢复并打开真实 Workspace Browser。
+- 真实进程替换后点击旧 Workspace Browser 控件，内存 state 按预期缺失；原私聊卡被原位更新为无控件过期提示，群聊新增消息为 0，workspace、runner session、Codex thread 与 provider 绑定保持不变。
+- 为 card routing 与 Workspace Browser 增加脱敏诊断：只记录 interaction kind、component 前缀/长度和 state/response 布尔值，不记录 action payload、标识或消息正文。
+- 完整回归结果更新为 `npm run test:lark` 120/120、`npm run test:progress` 844/844，失败、取消和跳过均为 0。
 
 ### 2026-07-27 飞书/Lark 阶段性提交与验收快照
 
@@ -132,17 +142,19 @@
 
 本次提交前的验证结果：
 
-- `npm run test:lark`：116/116 通过。
-- `npm run test:progress`：838/838 通过。
+- `npm run test:lark`：120/120 通过。
+- `npm run test:progress`：844/844 通过。
 - `test:platform-foundation` 与 `test:platform-conformance`：分别 14/14、14/14 通过。
 - `test:platform-inputs`、`test:platform-security`、`test:platform-presentation`、`test:platform-topology`：分别 201/201、25/25、196/196、54/54 通过。
 - `npm run check:lark -- --verify-credentials --json`：合并后通过；tenant scopes 9/9、事件 2/2、卡片回调 1/1、机器人菜单事件键 7/7、原生 slash commands 46/46，且无 errors/warnings。Pi/OMP session aliases 对应的 4 条命令已在整批 dry-run 通过后 additive apply。
 - 真实隔离私聊已覆盖 `!status` 收发、Settings 卡片及原位更新、select/Card 2.0 回调、机器人菜单、`/cx_status`、普通 prompt、带参数原生命令、未知 slash-path 回退和无效 Codex profile 校验路径。
+- 成功表单保存已覆盖 compact threshold 的非默认值持久化、Card 2.0 原位确认、新 Settings 卡刷新及恢复默认值；CLI button 的空 option 兼容也已通过真实 Onboarding/Workspace Browser 点击验证。
+- 私密响应跨重启已覆盖真实进程替换、旧卡过期分支、私聊原位更新、群聊零新增及原 session 绑定不变。
 - 真实隔离群聊已覆盖 @/未 @、图片下载与原生图片理解、长任务取消/reaction、fork/side reply chain，以及 side 关闭后同一原生卡片根消息原位写入锁定标记；飞书历史列表 `230027` 时 fork 的可选最近输出重放会安静降级，不影响 fork 成功报告。
 - 受控断网复测发现临时代理可被启动期大小写补齐固化到 `.env`；现已改为默认只修复当前进程环境。新源码重启后项目代理键保持为 0、CLI consumer 无代理且私聊 `!status` 再次取得关联回复。
 - `git diff --check` 通过；提交范围不包含 App Secret、token、测试 chat ID 或用户 ID。
 
-阶段边界：上述结果证明当前实现具备试运行条件，但不等同于完整生产验收。成功表单保存、无权限用户的私密拒绝、私密响应跨重启和真实公网 Webhook 仍按部署检查清单逐项验收；真实断网重连、`!status` 投递指标和新增 4 条原生 slash commands 的远端 additive sync 已完成。
+阶段边界：上述结果证明当前实现具备试运行条件，但不等同于完整生产验收。成功表单保存和私密响应跨重启已完成；无权限用户的私密拒绝与真实公网 Webhook 仍按部署检查清单逐项验收。真实断网重连、`!status` 投递指标和新增 4 条原生 slash commands 的远端 additive sync 已完成。
 
 ### 2026-07-25 阶段 4 验证
 
@@ -611,7 +623,7 @@ Lark 从首个可运行版本起使用上述限定键，Discord 仍继续使用�
 - 支持群聊 reply-chain 子会话，将 Codex/Claude fork 和 Codex side 的创建、rename、失败补偿、消息回放及关闭归档映射为根消息操作；私聊明确不支持创建子会话。
 - 支持可选 Webhook transport：verification token、签名验证、encrypted payload 解密、URL challenge、固定 path、POST-only、body limit 和慢连接 HTTP 超时边界。
 - 支持消息、卡片 action 和机器人菜单的有界事件去重，统一 SDK safety pipeline 与 CLI/Webhook 入口的重投语义。
-- 支持群聊非表单 `ephemeral` 响应的私聊等价实现；私聊卡片保留原 chat/reply-chain session 上下文并在重启后恢复，权限拒绝不会覆盖共享卡片，Card 2.0 表单仍原位处理。
+- 支持群聊非表单 `ephemeral` 响应的私聊等价实现；私聊卡片保留原 chat/reply-chain session 上下文并在重启后恢复，权限拒绝不会覆盖共享卡片。已有私聊卡的非表单响应原位更新；Card 2.0 成功提交按“原卡确认 + 新 Settings 卡”完成。
 - 支持复用生产配置解析的 Lark 部署预检，检查 transport、凭证占位符、domain、Webhook endpoint、数值边界、本地依赖和 allowlist，并可只读验证凭证、bot identity 与版本化 tenant-scope 基线。
 - `docs/lark-app-config.v1.json` 固化消息、资源、卡片回调、reaction 权限及 WebSocket/Webhook 基线，`docs/lark-deployment-checklist.md` 固化真实凭证和 Webhook 部署 smoke 步骤。
 - 增加 Lark Foundation/Adapter conformance、输入、投递、安全、reply-chain fork/side、Webhook 和 Node.js 18 SDK smoke 测试。
@@ -620,7 +632,7 @@ Lark 从首个可运行版本起使用上述限定键，Discord 仍继续使用�
 
 - 当前应用的 credential-verified readiness 已通过：tenant scopes 9/9、事件 2/2、卡片回调 1/1、机器人菜单 7/7、原生 slash commands 46/46，且已配置当前应用作用域内的单用户 allowlist。
 - 隔离私聊已验证主动消息、`!status` 收发、`!settings` 卡片及原位更新、select/Card 2.0 回调、机器人菜单事件、`/cx_status` 关联回复、普通 prompt、带参数原生命令和未知 slash-path 回退；不存在的 Codex profile 也正确进入表单校验错误路径。
-- 隔离群聊已验证 @/未 @、真实图片、长任务取消/reaction、fork/side reply chain 和 side 根卡片关闭标记。受控本机代理 smoke 已验证真实断网后同一主进程 reconnect/reconnected、3/3 consumers 恢复，以及 `!status` 的重试和消息投递指标。尚需完成成功表单保存、无权限用户的私密拒绝、私密响应跨重启和真实公网 Webhook smoke。CLI transport 的空闲实例与受控运行中任务退出已在 `SELF_HEAL_ENABLED=false` 下完成真实 SIGTERM 验收，包含忽略 SIGTERM 子进程的有界 SIGKILL 收敛。完成其余项目后，阶段 6 才从“验收中”更新为“已完成”。
+- 隔离群聊已验证 @/未 @、真实图片、长任务取消/reaction、fork/side reply chain 和 side 根卡片关闭标记；Settings 成功保存和私密响应跨重启也已完成。受控本机代理 smoke 已验证真实断网后同一主进程 reconnect/reconnected、3/3 consumers 恢复，以及 `!status` 的重试和消息投递指标。尚需完成无权限用户的私密拒绝和真实公网 Webhook smoke。CLI transport 的空闲实例与受控运行中任务退出已在 `SELF_HEAL_ENABLED=false` 下完成真实 SIGTERM 验收，包含忽略 SIGTERM 子进程的有界 SIGKILL 收敛。完成其余项目后，阶段 6 才从“验收中”更新为“已完成”。
 
 ### 阶段 7：迁移与统一运维（进行中）
 
@@ -633,7 +645,9 @@ Lark 从首个可运行版本起使用上述限定键，Discord 仍继续使用�
 
 ### P0：完成飞书生产验收并发布
 
-- 按 `docs/lark-deployment-checklist.md` 完成剩余成功表单、私密权限/跨重启和 Webhook smoke，并记录应用版本、region、transport、时间和非敏感结果。
+- 在已准备的双用户隔离群中完成无权限用户验收：先由 allowlist 用户验证群聊健康，再由第二位用户执行无副作用命令或点击共享卡片，确认拒绝只进入该用户私聊且共享群卡/群消息保持不变。
+- 补齐公网 Webhook 所需的 App Secret、verification token、encrypt key 和开放平台 callback 配置，在 TLS 反向代理后完成真实签名事件、加密事件、机器人菜单、slash command、卡片 action 与应用/代理重启恢复 smoke。
+- 完成剩余 smoke 后重新运行 credential-verified readiness、`test:lark`、`test:progress`、语法/格式/原子提交检查，并记录应用版本、region、transport、时间和非敏感结果。
 - 对 smoke 发现的问题只做飞书 Adapter、transport 或平台契约内的修复；若需要修改共享核心，先补跨 Discord/Lark 的边界与回归测试。
 - 复核 README、环境变量示例、权限/事件基线和运维清单与实际发布应用一致，随后准备版本号、发布说明和可回滚部署步骤。
 
