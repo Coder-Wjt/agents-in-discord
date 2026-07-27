@@ -62,6 +62,7 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 - Prevented private Lark interaction context from accepting malformed, cross-platform, or tenant/chat/root-conflicting values, and prevented permission denials from replacing shared group cards.
 - Made Lark startup reject placeholder credentials and invalid selected-transport domain/path/numeric settings instead of silently falling back, while applying the configured text chunk limit through the platform delivery port.
 - Corrected the Lark permission baseline to cover group-at/DM receive, bot send, message update/recall, resource access, and reaction read/write operations actually used by the adapter.
+- Sent Lark fork/side reply-chain roots as content-only native cards and preserved their card target metadata during rename/archive, so side close can update the existing root in place instead of failing with `This message is NOT a card.`
 
 ### Verified
 
@@ -70,9 +71,12 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 - Provisioned and read-only reverified all 42 native Lark slash commands for the bound application; the remote registry is 42/42 matched, provisioning scopes are 2/2, and 58 of 100 command slots remain available.
 - Passed credential-verified Lark deployment readiness with tenant scopes 9/9, events 2/2, card callbacks 1/1, bot-menu event keys 7/7, a restrictive app-scoped user allowlist, and a real P2P `!status` receive/reply round trip.
 - Verified real P2P Settings card rendering and in-place updates, select and Card 2.0 form callbacks, bot-menu command events, native `/cx_status` routing with an associated reply, and the invalid-profile form validation path.
+- Verified the explicit-write P2P smoke driver end to end for an ordinary prompt, a parameterized native command, and unknown slash-path prompt fallback.
+- Verified an isolated group mention-only flow with no response to an unmentioned message and an associated response after mentioning the bot; a generated image was downloaded and understood through native image input; a real workspace-lock wait was cancelled with `THINKING` transitioning to the valid `No` reaction.
+- Verified real Lark fork and Codex side reply chains with independent session bindings and in-chain replies. After the content-only root-card fix, a newly opened side closed by updating the same interactive root message in place to `🔒 Codex side conversation closed`, with both parent and child session metadata persisted as closed.
 - Verified real CLI-transport SIGTERM with `SELF_HEAL_ENABLED=false` for both an idle instance and a controlled active task registered through the production channel runtime. The active child deliberately ignored SIGTERM, was removed by bounded SIGKILL escalation before parent exit, all three event consumers stopped, the instance lock was released, and the supervised single consumer reconnected after restoration.
 - Verified real CLI consumer-loss recovery by terminating the message-event consumer: the lifecycle recorded `channel_error`, self-healed without replacing the main process, restored all three direct consumers, and returned to exactly six wrapper/worker consumer processes without duplicates.
-- Re-ran the current checkpoint with `test:lark` at 105/105, Foundation and conformance at 14/14 each, platform input/security/presentation/topology at 201/25/196/54, the shared `test:progress` suite at 381/381, credential-verified readiness without errors or warnings, syntax checks, safe-reply checks, and `git diff --check`; the deployment checklist now distinguishes this evidence from the remaining group, attachment, cancellation, reconnect, reply-chain, public-webhook, and graceful-shutdown smoke.
+- Re-ran the current checkpoint with `npm run test:lark` at 116/116 and the shared `test:progress` suite at 387/387; earlier Foundation/conformance and platform input/security/presentation/topology checkpoints remain recorded at 14/14, 14/14, and 201/25/196/54. Credential-verified readiness, syntax checks, safe-reply checks, and `git diff --check` also passed; the deployment checklist now isolates the remaining successful form/private-permission/restart, real network outage, status-metric, and public-webhook smoke.
 
 ## [0.13.0] - 2026-07-21
 

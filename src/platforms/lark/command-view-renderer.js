@@ -138,7 +138,7 @@ export function createLarkCommandViewRenderer() {
         content,
         text: content,
         card: buildCard(content, actionRows),
-        interactive: actionRows.length > 0,
+        interactive: Boolean(view?.interactive || view?.forceInteractive) || actionRows.length > 0,
         visibility: view?.visibility || 'public',
       };
     },

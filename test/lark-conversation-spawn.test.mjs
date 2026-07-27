@@ -68,6 +68,7 @@ test('Lark conversation spawn maps child conversations to new reply-chain roots'
   });
   assert.equal(child.raw.rootId, 'om_root');
   assert.equal(child.raw.threadId, 'om_root');
+  assert.equal(child.raw.rootMessageTarget.isCard, true);
   assert.deepEqual(calls[0], {
     kind: 'send',
     target: {
@@ -76,7 +77,10 @@ test('Lark conversation spawn maps child conversations to new reply-chain roots'
       chatType: 'group',
       tenantId: 'tenant_1',
     },
-    payload: '🧵 Codex fork demo',
+    payload: {
+      content: '🧵 Codex fork demo',
+      interactive: true,
+    },
   });
 
   await spawn.send(child, { content: 'child ready' });
@@ -90,6 +94,7 @@ test('Lark conversation spawn maps child conversations to new reply-chain roots'
       chatType: 'group',
       tenantId: 'tenant_1',
       messageId: 'om_root',
+      isCard: true,
     },
     payload: '🧵 Renamed reply chain',
   });
@@ -110,7 +115,16 @@ test('Lark conversation spawn maps child conversations to new reply-chain roots'
     targetLabel: 'Lark reply chain',
     equivalent: 'root_marker',
   });
-  assert.equal(calls[3].payload, '🔒 Codex side conversation closed');
+  assert.deepEqual(calls[3], {
+    kind: 'edit',
+    target: {
+      platformId: 'lark',
+      chatId: 'oc_group',
+      messageId: 'om_root',
+      isCard: true,
+    },
+    payload: '🔒 Codex side conversation closed',
+  });
   assert.deepEqual(await spawn.remove(child), {
     ok: true,
     removed: true,
@@ -300,7 +314,10 @@ test('Lark reply-chain spawn runs the shared Codex side lifecycle', async () => 
   const sideSession = getSession(opened.childConversation.id);
   assert.equal(sideSession.runnerSessionId, 'codex-side');
   assert.equal(sideSession.sideConversation.parentChannelId, parentKey);
-  assert.equal(deliveryCalls[0].payload, '🧵 Lark side notes');
+  assert.deepEqual(deliveryCalls[0].payload, {
+    content: '🧵 Lark side notes',
+    interactive: true,
+  });
   assert.equal(deliveryCalls[1].target.rootId, 'om_side_root');
   assert.match(deliveryCalls[1].payload.content, /<at user_id="ou_user">ou_user<\/at>/);
   assert.match(deliveryCalls[1].payload.content, /已从父飞书会话/);
@@ -335,6 +352,7 @@ test('Lark reply-chain spawn runs the shared Codex side lifecycle', async () => 
       platformId: 'lark',
       chatId: 'oc_group',
       messageId: 'om_side_root',
+      isCard: true,
     },
     payload: '🔒 Codex side conversation closed',
   });

@@ -132,15 +132,16 @@
 
 本次提交前的验证结果：
 
-- `npm run test:lark`：105/105 通过。
-- `npm run test:progress`：381/381 通过。
+- `npm run test:lark`：116/116 通过。
+- `npm run test:progress`：387/387 通过。
 - `test:platform-foundation` 与 `test:platform-conformance`：分别 14/14、14/14 通过。
 - `test:platform-inputs`、`test:platform-security`、`test:platform-presentation`、`test:platform-topology`：分别 201/201、25/25、196/196、54/54 通过。
 - `npm run check:lark -- --verify-credentials --json`：通过；tenant scopes 9/9、事件 2/2、卡片回调 1/1、机器人菜单事件键 7/7、原生 slash commands 42/42，且无 errors/warnings。
-- 真实隔离私聊已覆盖 `!status` 收发、Settings 卡片及原位更新、select/Card 2.0 回调、机器人菜单、`/cx_status` 和无效 Codex profile 校验路径。
+- 真实隔离私聊已覆盖 `!status` 收发、Settings 卡片及原位更新、select/Card 2.0 回调、机器人菜单、`/cx_status`、普通 prompt、带参数原生命令、未知 slash-path 回退和无效 Codex profile 校验路径。
+- 真实隔离群聊已覆盖 @/未 @、图片下载与原生图片理解、长任务取消/reaction、fork/side reply chain，以及 side 关闭后同一原生卡片根消息原位写入锁定标记。
 - `git diff --check` 通过；提交范围不包含 App Secret、token、测试 chat ID 或用户 ID。
 
-阶段边界：上述结果证明当前实现具备试运行条件，但不等同于完整生产验收。群聊权限/mention-only、私密响应跨重启、成功表单保存、带参数原生命令、图片、取消/reaction、断网重连、投递指标、reply-chain fork/side、真实公网 Webhook 和 SIGTERM 等仍按部署检查清单逐项验收。
+阶段边界：上述结果证明当前实现具备试运行条件，但不等同于完整生产验收。成功表单保存、无权限用户的私密拒绝、私密响应跨重启、真实断网重连、`!status` 投递指标和真实公网 Webhook 仍按部署检查清单逐项验收。
 
 ### 2026-07-25 阶段 4 验证
 
@@ -617,8 +618,8 @@ Lark 从首个可运行版本起使用上述限定键，Discord 仍继续使用�
 验收进度：
 
 - 当前应用的 credential-verified readiness 已通过：tenant scopes 9/9、事件 2/2、卡片回调 1/1、机器人菜单 7/7、原生 slash commands 42/42，且已配置当前应用作用域内的单用户 allowlist。
-- 隔离私聊已验证主动消息、`!status` 收发、`!settings` 卡片及原位更新、select/Card 2.0 回调、机器人菜单事件和 `/cx_status` 关联回复；不存在的 Codex profile 也正确进入表单校验错误路径。
-- 尚需完成成功表单保存、群聊 mention/access、私密响应跨重启、带参数原生命令、附件、聊天命令取消/reaction、断网重连、投递指标、reply-chain fork/side 和真实公网 Webhook smoke。CLI transport 的空闲实例与受控运行中任务退出已在 `SELF_HEAL_ENABLED=false` 下完成真实 SIGTERM 验收，包含忽略 SIGTERM 子进程的有界 SIGKILL 收敛。完成其余项目后，阶段 6 才从“验收中”更新为“已完成”。
+- 隔离私聊已验证主动消息、`!status` 收发、`!settings` 卡片及原位更新、select/Card 2.0 回调、机器人菜单事件、`/cx_status` 关联回复、普通 prompt、带参数原生命令和未知 slash-path 回退；不存在的 Codex profile 也正确进入表单校验错误路径。
+- 隔离群聊已验证 @/未 @、真实图片、长任务取消/reaction、fork/side reply chain 和 side 根卡片关闭标记。尚需完成成功表单保存、无权限用户的私密拒绝、私密响应跨重启、真实断网重连、投递指标和真实公网 Webhook smoke。CLI transport 的空闲实例与受控运行中任务退出已在 `SELF_HEAL_ENABLED=false` 下完成真实 SIGTERM 验收，包含忽略 SIGTERM 子进程的有界 SIGKILL 收敛。完成其余项目后，阶段 6 才从“验收中”更新为“已完成”。
 
 ### 阶段 7：迁移与统一运维（进行中）
 
@@ -631,7 +632,7 @@ Lark 从首个可运行版本起使用上述限定键，Discord 仍继续使用�
 
 ### P0：完成飞书生产验收并发布
 
-- 按 `docs/lark-deployment-checklist.md` 完成剩余隔离私聊、群聊、reply-chain、附件、取消、重连、指标、Webhook 和信号退出 smoke，并记录应用版本、region、transport、时间和非敏感结果。
+- 按 `docs/lark-deployment-checklist.md` 完成剩余成功表单、私密权限/跨重启、真实断网、投递指标和 Webhook smoke，并记录应用版本、region、transport、时间和非敏感结果。
 - 对 smoke 发现的问题只做飞书 Adapter、transport 或平台契约内的修复；若需要修改共享核心，先补跨 Discord/Lark 的边界与回归测试。
 - 复核 README、环境变量示例、权限/事件基线和运维清单与实际发布应用一致，随后准备版本号、发布说明和可回滚部署步骤。
 

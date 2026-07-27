@@ -15,7 +15,7 @@
 
 当前绑定应用已获授权执行一次显式 `--apply`，随后完成只读复核：provisioning scopes 2/2、注册表 42/42 matched、missing/outdated/extra 均为 0，剩余容量 58/100。原生 slash commands 已注册，无需再次执行 apply；后续仅在 command spec 发生变化时重新审计并按需同步。
 
-最近一次 credential-verified readiness 已自动通过：tenant scopes 9/9、机器人版本已发布、WebSocket 接入方式正确、必需事件 2/2、卡片回调 1/1、机器人菜单 7/7、原生 slash commands 42/42，并已配置当前应用作用域内的单用户 allowlist。隔离私聊 smoke 已验证主动消息、用户 `!status` 入站和机器人回复闭环、`!settings` 原生卡片及原位更新、select 与 Card 2.0 表单回调、`settings`/`progress` 机器人菜单事件，以及 `/cx_status` 原生命令的关联回复；表单提交不存在的 Codex profile `work` 时也按预期进入校验错误路径。CLI transport 还已在 `SELF_HEAL_ENABLED=false` 下完成空闲实例和受控运行中任务的真实 SIGTERM smoke：接入生产 channel runtime 的长驻子进程故意忽略 SIGTERM，随后在父进程退出前由有界 SIGKILL 收敛；3 个事件消费者结束、实例锁释放，恢复后仍保持单消费者连接。真实 consumer-loss smoke 也已终止消息事件消费者，确认 lifecycle 记录 `channel_error` 后在主进程不变的情况下完成 self-heal，恢复为 3 个直接消费者、6 个 wrapper/worker 进程且没有重复。其余成功表单保存、带参数原生命令、附件、聊天命令取消/reaction、真实断网重连和 reply-chain 场景仍按下方清单继续执行。
+最近一次 credential-verified readiness 已自动通过：tenant scopes 9/9、机器人版本已发布、WebSocket 接入方式正确、必需事件 2/2、卡片回调 1/1、机器人菜单 7/7、原生 slash commands 42/42，并已配置当前应用作用域内的单用户 allowlist。隔离私聊 smoke 已验证主动消息、用户 `!status` 入站和机器人回复闭环、`!settings` 原生卡片及原位更新、select 与 Card 2.0 表单回调、`settings`/`progress` 机器人菜单事件、普通 prompt、带参数原生命令、未知 slash-path prompt 回退，以及 `/cx_status` 原生命令的关联回复；表单提交不存在的 Codex profile `work` 时也按预期进入校验错误路径。隔离群聊已验证未 @ 不回复、@ bot 后关联回复、真实图片下载及原生图片理解、长任务取消与 `THINKING` 到 `No` reaction 更新、fork/side 独立 reply chain，以及 side 关闭后同一原生卡片根消息原位更新为锁定标记。CLI transport 还已在 `SELF_HEAL_ENABLED=false` 下完成空闲实例和受控运行中任务的真实 SIGTERM smoke；真实 consumer-loss smoke 也确认 lifecycle 在主进程不变的情况下完成 self-heal，恢复为 3 个直接消费者、6 个 wrapper/worker 进程且没有重复。其余成功表单保存、私密响应/权限拒绝/跨重启上下文恢复、真实断网重连、`!status` 投递指标核对和公网 Webhook 仍按下方清单继续执行。
 
 ### 2026-07-27 验收矩阵
 
@@ -23,10 +23,10 @@
 | --- | --- | --- | --- |
 | 本地依赖与配置 | 已通过 | CLI transport 可用，生产配置解析、placeholder/数值/path 校验与限制性用户 allowlist 生效 | 发布前复核运行实例使用同一配置来源 |
 | 凭证与线上应用 | 已通过 | tenant scopes 9/9、事件 2/2、卡片回调 1/1、菜单键 7/7、原生命令 42/42 | command spec 或应用版本变更后重新运行只读审计 |
-| 私聊命令闭环 | 部分通过 | 主动消息、`!status`、`!settings`、`/cx_status` 已验证 | 补普通 prompt、带参数命令和未知 `/path` 场景 |
+| 私聊命令闭环 | 已通过 | 主动消息、`!status`、`!settings`、`/cx_status`、普通 prompt、带参数命令和未知 `/path` prompt 回退已验证 | 应用版本或命令表变化后重跑自动 smoke |
 | 原生卡片与表单 | 部分通过 | 卡片发送/原位更新、select、Card 2.0 回调、无效 profile 校验已验证 | 补成功保存、私密响应、权限拒绝和跨重启上下文恢复 |
-| 群聊与 reply chain | 待验收 | 自动化覆盖 mention-only、访问控制、fork/side 和上下文恢复 | 在隔离群聊完成 @、未 @、权限、fork/side 和关闭标记 smoke |
-| 附件与任务控制 | 待验收 | 自动化覆盖私有资源下载、原生图片输入、取消和 reaction 映射 | 使用真实图片和长任务验证下载、取消及状态 reaction |
+| 群聊与 reply chain | 部分通过 | 隔离群已验证 @/未 @、fork/side、新根与链内回复；side 关闭后同一交互卡片根原位写入锁定标记 | 补不具备操作权限用户的群聊访问/私密拒绝场景 |
+| 附件与任务控制 | 已通过 | 真实图片已下载并作为原生图片输入被精确理解；真实长任务取消后 reaction 从 `THINKING` 更新为 `No` | 应用权限或 transport 变化后重跑 |
 | 恢复与指标 | 部分通过 | 自动化覆盖重连、自愈和连接/投递快照；真实 CLI SIGTERM 已验证空闲及运行中任务退出；真实 consumer-loss 已验证主进程内 self-heal、3 个直接消费者恢复且无重复进程 | 完成真实断网恢复和 `!status` 指标核对 |
 | Webhook 公网部署 | 待验收 | 本地自动化覆盖 challenge、token、签名、解密、去重、body/timeout/health 边界 | 在 TLS 反向代理后完成真实签名/加密事件和重启恢复 smoke |
 
@@ -106,6 +106,8 @@ npm run smoke:lark-dm -- --apply
 ```
 
 工具依次发送普通 prompt、带 `status` 参数的 provider 前缀原生命令和未知 `/path` prompt，并按关联回复自动核验。报告仅包含 identity/scope 布尔值、用例名、轮询次数和耗时，不输出 app/chat/user/message ID、profile 名称、凭证或消息正文。
+
+2026-07-27 的 CLI transport 隔离验收已完成这三个自动用例；同日群聊 smoke 还完成了步骤 4、11、12 和 15，其中新建 side 的根消息为无控件原生卡片，关闭后在同一消息 ID 上原位显示 `🔒 Codex side conversation closed`。不要复用旧的普通文本根来判断关闭标记修复是否生效。
 
 在隔离测试 chat 中依次验证：
 

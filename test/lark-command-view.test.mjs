@@ -41,6 +41,20 @@ test('Lark command view renderer maps buttons and selects to interactive card ac
   assert.deepEqual(rendered.card.elements[2].actions[0].value, { id: 'settings:model' });
 });
 
+test('Lark command view renderer can force content-only messages into editable cards', () => {
+  const renderer = createLarkCommandViewRenderer();
+  const rendered = renderer.renderMessage({
+    content: '🧵 Codex side notes',
+    interactive: true,
+  });
+
+  assert.equal(rendered.interactive, true);
+  assert.deepEqual(rendered.card.elements, [{
+    tag: 'markdown',
+    content: '🧵 Codex side notes',
+  }]);
+});
+
 test('Lark command view renderer maps shared modals to Card 2.0 forms', () => {
   const renderer = createLarkCommandViewRenderer();
   const rendered = renderer.renderModal(createCommandModalView({

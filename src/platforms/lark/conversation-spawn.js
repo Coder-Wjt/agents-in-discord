@@ -111,9 +111,21 @@ export function createLarkConversationSpawn({
       chatId,
       chatType,
       tenantId,
-    }, markerText);
+    }, {
+      content: markerText,
+      interactive: true,
+    });
     const rootId = normalizeId(rootMessage?.messageId || rootMessage?.id);
     if (!rootId) throw new Error('Lark child conversation root message did not return a message id.');
+    const rootMessageTarget = {
+      ...(rootMessage?.responseTarget || {
+        chatId,
+        chatType,
+        tenantId,
+        messageId: rootId,
+      }),
+      isCard: true,
+    };
     const id = buildConversationKey({
       platformId: 'lark',
       tenantId,
@@ -130,21 +142,19 @@ export function createLarkConversationSpawn({
         tenantId,
         rootId,
         threadId: rootId,
-        rootMessageTarget: rootMessage?.responseTarget || {
-          chatId,
-          chatType,
-          tenantId,
-          messageId: rootId,
-        },
+        rootMessageTarget,
       },
     });
   }
 
   async function rename(conversation, { name } = {}) {
     const target = unwrapConversation(conversation);
-    const rootTarget = target?.rootMessageTarget || {
-      chatId: target?.chatId,
-      messageId: target?.rootId || target?.threadId,
+    const rootTarget = {
+      ...(target?.rootMessageTarget || {
+        chatId: target?.chatId,
+        messageId: target?.rootId || target?.threadId,
+      }),
+      isCard: true,
     };
     if (!normalizeId(rootTarget?.messageId) || typeof messageDelivery?.edit !== 'function') {
       return { ok: false, renamed: false, skipped: true, error: 'Lark reply-chain root cannot be renamed' };
@@ -189,6 +199,7 @@ export function createLarkConversationSpawn({
         platformId: 'lark',
         chatId: normalizeId(parsed?.conversationId || getSourceTarget(source)?.chatId),
         messageId: rootId,
+        isCard: true,
       }, `🔒 ${label}`);
       return { ok: true, archived: true, locked: false, targetLabel: 'Lark reply chain', equivalent: 'root_marker' };
     } catch (error) {
