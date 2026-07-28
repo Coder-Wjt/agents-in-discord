@@ -765,10 +765,10 @@ test('createPromptProgressReporterFactory derives Claude commentary and tool pro
   await harness.reporter.finish({ ok: true });
 
   const finalCard = harness.edits[harness.edits.length - 1].content;
-  // Commentary is narration and belongs in the process stream; the tool label is
-  // mechanical and only belongs in completed milestones.
+  // Claude often emits no narration between tool calls, so both its commentary
+  // and its tool label belong in the process stream.
   assert.match(finalCard, /process: 我来查看当前目录。/);
-  assert.doesNotMatch(finalCard, /process: Show current working directory/);
+  assert.match(finalCard, /process: Show current working directory/);
   assert.match(finalCard, /done: Show current working directory/);
 });
 
@@ -824,9 +824,36 @@ test('createPromptProgressReporterFactory derives Claude progress from assistant
 
   const finalCard = harness.edits[harness.edits.length - 1].content;
   assert.match(finalCard, /process: 我先用 ls 看一下当前目录。/);
-  assert.doesNotMatch(finalCard, /process: List current directory/);
+  assert.match(finalCard, /process: List current directory/);
   assert.match(finalCard, /done: List current directory/);
   assert.doesNotMatch(finalCard, /最终答案/);
+});
+
+test('createPromptProgressReporterFactory streams Claude tool snapshots into the thread', async () => {
+  const harness = createHarness({
+    session: { provider: 'claude' },
+  });
+
+  await harness.reporter.start();
+  harness.channelState.activeRun.phase = 'exec';
+  harness.reporter.onEvent({
+    type: 'assistant',
+    message: {
+      id: 'msg-tool-only',
+      role: 'assistant',
+      stop_reason: 'tool_use',
+      content: [{
+        type: 'tool_use',
+        id: 'toolu_ls',
+        name: 'Bash',
+        input: { command: 'ls -la', description: 'List current directory' },
+      }],
+    },
+  });
+
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(harness.streamed, ['List current directory']);
+  await harness.reporter.finish({ ok: true });
 });
 
 test('createPromptProgressReporterFactory does not duplicate Claude progress when assistant snapshots repeat', async () => {
@@ -871,9 +898,10 @@ test('createPromptProgressReporterFactory does not duplicate Claude progress whe
 
   const finalCard = harness.edits[harness.edits.length - 1].content;
   const processMatches = finalCard.match(/process: Show working directory/g) || [];
-  assert.equal(processMatches.length, 0);
+  assert.equal(processMatches.length, 1);
   const doneMatches = finalCard.match(/done: Show working directory/g) || [];
   assert.equal(doneMatches.length, 1);
+  assert.deepEqual(harness.streamed, ['Show working directory']);
 });
 
 test('createPromptProgressReporterFactory keeps Claude narration on the latest activity line through a tool burst', async () => {

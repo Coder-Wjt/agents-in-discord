@@ -345,10 +345,13 @@ function formatClaudeToolUseLabel(block, truncateText, previewChars) {
   return detail ? `${toolName}: ${detail}` : `tool ${toolName}`;
 }
 
-// Claude tool_use labels lean on the model-authored `description` field, so every
-// call reads as a fresh sentence and dedupe can never collapse them. They feed the
-// "latest activity" line and completed milestones, but never rawActivities — that
-// lane is reserved for what the agent says about its own progress.
+function shouldSurfaceClaudeToolActivity(block) {
+  return normalizeProgressEventType(block?.name || '') !== 'todowrite';
+}
+
+// Claude often emits no narration between tool calls, so tool_use labels must
+// reach rawActivities to keep the thread visibly alive. TodoWrite stays on the
+// card because its plan is already rendered there.
 function createClaudeProgressTracker({ truncateText, previewChars }) {
   const activeBlocks = new Map();
   const finalizedBlocks = [];
@@ -413,7 +416,9 @@ function createClaudeProgressTracker({ truncateText, previewChars }) {
 
     for (const block of finalizedBlocks.splice(0)) {
       if (block.kind === 'tool_use') {
-        summaryCandidates.push(formatClaudeToolUseLabel(block, truncateText, previewChars));
+        const label = formatClaudeToolUseLabel(block, truncateText, previewChars);
+        summaryCandidates.push(label);
+        if (shouldSurfaceClaudeToolActivity(block)) rawActivities.push(label);
         continue;
       }
 
@@ -489,6 +494,7 @@ function createClaudeProgressTracker({ truncateText, previewChars }) {
         const label = formatClaudeToolUseLabel(normalized, truncateText, previewChars);
         if (normalized.id) toolUseLabelsById.set(normalized.id, label);
         summaryCandidates.push(label);
+        if (shouldSurfaceClaudeToolActivity(normalized)) rawActivities.push(label);
         continue;
       }
 
