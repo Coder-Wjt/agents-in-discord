@@ -2,9 +2,13 @@ import { getSupportedReasoningEffortLevels } from './provider-metadata.js';
 import {
   extractCodexAgentMessageForNarration,
   extractUnphasedCodexAgentMessage,
+  isCodexTurnEndEvent,
+  isCodexTurnStartEvent,
   isCodexTurnTerminalEvent,
   isCodexWorkEvent,
 } from './codex-event-utils.js';
+
+const HEARTBEAT_TICK_MS = 15_000;
 
 function defaultNormalizeUiLanguage(value) {
   return String(value || '').trim().toLowerCase() === 'en' ? 'en' : 'zh';
@@ -716,6 +720,8 @@ export function createPromptProgressReporterFactory({
   progressMessageMaxChars = 1800,
   progressPlanMaxLines = 4,
   progressDoneStepsMax = 4,
+  progressTurnMarkDelayMs = 90_000,
+  progressHeartbeatIntervalMs = 240_000,
   safeReply = async () => null,
   normalizeUiLanguage = defaultNormalizeUiLanguage,
   slashRef = (name) => `/${name}`,
@@ -777,6 +783,7 @@ export function createPromptProgressReporterFactory({
     let progressMessage = null;
     let timer = null;
     let activityTimer = null;
+    let heartbeatTimer = null;
     let stopped = false;
     let lastEmitAt = 0;
     let lastRendered = '';
@@ -904,7 +911,11 @@ export function createPromptProgressReporterFactory({
       }
     };
 
-    const appendActivity = (activityText) => {
+    // The card and the thread carry different amounts of detail. Command and
+    // tool activity belongs on the card, where it is a scrolling detail view
+    // that costs the user nothing; in the thread each entry is a separate
+    // message, so only narration is queued for streaming.
+    const appendActivity = (activityText, { stream = true } = {}) => {
       const text = String(activityText || '').replace(/\s+/g, ' ').trim();
       if (!text) return false;
       const key = normalizeActivityKey(text);
@@ -916,11 +927,33 @@ export function createPromptProgressReporterFactory({
       if (latestQueued && latestQueued === key) return false;
 
       appendRecentActivity(recentActivities, text);
+      if (!stream) return false;
       pendingStreamActivities.push(text);
       if (pendingStreamActivities.length > 80) {
         pendingStreamActivities.splice(0, pendingStreamActivities.length - 80);
       }
       return true;
+    };
+
+    // Turn markers exist because Codex has no dependable task-level signal of
+    // its own: plan updates are absent from all but a handful of sessions, and
+    // agent messages are rare next to tool calls. A marker is derived from the
+    // turn boundary instead, so a new thread message always means a turn began,
+    // is still alive, or ended.
+    //
+    // Nothing is announced until the turn outlives progressTurnMarkDelayMs.
+    // Most turns finish in seconds — 83.6% of an observed 3026 came in under a
+    // minute — and marking those would produce a start/end pair per trivial
+    // question, which is the noise the markers are meant to remove.
+    const turnState = {
+      startedAt: 0,
+      announced: false,
+      lastMessageAt: 0,
+      active: false,
+    };
+
+    const markThreadMessageSent = () => {
+      turnState.lastMessageAt = now();
     };
 
     // Stage messages are sent in arrival order and never dropped, so a long run
@@ -936,11 +969,70 @@ export function createPromptProgressReporterFactory({
             channelState,
             language: lang,
           });
+          markThreadMessageSent();
         } catch {
           // A dropped stage message must not stall the ones behind it.
         }
       });
       return stageDeliveryChain;
+    };
+
+    const formatTurnMarker = (kind) => {
+      const elapsed = humanElapsed(Math.max(0, now() - (turnState.active ? turnState.startedAt : startedAt)));
+      const step = sanitizeProgressDisplayText(
+        truncate(String(latestStep || '').replace(/\s+/g, ' ').trim(), progressTextPreviewChars),
+      );
+      if (kind === 'start') {
+        return lang === 'en'
+          ? `▶ working (${elapsed}) — ${step}`
+          : `▶ 进行中（${elapsed}）— ${step}`;
+      }
+      return lang === 'en'
+        ? `… still working (${elapsed}) — ${step}`
+        : `… 仍在进行（${elapsed}）— ${step}`;
+    };
+
+    const sendTurnMarker = (kind) => {
+      if (typeof onStreamProcessMessageForRun !== 'function') return Promise.resolve();
+      markThreadMessageSent();
+      return deliverStageMessage(formatTurnMarker(kind));
+    };
+
+    // The heartbeat measures silence in the thread, not time since the last
+    // beat: a stage answer or streamed activity is already proof of life, so it
+    // resets the clock and no keepalive is sent on top of it.
+    const tickTurnMarkers = () => {
+      if (stopped || !turnState.active) return;
+      const currentTime = now();
+      // turnState.active already means beginTurn ran, so startedAt is read
+      // directly: treating a falsy timestamp as "not started" would pin age to
+      // zero and silence every marker.
+      const age = currentTime - turnState.startedAt;
+      if (!turnState.announced) {
+        if (age < progressTurnMarkDelayMs) return;
+        turnState.announced = true;
+        void sendTurnMarker('start');
+        return;
+      }
+      if (currentTime - turnState.lastMessageAt < progressHeartbeatIntervalMs) return;
+      void sendTurnMarker('heartbeat');
+    };
+
+    const beginTurn = () => {
+      turnState.startedAt = now();
+      turnState.lastMessageAt = turnState.startedAt;
+      turnState.announced = false;
+      turnState.active = true;
+    };
+
+    // Ending a turn is deliberately silent. The turn ends when the task
+    // completes, which is also when the final @-mention reply goes out, so a
+    // closing marker would be a second "done" message for the same event. The
+    // markers exist to prove work is still running; finishing proves itself.
+    const endTurn = () => {
+      if (!turnState.active) return;
+      turnState.active = false;
+      turnState.announced = false;
     };
 
     const appendPendingCodexAgentMessage = (value) => {
@@ -985,6 +1077,7 @@ export function createPromptProgressReporterFactory({
         if (pendingStreamActivities[0] === next) pendingStreamActivities.shift();
         if (failedStreamActivity === next) failedStreamActivity = null;
         lastActivityPushAt = now();
+        markThreadMessageSent();
         return true;
       })();
       activityPushPromise = currentPushPromise;
@@ -1034,6 +1127,14 @@ export function createPromptProgressReporterFactory({
           });
         }, progressProcessPushIntervalMs);
         activityTimer?.unref?.();
+        // The run itself counts as an open turn. Providers other than Codex emit
+        // no turn boundaries at all, and even Codex can start work before its
+        // first task_started reaches us, so the keepalive must not depend on one.
+        beginTurn();
+        heartbeatTimer = setIntervalFn(() => {
+          tickTurnMarkers();
+        }, HEARTBEAT_TICK_MS);
+        heartbeatTimer?.unref?.();
       } catch {
         progressMessage = null;
       }
@@ -1051,6 +1152,11 @@ export function createPromptProgressReporterFactory({
         }
       }
       if (session?.provider === 'codex') {
+        // A resumed session runs many turns under one reporter, so each
+        // boundary restarts the marker clock instead of leaving the whole run
+        // as a single turn that never closes.
+        if (isCodexTurnStartEvent(event)) beginTurn();
+        else if (isCodexTurnEndEvent(event)) endTurn();
         const unphasedAgentMessage = extractUnphasedCodexAgentMessage(event);
         if (unphasedAgentMessage) {
           appendPendingCodexAgentMessage(unphasedAgentMessage);
@@ -1089,11 +1195,19 @@ export function createPromptProgressReporterFactory({
         subagentDisplayNames: codexSubagentDisplayNameTracker.snapshot(),
       };
       const summaryStep = providerProgress?.summaryStep || summarizeCodexEvent(event, codexProgressOptions);
+      // The card takes the unfiltered text; the narration extractor decides only
+      // whether the same entry also earns a thread message. Blocked entries are
+      // tracked by text rather than by a flag, so buffered agent commentary
+      // prepended below still streams even when the event carrying it does not.
+      const cardOnlyActivities = new Set();
       let rawActivities = providerProgress?.rawActivities?.length
         ? providerProgress.rawActivities
         : (() => {
-          const raw = extractProcessNarrationFromEvent(event, codexProgressOptions);
-          return raw ? [raw] : [];
+          const raw = extractRawProgressTextFromEvent(event, codexProgressOptions);
+          if (!raw) return [];
+          const narration = extractProcessNarrationFromEvent(event, codexProgressOptions);
+          if (!narration) cardOnlyActivities.add(sanitizeProgressDisplayText(raw));
+          return [raw];
         })();
       if (session?.provider === 'codex') {
         for (const rawActivity of rawActivities) removePendingCodexAgentMessage(rawActivity);
@@ -1142,7 +1256,9 @@ export function createPromptProgressReporterFactory({
       }
       for (const rawActivity of safeRawActivities) {
         if (!rawActivity) continue;
-        const appended = appendActivity(rawActivity);
+        const appended = appendActivity(rawActivity, {
+          stream: !cardOnlyActivities.has(rawActivity),
+        });
         if (appended) {
           if (lastActivityPushAt === 0) {
             void pushOneStreamActivity({ force: true });
@@ -1187,6 +1303,11 @@ export function createPromptProgressReporterFactory({
       if (stopped) return;
       if (timer) clearIntervalFn(timer);
       if (activityTimer) clearIntervalFn(activityTimer);
+      if (heartbeatTimer) clearIntervalFn(heartbeatTimer);
+      // The run ends here, so the open turn is closed before the final card. A
+      // turn that was never announced stays silent (see endTurn).
+      turnState.active = false;
+      turnState.announced = false;
       const inFlightPush = activityPushPromise;
       if (inFlightPush) {
         await inFlightPush;

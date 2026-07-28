@@ -266,6 +266,23 @@ MAX_INPUT_TOKENS_BEFORE_COMPACT=272000
 SHOW_REASONING=false
 ```
 
+## thread 里的过程消息
+
+卡片和 thread 承担的信息量不一样。命令、工具调用这类明细留在卡片上滚动，thread 里只放任务级信号——因为 thread 每条都是一条独立消息，会产生未读。
+
+Codex 本身几乎不产出任务级信号：实测一个 802 事件的会话里工具调用 179 条、agent 消息 3 条、`update_plan` 0 条；`update_plan` 在一个月 1300+ 会话里只出现过 23 次。所以「这个任务还在跑」是从 turn 边界推出来的，而不是靠模型主动说。
+
+thread 只会收到三类消息：阶段性答复、超时未结束的 turn 标记和保活、最终 at 回复。turn 开始后 90 秒内结束的不发标记（实测 3026 个 turn 里 83.6% 在 1 分钟内结束，全标记等于给每个琐碎问答刷一对消息）。保活衡量的是 thread 的静默时长，真实输出会顺延下一次保活，不会叠着发。
+
+```env
+# 工具调用是否也进 thread（默认 false，只留在卡片上）
+PROGRESS_STREAM_TOOL_ACTIVITY=false
+# turn 超过多久才值得播报（默认 90 秒）
+PROGRESS_TURN_MARK_DELAY_MS=90000
+# 已播报的 turn 静默多久补一条保活（默认 4 分钟）
+PROGRESS_HEARTBEAT_INTERVAL_MS=240000
+```
+
 ## 代理
 
 如果 Discord 或 CLI 需要走代理，可以设置：

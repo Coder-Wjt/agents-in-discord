@@ -110,7 +110,15 @@ export function supersedeFinalAnswerForNarration(state, text) {
 export function extractCodexAgentMessageForNarration(event, state) {
   if (!event || typeof event !== 'object') return '';
   const type = normalizePhase(event.type || '');
-  const item = type === 'item_completed' || type === 'item_started' ? event.item : event;
+  // A live `codex exec` stream reports agent messages as item.completed, while
+  // the rollout bridge that feeds resumed sessions wraps the same message in
+  // event_msg/response_item. Missing the wrapped shape left long resumed
+  // sessions with no stage messages at all — the case these markers exist for.
+  const item = type === 'item_completed' || type === 'item_started'
+    ? event.item
+    : (type === 'event_msg' || type === 'response_item')
+      ? event.payload
+      : event;
   if (!item || typeof item !== 'object') return '';
   if (normalizePhase(item.type || '') !== 'agent_message') return '';
 
@@ -153,6 +161,36 @@ export function isCodexWorkEvent(event) {
 export function isCodexTurnTerminalEvent(event) {
   const type = normalizePhase(event?.type || '');
   return type === 'turn_completed' || type === 'turn_failed' || type === 'turn_cancelled';
+}
+
+function normalizeNestedEventType(event) {
+  if (!event || typeof event !== 'object') return '';
+  const type = normalizePhase(event.type || '');
+  if (type !== 'event_msg') return type;
+  const payload = event.payload && typeof event.payload === 'object' ? event.payload : null;
+  const nested = normalizePhase(payload?.type || '');
+  return nested || type;
+}
+
+// Turn boundaries are the only task-level signal Codex emits reliably. Across a
+// month of rollouts, update_plan appeared in 23 of 1300+ sessions and agent
+// messages ran 3 per 179 tool calls, so "which task is running" has to be
+// derived from these events rather than from anything the model chooses to say.
+export function isCodexTurnStartEvent(event) {
+  const type = normalizeNestedEventType(event);
+  return type === 'task_started' || type === 'turn_started';
+}
+
+export function isCodexTurnEndEvent(event) {
+  const type = normalizeNestedEventType(event);
+  return type === 'task_complete'
+    || type === 'task_completed'
+    || type === 'task_failed'
+    || type === 'task_aborted'
+    || type === 'turn_completed'
+    || type === 'turn_failed'
+    || type === 'turn_cancelled'
+    || type === 'turn_aborted';
 }
 
 export function composeFinalAnswerText({ messages = [], finalAnswerMessages = [] } = {}) {

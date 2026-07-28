@@ -8,6 +8,8 @@ import {
   extractAgentMessageText,
   extractCodexAgentMessageForNarration,
   getAgentMessagePhase,
+  isCodexTurnEndEvent,
+  isCodexTurnStartEvent,
   isFinalAnswerLikeAgentMessage,
   stripCodexControlBlocks,
 } from '../src/codex-event-utils.js';
@@ -211,4 +213,26 @@ test('extractCodexAgentMessageForNarration ignores repeats and unphased messages
     type: 'item.completed',
     item: { type: 'command_execution', command: 'ls' },
   }, state), '');
+});
+
+test('turn boundary detection covers both codex event shapes', () => {
+  // `codex exec --json` reports turns at the top level; a resumed session wraps
+  // the same information in event_msg. Both have to be recognised, because the
+  // turn boundary is the only task-level signal available for keepalive markers.
+  assert.equal(isCodexTurnStartEvent({ type: 'task_started' }), true);
+  assert.equal(isCodexTurnStartEvent({ type: 'event_msg', payload: { type: 'task_started' } }), true);
+  assert.equal(isCodexTurnStartEvent({ type: 'turn_started' }), true);
+
+  assert.equal(isCodexTurnEndEvent({ type: 'task_complete' }), true);
+  assert.equal(isCodexTurnEndEvent({ type: 'event_msg', payload: { type: 'task_complete' } }), true);
+  assert.equal(isCodexTurnEndEvent({ type: 'turn_failed' }), true);
+  assert.equal(isCodexTurnEndEvent({ type: 'turn_cancelled' }), true);
+
+  // Ordinary work must not be mistaken for a boundary, or every command would
+  // restart the mark delay and no long turn would ever be announced.
+  assert.equal(isCodexTurnStartEvent({ type: 'item.started' }), false);
+  assert.equal(isCodexTurnEndEvent({ type: 'item.completed' }), false);
+  assert.equal(isCodexTurnStartEvent({ type: 'event_msg', payload: { type: 'agent_message' } }), false);
+  assert.equal(isCodexTurnStartEvent(null), false);
+  assert.equal(isCodexTurnEndEvent(undefined), false);
 });

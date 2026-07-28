@@ -32,6 +32,7 @@ function sanitizeProgressDisplayText(value) {
 
 export function createRuntimePresentation({
   showReasoning = false,
+  streamToolActivity = false,
   progressTextPreviewChars = 140,
   progressDoneStepsMax = 4,
   progressActivityMaxLines = 4,
@@ -196,10 +197,14 @@ export function createRuntimePresentation({
     });
   }
 
+  // Tool activity still reaches the progress card through
+  // extractRawProgressTextFromEvent; withholding it here only keeps it out of
+  // the per-message narration stream, which is where it drowns everything else.
   function extractProcessNarrationFromEvent(ev, runtimeOptions = {}) {
     return extractProcessNarrationFromEventBase(ev, {
       showReasoning,
       previewChars: progressTextPreviewChars,
+      includeToolActivity: streamToolActivity,
       ...runtimeOptions,
     });
   }

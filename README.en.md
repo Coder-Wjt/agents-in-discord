@@ -215,6 +215,9 @@ Important knobs:
 - `PROGRESS_DONE_STEPS_MAX`: max completed key steps shown in progress (default `4`)
 - `PROGRESS_ACTIVITY_MAX_LINES`: max recent activity lines shown in progress/status (default `4`)
 - `PROGRESS_MESSAGE_MAX_CHARS`: max rendered chars per progress message (default `1800`)
+- `PROGRESS_STREAM_TOOL_ACTIVITY`: post each command/tool call to the thread as its own message (default `false`). Tool activity always stays on the progress card; this only controls the thread. Off by default because Codex is heavily tool-weighted — one observed 7h session ran 179 tool calls against 3 agent messages, so streaming them buried the task-level signal.
+- `PROGRESS_TURN_MARK_DELAY_MS`: how long a turn must run before it is announced in the thread (default `90000`). 83.6% of an observed 3026 turns finished within a minute; marking those would add a message per trivial question.
+- `PROGRESS_HEARTBEAT_INTERVAL_MS`: max thread silence before a keepalive marker is sent for a running turn (default `240000`). Real output resets the clock, so a talkative run sends no keepalives at all.
 - `SELF_HEAL_ENABLED`: enable runtime self-healing (default `true`)
 - `SELF_HEAL_RESTART_DELAY_MS`: delay before self-heal restart (default `5000`)
 - `SELF_HEAL_MAX_LOGIN_BACKOFF_MS`: max retry backoff for Discord login (default `60000`)

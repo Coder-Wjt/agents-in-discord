@@ -374,6 +374,21 @@ const PROGRESS_PROCESS_PUSH_INTERVAL_MS = normalizeIntervalMs(
   300,
 );
 const PROGRESS_MESSAGE_MAX_CHARS = Math.max(600, toInt(process.env.PROGRESS_MESSAGE_MAX_CHARS, 1800));
+// Tool calls outnumber agent messages roughly 60:1 on a real Codex run, so they
+// stay out of the thread by default and live on the progress card instead.
+const PROGRESS_STREAM_TOOL_ACTIVITY = String(
+  process.env.PROGRESS_STREAM_TOOL_ACTIVITY || 'false',
+).toLowerCase() === 'true';
+const PROGRESS_TURN_MARK_DELAY_MS = normalizeIntervalMs(
+  process.env.PROGRESS_TURN_MARK_DELAY_MS,
+  90_000,
+  5_000,
+);
+const PROGRESS_HEARTBEAT_INTERVAL_MS = normalizeIntervalMs(
+  process.env.PROGRESS_HEARTBEAT_INTERVAL_MS,
+  240_000,
+  30_000,
+);
 const SELF_HEAL_ENABLED = String(process.env.SELF_HEAL_ENABLED || 'true').toLowerCase() !== 'false';
 const SELF_HEAL_RESTART_DELAY_MS = toInt(process.env.SELF_HEAL_RESTART_DELAY_MS, 5000);
 const SELF_HEAL_MAX_LOGIN_BACKOFF_MS = toInt(process.env.SELF_HEAL_MAX_LOGIN_BACKOFF_MS, 60000);
@@ -617,6 +632,7 @@ const appContext = createAppContext({
   promptRuntimeOptions: {
     runtimePresentationOptions: {
       showReasoning: SHOW_REASONING,
+      streamToolActivity: PROGRESS_STREAM_TOOL_ACTIVITY,
       progressTextPreviewChars: PROGRESS_TEXT_PREVIEW_CHARS,
       progressDoneStepsMax: PROGRESS_DONE_STEPS_MAX,
       progressActivityMaxLines: PROGRESS_ACTIVITY_MAX_LINES,
@@ -683,6 +699,8 @@ const appContext = createAppContext({
       progressIncludeStderr: PROGRESS_INCLUDE_STDERR,
       progressTextPreviewChars: PROGRESS_TEXT_PREVIEW_CHARS,
       progressProcessPushIntervalMs: PROGRESS_PROCESS_PUSH_INTERVAL_MS,
+      progressTurnMarkDelayMs: PROGRESS_TURN_MARK_DELAY_MS,
+      progressHeartbeatIntervalMs: PROGRESS_HEARTBEAT_INTERVAL_MS,
       progressMessageMaxChars: PROGRESS_MESSAGE_MAX_CHARS,
       progressPlanMaxLines: PROGRESS_PLAN_MAX_LINES,
       progressDoneStepsMax: PROGRESS_DONE_STEPS_MAX,

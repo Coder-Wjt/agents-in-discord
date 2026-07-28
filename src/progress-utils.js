@@ -1307,6 +1307,16 @@ const TOOL_ACTIVITY_ITEM_TYPES = new Set([
   'collab_tool_call',
 ]);
 
+// Only the call side is listed. A tool *output* carries no tool name, so it
+// cannot be matched against the subagent exemption below — and ordinary outputs
+// already yield no narration text, leaving subagent reports as the only thing a
+// filter here could remove.
+const TOOL_ACTIVITY_PAYLOAD_TYPES = new Set([
+  'function_call',
+  'custom_tool_call',
+  'local_shell_call',
+]);
+
 function unwrapProgressEventForClassification(ev, depth = 0) {
   if (!ev || typeof ev !== 'object' || depth > 3) return ev;
   const type = normalizeEventType(ev.type || '');
@@ -1345,6 +1355,20 @@ export function isToolActivityProgressEvent(rawEvent) {
     const item = ev.item && typeof ev.item === 'object' ? ev.item : {};
     const itemType = normalizeEventType(item.type || '');
     return TOOL_ACTIVITY_ITEM_TYPES.has(itemType);
+  }
+
+  // Codex reports its own tool calls as response_item/function_call, which is
+  // the shape that actually floods a long run: 179 tool calls against 3 agent
+  // messages in one observed session. Subagent lifecycle calls are exempt —
+  // spawning or waiting on an agent is task-level news, not command chatter.
+  if (type === 'response_item') {
+    const payload = ev.payload && typeof ev.payload === 'object' ? ev.payload : null;
+    const payloadType = normalizeEventType(payload?.type || '');
+    if (TOOL_ACTIVITY_PAYLOAD_TYPES.has(payloadType)) {
+      const toolName = extractItemToolName(payload)
+        || normalizeWhitespace(payload?.name || payload?.tool_name || '');
+      return !isSubagentToolName(toolName);
+    }
   }
 
   return false;

@@ -178,7 +178,8 @@ test('createPromptProgressReporterFactory seeds initial step and updates final p
   assert.match(harness.edits[harness.edits.length - 1].content, /• latest activity: Final response sent/);
   assert.deepEqual(harness.edits[harness.edits.length - 1].components, []);
   assert.equal(harness.channelState.activeRun.phase, 'done');
-  assert.equal(harness.cleared.length, 2);
+  // card refresh, process-activity push, turn-marker heartbeat
+  assert.equal(harness.cleared.length, 3);
 });
 
 test('createPromptProgressReporterFactory dedupes repeated events and keeps activity on the final card', async () => {
@@ -265,9 +266,11 @@ test('createPromptProgressReporterFactory streams Codex command executions', asy
     },
   });
 
-  // Tool activity is posted to the channel: on long tool-calling stretches it is
-  // the only output Codex produces, so dropping it left the thread silent.
-  assert.deepEqual(harness.streamed, ['search Cohub context']);
+  // Commands stay on the card and out of the thread. Streaming them put one
+  // Discord message per command in front of the user — 179 tool calls against 3
+  // agent messages in one observed session — which buried the task-level signal
+  // a new thread message is supposed to carry.
+  assert.deepEqual(harness.streamed, []);
   assert.deepEqual(harness.channelState.activeRun.recentActivities, ['search Cohub context']);
   assert.match(harness.edits.at(-1).content, /latest activity: command completed: search Cohub context/);
   assert.match(harness.edits.at(-1).content, /process content:/);
@@ -288,7 +291,7 @@ test('createPromptProgressReporterFactory streams Codex command executions', asy
 
   await new Promise((resolve) => setImmediate(resolve));
 
-  assert.ok(harness.streamed.includes('search Cohub context'));
+  assert.deepEqual(harness.streamed, []);
   assert.match(harness.edits.at(-1).content, /latest activity: command completed: check Lark connection/);
   assert.match(harness.edits.at(-1).content, /process content:/);
 });
@@ -315,8 +318,10 @@ test('createPromptProgressReporterFactory streams failed Codex commands', async 
   });
 
   await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(harness.streamed.length, 1);
-  assert.match(harness.streamed[0], /command failed/);
+  // A failure is usually followed by a retry of the same command, so streaming
+  // it doubled the noise without adding a task-level signal. The card still
+  // carries it on the latest-activity line.
+  assert.deepEqual(harness.streamed, []);
   assert.match(harness.edits.at(-1).content, /latest activity: command failed/);
 });
 
@@ -1213,4 +1218,101 @@ test('createPromptProgressReporterFactory keeps every Codex stage past the strea
   assert.equal(harness.streamed.length, 94);
   assert.equal(harness.streamed[0], '阶段 0');
   assert.equal(harness.streamed.at(-1), '阶段 93');
+});
+
+async function settleStreamQueue() {
+  for (let index = 0; index < 4; index += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+}
+
+test('createPromptProgressReporterFactory stays silent for turns that finish before the mark delay', async () => {
+  const harness = createHarness({
+    factoryOptions: { presentation: createRealPresentation() },
+  });
+
+  await harness.reporter.start();
+  const tick = () => harness.intervals.find((handle) => handle.ms === 15_000)?.fn();
+
+  // 83.6% of an observed 3026 turns ran under a minute. Marking those would put
+  // a start/end pair in the thread for every trivial question, which is the
+  // noise the markers are meant to replace.
+  harness.advance(80_000);
+  tick();
+  await settleStreamQueue();
+  await harness.reporter.finish({ ok: true });
+
+  assert.deepEqual(harness.streamed, []);
+});
+
+test('createPromptProgressReporterFactory announces a long turn once and then keeps it alive', async () => {
+  const harness = createHarness({
+    factoryOptions: { presentation: createRealPresentation() },
+  });
+
+  await harness.reporter.start();
+  const tick = () => harness.intervals.find((handle) => handle.ms === 15_000)?.fn();
+
+  harness.advance(95_000);
+  tick();
+  await settleStreamQueue();
+  assert.equal(harness.streamed.length, 1);
+  assert.match(harness.streamed[0], /▶ working/);
+
+  // Ticks inside the heartbeat window add nothing: the marker is not a per-tick
+  // announcement, it is a statement that the thread has been quiet too long.
+  harness.advance(60_000);
+  tick();
+  await settleStreamQueue();
+  assert.equal(harness.streamed.length, 1);
+
+  harness.advance(200_000);
+  tick();
+  await settleStreamQueue();
+  assert.equal(harness.streamed.length, 2);
+  assert.match(harness.streamed[1], /still working/);
+
+  await harness.reporter.finish({ ok: true });
+  // Finishing is its own proof of completion — the reply goes out here, so no
+  // closing marker is added on top of it.
+  assert.equal(harness.streamed.length, 2);
+});
+
+test('createPromptProgressReporterFactory lets real Codex output reset the keepalive', async () => {
+  const harness = createHarness({
+    factoryOptions: { presentation: createRealPresentation() },
+  });
+
+  await harness.reporter.start();
+  const tick = () => harness.intervals.find((handle) => handle.ms === 15_000)?.fn();
+
+  harness.advance(95_000);
+  tick();
+  await settleStreamQueue();
+  assert.equal(harness.streamed.length, 1);
+
+  // A stage answer is already proof of life. The heartbeat measures silence in
+  // the thread, so genuine output must postpone the next keepalive rather than
+  // arriving alongside it.
+  harness.advance(180_000);
+  harness.reporter.onEvent({
+    type: 'item.completed',
+    item: { id: 'm_1', type: 'agent_message', phase: 'commentary', message: '查完了第一批表。' },
+  });
+  await settleStreamQueue();
+  assert.equal(harness.streamed.length, 2);
+  assert.equal(harness.streamed[1], '查完了第一批表。');
+
+  harness.advance(120_000);
+  tick();
+  await settleStreamQueue();
+  assert.equal(harness.streamed.length, 2);
+
+  harness.advance(150_000);
+  tick();
+  await settleStreamQueue();
+  assert.equal(harness.streamed.length, 3);
+  assert.match(harness.streamed[2], /still working/);
+
+  await harness.reporter.finish({ ok: true });
 });
