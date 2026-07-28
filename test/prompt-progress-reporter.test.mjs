@@ -333,7 +333,7 @@ test('createPromptProgressReporterFactory can stream deduped process messages wh
   assert.match(harness.edits.at(-1).content, /process: 我先检查一下这个仓库的入口文件。/);
 });
 
-test('createPromptProgressReporterFactory keeps Codex command executions out of the process stream', async () => {
+test('createPromptProgressReporterFactory streams Codex command executions', async () => {
   const harness = createHarness({
     factoryOptions: {
       presentation: createRealPresentation(),
@@ -354,12 +354,12 @@ test('createPromptProgressReporterFactory keeps Codex command executions out of 
     },
   });
 
-  // Tool activity belongs on the latest-activity line and in completed
-  // milestones, not in the narration stream posted to the channel.
-  assert.deepEqual(harness.streamed, []);
-  assert.deepEqual(harness.channelState.activeRun.recentActivities, []);
+  // Tool activity is posted to the channel: on long tool-calling stretches it is
+  // the only output Codex produces, so dropping it left the thread silent.
+  assert.deepEqual(harness.streamed, ['search Cohub context']);
+  assert.deepEqual(harness.channelState.activeRun.recentActivities, ['search Cohub context']);
   assert.match(harness.edits.at(-1).content, /latest activity: command completed: search Cohub context/);
-  assert.doesNotMatch(harness.edits.at(-1).content, /process content:/);
+  assert.match(harness.edits.at(-1).content, /process content:/);
 
   // A later command pushes the earlier one down into completed milestones, so
   // tool progress stays readable without ever entering the narration stream.
@@ -377,13 +377,12 @@ test('createPromptProgressReporterFactory keeps Codex command executions out of 
 
   await new Promise((resolve) => setImmediate(resolve));
 
-  assert.deepEqual(harness.streamed, []);
-  assert.deepEqual(harness.channelState.activeRun.recentActivities, []);
+  assert.ok(harness.streamed.includes('search Cohub context'));
   assert.match(harness.edits.at(-1).content, /latest activity: command completed: check Lark connection/);
-  assert.doesNotMatch(harness.edits.at(-1).content, /process content:/);
+  assert.match(harness.edits.at(-1).content, /process content:/);
 });
 
-test('createPromptProgressReporterFactory keeps failed Codex commands off the process stream', async () => {
+test('createPromptProgressReporterFactory streams failed Codex commands', async () => {
   const harness = createHarness({
     factoryOptions: {
       presentation: createRealPresentation(),
@@ -404,11 +403,9 @@ test('createPromptProgressReporterFactory keeps failed Codex commands off the pr
     },
   });
 
-  // The failure is already readable on the latest-activity line, so streaming it
-  // as its own Discord message would repeat it. On runs where the agent narrates
-  // nothing, that lone failure line used to be the only thing posted.
   await new Promise((resolve) => setImmediate(resolve));
-  assert.deepEqual(harness.streamed, []);
+  assert.equal(harness.streamed.length, 1);
+  assert.match(harness.streamed[0], /command failed/);
   assert.match(harness.edits.at(-1).content, /latest activity: command failed/);
 });
 

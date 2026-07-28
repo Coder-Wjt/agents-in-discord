@@ -1245,6 +1245,13 @@ export function extractRawProgressTextFromEvent(ev, options = {}) {
       const toolName = extractItemToolName(payload) || normalizeWhitespace(payload.name || payload.tool_name || '');
       const subagentSummary = summarizeSubagentToolCall(toolName, extractToolCallArguments(payload) || payload, options);
       if (subagentSummary) return subagentSummary;
+      // Codex reports its own tool calls as response_item/function_call. Without
+      // this the whole shape produced no progress text, so long tool-calling
+      // stretches showed nothing at all — the only other agent output there is
+      // reasoning, which is off by default.
+      const detail = summarizeKnownArgObject(extractToolCallArguments(payload) || payload, options);
+      if (!toolName && !detail) return '';
+      return detail ? `${toolName || 'tool'}: ${detail}` : `tool ${toolName}`;
     }
     if (payloadType === 'function_call_output') {
       const subagentSummary = summarizeSubagentToolOutput(payload, options);
@@ -1344,7 +1351,7 @@ export function isToolActivityProgressEvent(rawEvent) {
 }
 
 export function extractProcessNarrationFromEvent(ev, options = {}) {
-  if (isToolActivityProgressEvent(ev)) return '';
+  if (options.includeToolActivity === false && isToolActivityProgressEvent(ev)) return '';
   return extractRawProgressTextFromEvent(ev, options);
 }
 

@@ -932,7 +932,7 @@ test('extractRawProgressTextFromEvent reads Pi-family text deltas and tool start
   );
 });
 
-test('extractProcessNarrationFromEvent drops tool activity but keeps agent narration', () => {
+test('extractProcessNarrationFromEvent keeps tool activity alongside agent narration', () => {
   const commandEvent = {
     type: 'item.completed',
     item: {
@@ -943,20 +943,27 @@ test('extractProcessNarrationFromEvent drops tool activity but keeps agent narra
     },
   };
   assert.equal(extractRawProgressTextFromEvent(commandEvent), 'search Cohub context');
-  assert.equal(extractProcessNarrationFromEvent(commandEvent), '');
+  // Tool activity is streamed by default: during long tool-calling stretches it
+  // is the only thing Codex emits, so suppressing it left the channel silent.
+  assert.equal(extractProcessNarrationFromEvent(commandEvent), 'search Cohub context');
+  // Callers that want a narration-only view can still opt out.
+  assert.equal(
+    extractProcessNarrationFromEvent(commandEvent, { includeToolActivity: false }),
+    '',
+  );
 
   const webSearchEvent = {
     type: 'item.completed',
     item: { type: 'web_search', action: { query: 'codex progress events' } },
   };
-  assert.equal(extractProcessNarrationFromEvent(webSearchEvent), '');
+  assert.ok(extractProcessNarrationFromEvent(webSearchEvent));
 
   const toolExecutionEvent = {
     type: 'tool_execution_start',
     toolName: 'bash',
     args: { command: 'npm test' },
   };
-  assert.equal(extractProcessNarrationFromEvent(toolExecutionEvent), '');
+  assert.equal(extractProcessNarrationFromEvent(toolExecutionEvent), 'bash: run: npm test');
 
   const narrationEvent = {
     type: 'item.completed',
@@ -965,9 +972,7 @@ test('extractProcessNarrationFromEvent drops tool activity but keeps agent narra
   assert.equal(extractProcessNarrationFromEvent(narrationEvent), '先把三个来源并行拉一遍。');
 });
 
-test('extractProcessNarrationFromEvent excludes failed commands but keeps errors readable', () => {
-  // A failed command still reads as tool activity: its text already reaches the
-  // latest-activity line, so streaming it would duplicate the same sentence.
+test('extractProcessNarrationFromEvent keeps failed commands and errors readable', () => {
   const failedCommand = {
     type: 'item.completed',
     item: {
@@ -978,7 +983,7 @@ test('extractProcessNarrationFromEvent excludes failed commands but keeps errors
       status: 'completed',
     },
   };
-  assert.equal(extractProcessNarrationFromEvent(failedCommand), '');
+  assert.match(extractProcessNarrationFromEvent(failedCommand), /command failed/);
   assert.match(extractRawProgressTextFromEvent(failedCommand), /command failed/);
 
   const apiError = {
@@ -989,7 +994,7 @@ test('extractProcessNarrationFromEvent excludes failed commands but keeps errors
   assert.match(extractProcessNarrationFromEvent(apiError), /429/);
 });
 
-test('extractProcessNarrationFromEvent classifies tool activity through stream and event_msg wrappers', () => {
+test('isToolActivityProgressEvent classifies tool activity through stream and event_msg wrappers', () => {
   const wrappedCommand = {
     type: 'event_msg',
     payload: {
@@ -1002,7 +1007,12 @@ test('extractProcessNarrationFromEvent classifies tool activity through stream a
       },
     },
   };
-  assert.equal(extractProcessNarrationFromEvent(wrappedCommand), '');
+  // The classifier still recognises wrapped shapes, for callers opting out.
+  assert.equal(
+    extractProcessNarrationFromEvent(wrappedCommand, { includeToolActivity: false }),
+    '',
+  );
+  assert.ok(extractProcessNarrationFromEvent(wrappedCommand));
 });
 
 test('extractProcessNarrationFromEvent surfaces reasoning only when showReasoning is on', () => {
