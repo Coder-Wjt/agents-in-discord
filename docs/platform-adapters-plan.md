@@ -4,7 +4,7 @@
 
 本项目目前以 Discord 作为消息入口，但核心能力——会话状态、Provider runner、频道队列、工作区绑定、跨进程锁、设置与安全策略——并不应绑定到单一聊天平台。
 
-本方案的目标是在保留 Discord 现有行为的前提下，引入稳定的平台抽象层，随后逐步支持 Slack 和飞书/Lark。截至 2026-07-27，平台契约、Discord Adapter、核心平台边界、统一 Foundation 组合和可复用 conformance suite 已落地；飞书/Lark 的功能实现、自动化回归、真实凭证 readiness、成功表单保存、私密交互跨重启和独立生产 Webhook 上线已完成。当前工作重点已从功能开发转为唯一 runtime 自动验收、运维收口和提交发布，Slack 仍是独立后续阶段。
+本方案的目标是在保留 Discord 现有行为的前提下，引入稳定的平台抽象层，随后逐步支持 Slack 和飞书/Lark。截至 2026-07-28，平台契约、Discord Adapter、核心平台边界、统一 Foundation 组合和可复用 conformance suite 已落地；飞书/Lark 的功能实现、自动化回归、真实凭证 readiness、原生交互、独立生产 Webhook 上线和唯一 runtime 自动验收均已完成。当前工作重点转为统一运维与可观测性，Slack 仍是独立后续阶段。
 
 ## 实施状态
 
@@ -18,7 +18,7 @@
 | 阶段 3：Foundation 统一组合与 Discord 回归 | 已完成 | `03efc7c` | `createAppContext()` 通过单一 Foundation 获取平台服务并创建 Adapter，Discord 启动、配置、session 与用户可见行为保持兼容。 |
 | 阶段 4：第二平台准入准备 | 已完成 | `97ebfb7` | 已清理过渡 facade/别名和 raw fallback，把 Discord 组合收口到启动边界，并补齐可复用 Adapter conformance suite、无 Discord SDK 核心 smoke 与准入决策。 |
 | 阶段 5：Slack Adapter | 未开始 | — | Slack 仍是独立后续阶段，其 Node.js 基线单独决策。 |
-| 阶段 6：飞书/Lark Adapter | 功能完成，验收收口中 | 本阶段提交 | Node.js 18 消息、原生命令、机器人菜单、卡片/表单、私密响应、reaction、健康指标、reply-chain fork/side 和 Webhook 已完成；独立加密 Webhook 已通过固定公网 callback 上线并完成真实消息/Settings action，尚待隔离旧 CLI 后的唯一 runtime live verify。 |
+| 阶段 6：飞书/Lark Adapter | 已完成 | 本阶段提交 | Node.js 18 消息、原生命令、机器人菜单、卡片/表单、私密响应、reaction、健康指标、reply-chain fork/side 和 Webhook 已完成；独立加密 Webhook 已通过固定公网 callback 上线，并完成唯一 runtime 的真实请求、交互及应用/代理恢复自动验收。 |
 | 阶段 7：多平台迁移与统一运维 | 进行中 | 本阶段提交 | 已启用平台选择、限定会话键、平台/实例数据隔离及平台中立健康读取；Lark 已接入连接/投递指标，Discord key 迁移与其他平台指标仍待实现。 |
 
 当前已完成能力包括：
@@ -138,6 +138,14 @@
 - 真实 `!settings`、Language select 与 `English` button 已验证状态持久且显示不回退；`npm run test:lark` 更新为 157/157、`npm run test:progress` 更新为 882/882，credential readiness 对新应用确认 tenant scopes 9/9。开放平台版本/事件/菜单的只读管理 API 当前不可用，发布配置由控制台人工确认。
 - 旧 CLI runtime 按要求继续运行，因此 `smoke:lark-webhook-live --verify` 检测到两个活动 Lark runtime 后安全拒绝；未将人工闭环误记为唯一实例自动验收。
 
+### 2026-07-28 唯一 Webhook runtime 自动验收
+
+- 维护窗口内停用并禁用旧 CLI runtime，使独立 Webhook 成为唯一活动 Lark runtime；Webhook 与 Cloudflare Tunnel 保持 `active/enabled`，公网健康最终为 `connected`。
+- `smoke:lark-webhook-live` 在 `2026-07-28T01:37:20Z` prepare，于 `01:46:47Z` 完成 `verified`；布尔回执 `complete=true`、缺失证据为 0。
+- 真实验收覆盖签名请求、加密请求、URL challenge、普通消息、原生 slash command、事件型机器人菜单、卡片 action、Webhook 应用重启恢复和 Cloudflare 反向代理独立中断/恢复。
+- 开放平台发布版本、Webhook 接入、必需事件、卡片回调和机器人菜单已人工确认；新应用 profile 与 App 配置一致，命令注册表 46/46、provisioning scopes 2/2、tenant scopes 9/9，限制性单用户 allowlist 生效。
+- 回滚路径为先隔离故障 Webhook，再用 `systemctl --user start agents-in-discord-lark.service` 临时恢复旧 CLI；恢复 Webhook 后重新核对唯一 runtime、公网健康与限制性 allowlist。
+
 ### 2026-07-27 飞书/Lark 阶段性提交与验收快照
 
 本次阶段性提交收口以下功能边界：
@@ -164,7 +172,7 @@
 - 受控断网复测发现临时代理可被启动期大小写补齐固化到 `.env`；现已改为默认只修复当前进程环境。新源码重启后项目代理键保持为 0、CLI consumer 无代理且私聊 `!status` 再次取得关联回复。
 - `git diff --check` 通过；提交范围不包含 App Secret、token、测试 chat ID 或用户 ID。
 
-阶段边界：上述结果证明当前实现和独立 Webhook 部署具备试运行条件，但不等同于唯一 runtime 的完整自动生产验收。成功表单、私密响应跨重启、无权限用户拒绝及真实 Webhook challenge/消息/Settings card action 已完成；旧 CLI runtime 未经授权保持运行，live verify 待维护窗口隔离后执行。真实断网重连、`!status` 投递指标和新增 4 条原生 slash commands 的远端 additive sync 已完成。
+阶段边界：上述内容是 2026-07-27 的阶段性快照，当时尚未取得唯一 runtime 的完整自动生产验收。该缺口已由 2026-07-28 的维护窗口补齐；真实断网重连、`!status` 投递指标和新增 4 条原生 slash commands 的远端 additive sync 也均已完成。
 
 ### 2026-07-25 阶段 4 验证
 
@@ -616,7 +624,7 @@ Lark 从首个可运行版本起使用上述限定键，Discord 仍继续使用�
 - 实现 Slack 消息长度、更新频率、ack 时限、重试和事件去重策略。
 - 补充 Slack manifest、最小权限文档和独立集成测试。
 
-### 阶段 6：飞书/Lark Adapter（功能完成，验收收口中）
+### 阶段 6：飞书/Lark Adapter（已完成）
 
 已完成：
 
@@ -642,7 +650,7 @@ Lark 从首个可运行版本起使用上述限定键，Discord 仍继续使用�
 
 - 当前应用的 credential-verified readiness 已通过：tenant scopes 9/9、事件 2/2、卡片回调 1/1、机器人菜单 7/7、原生 slash commands 46/46，且已配置当前应用作用域内的单用户 allowlist。
 - 隔离私聊已验证主动消息、`!status` 收发、`!settings` 卡片及原位更新、select/Card 2.0 回调、机器人菜单事件、`/cx_status` 关联回复、普通 prompt、带参数原生命令和未知 slash-path 回退；不存在的 Codex profile 也正确进入表单校验错误路径。
-- 隔离群聊已验证 @/未 @、真实图片、长任务取消/reaction、fork/side reply chain 和 side 根卡片关闭标记；Settings 成功保存和私密响应跨重启也已完成。受控本机代理 smoke 已验证真实断网后同一主进程 reconnect/reconnected、3/3 consumers 恢复，以及 `!status` 的重试和消息投递指标。真实第二用户拒绝已通过 `smoke:lark-denial-live` 的 prepare/observe/verify 闭环：生产 card consumer 收到不同于 owner 的操作者回调，拒绝私聊发送成功且与群聊分离，共享卡片哈希保持不变；驱动支持精确 `--group-name` 选择和发送后服务端卡片哈希基线。独立生产 Webhook 已配置 App Secret/token/encrypt key、固定 Cloudflare HTTPS callback 与持久服务，真实 challenge、普通消息、`!settings`、select/button 和应用重启后健康均已完成；Settings action 的 Card 1.0 stale state 与回复 `root_id` 会话漂移也已修复。由于旧 CLI runtime 未经授权继续运行，`smoke:lark-webhook-live` 的唯一实例自动验收仍待维护窗口执行。CLI transport 的空闲实例与受控运行中任务退出已在 `SELF_HEAL_ENABLED=false` 下完成真实 SIGTERM 验收，包含忽略 SIGTERM 子进程的有界 SIGKILL 收敛。
+- 隔离群聊已验证 @/未 @、真实图片、长任务取消/reaction、fork/side reply chain 和 side 根卡片关闭标记；Settings 成功保存和私密响应跨重启也已完成。受控本机代理 smoke 已验证真实断网后同一主进程 reconnect/reconnected、3/3 consumers 恢复，以及 `!status` 的重试和消息投递指标。真实第二用户拒绝已通过 `smoke:lark-denial-live` 的 prepare/observe/verify 闭环：生产 card consumer 收到不同于 owner 的操作者回调，拒绝私聊发送成功且与群聊分离，共享卡片哈希保持不变；驱动支持精确 `--group-name` 选择和发送后服务端卡片哈希基线。独立生产 Webhook 已配置 App Secret/token/encrypt key、固定 Cloudflare HTTPS callback 与持久服务，真实签名/加密 challenge、普通消息、原生 slash command、机器人菜单、卡片 action、应用重启和代理中断/恢复均已由唯一 runtime live verify 自动记录；Settings action 的 Card 1.0 stale state 与回复 `root_id` 会话漂移也已修复。CLI transport 的空闲实例与受控运行中任务退出已在 `SELF_HEAL_ENABLED=false` 下完成真实 SIGTERM 验收，包含忽略 SIGTERM 子进程的有界 SIGKILL 收敛。
 
 ### 阶段 7：迁移与统一运维（进行中）
 
@@ -653,14 +661,14 @@ Lark 从首个可运行版本起使用上述限定键，Discord 仍继续使用�
 
 ## 后续开发计划
 
-### P0：完成飞书唯一 runtime 验收并发布
+### P0：飞书唯一 runtime 验收与发布收口（已完成）
 
-- 在获得维护授权后隔离旧 CLI runtime，使独立 Webhook 成为唯一活动 Lark runtime；运行 `smoke:lark-webhook-live` prepare/observe/verify，补录机器人菜单、原生 slash command、反向代理独立重启及唯一实例报告。App Secret、verification token、encrypt key、固定 callback、真实 challenge、消息和 Settings card action 已完成。
-- 完成剩余 smoke 后重新运行 credential-verified readiness、`test:lark`、`test:progress`、语法/格式/原子提交检查，并记录应用版本、region、transport、时间和非敏感结果。
-- 对 smoke 发现的问题只做飞书 Adapter、transport 或平台契约内的修复；若需要修改共享核心，先补跨 Discord/Lark 的边界与回归测试。
-- 复核 README、环境变量示例、权限/事件基线和运维清单与实际发布应用一致，随后准备版本号、发布说明和可回滚部署步骤。
+- 已隔离并禁用旧 CLI runtime，使独立 Webhook 成为唯一活动 Lark runtime；`smoke:lark-webhook-live` prepare/observe/verify 已完整记录菜单、原生 slash command、卡片 action、应用重启和反向代理独立恢复证据。
+- credential-verified readiness、原生命令审计和自动化回归均已通过；飞书只读应用管理 API 无法证明的发布配置已由控制台人工确认。
+- README、环境变量示例、权限/事件基线和部署清单与实际应用一致；发布说明、非敏感验收时间和可回滚部署步骤已记录。
+- 后续变更继续遵循飞书 Adapter/transport 边界；若修改共享核心，先补跨 Discord/Lark 的边界与回归测试。
 
-完成标准：自动化回归通过，readiness 无 error/warning，17 项真实凭证 smoke 全部完成或有明确不适用说明，且单消费者部署、限制性 allowlist、优雅退出和恢复路径均有记录。
+完成标准已满足：自动化回归和凭证 readiness 通过；只读 API 无法验证的发布配置已人工确认；17 项真实凭证 smoke 全部完成或有明确不适用说明；单消费者部署、限制性 allowlist、优雅退出和恢复/回滚路径均有记录。
 
 ### P1：统一运维与可观测性
 
