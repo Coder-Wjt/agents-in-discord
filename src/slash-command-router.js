@@ -170,6 +170,7 @@ export function createSlashCommandRouter({
   startCodexSideConversation,
   closeCodexSideConversation,
   resolveForkWorkspace,
+  prepareForkWorkspace,
   getCodexThreadGoal,
   setCodexThreadGoal,
   clearCodexThreadGoal,
@@ -775,6 +776,7 @@ export function createSlashCommandRouter({
         commandActions,
         forkCodexThread,
         resolveForkWorkspace,
+        prepareForkWorkspace,
         enqueuePrompt,
         resolveSecurityContext,
       });

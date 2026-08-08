@@ -343,6 +343,7 @@ test('createTextCommandHandler creates native Codex fork from text command', asy
     getSessionLanguage: () => 'zh',
     getProviderDisplayName: () => 'Codex CLI',
     getRuntimeSnapshot: () => ({ running: false, queued: 0 }),
+    prepareForkWorkspace: () => '/repo/fork-workspace',
     commandActions: {
       bindForkedSession(currentSession, binding) {
         currentSession.runnerSessionId = binding.sessionId;
@@ -351,7 +352,7 @@ test('createTextCommandHandler creates native Codex fork from text command', asy
       },
     },
     async forkCodexThread(options) {
-      assert.deepEqual(options, { threadId: 'parent-1' });
+      assert.deepEqual(options, { threadId: 'parent-1', cwd: '/repo/fork-workspace' });
       return { threadId: 'fork-session-1' };
     },
     async enqueuePrompt(_message, key, content) {
@@ -533,6 +534,7 @@ test('createTextCommandHandler creates native Claude fork from text command', as
     getProviderDisplayName: () => 'Claude Code',
     getRuntimeSnapshot: () => ({ running: false, queued: 0 }),
     resolveForkWorkspace: () => '/repo/parent-workspace',
+    prepareForkWorkspace: () => '/repo/fork-workspace',
     commandActions: {
       bindForkedSession(currentSession, binding) {
         currentSession.runnerSessionId = binding.sessionId;
@@ -568,7 +570,7 @@ test('createTextCommandHandler creates native Claude fork from text command', as
   assert.match(childSession.runnerSessionId, /^[0-9a-f-]{36}$/i);
   assert.equal(childSession.forkedFromSessionId, 'parent-claude-1');
   assert.equal(childSession.forkedFromProvider, 'claude');
-  assert.equal(childSession.workspaceDir, '/repo/parent-workspace');
+  assert.equal(childSession.workspaceDir, '/repo/fork-workspace');
   assert.equal(childSession.pendingForkFromSessionId, 'parent-claude-1');
   assert.equal(threadCreates[0].name, 'Claude fork thread');
   assert.deepEqual(childThread.setNameCalls, []);

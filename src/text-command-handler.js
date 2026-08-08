@@ -207,6 +207,7 @@ export function createTextCommandHandler({
   startCodexSideConversation,
   closeCodexSideConversation,
   resolveForkWorkspace,
+  prepareForkWorkspace,
   getCodexThreadGoal,
   setCodexThreadGoal,
   clearCodexThreadGoal,
@@ -634,6 +635,7 @@ export function createTextCommandHandler({
             commandActions,
             forkCodexThread,
             resolveForkWorkspace,
+            prepareForkWorkspace,
             enqueuePrompt,
             resolveSecurityContext,
           });

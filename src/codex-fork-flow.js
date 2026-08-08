@@ -275,6 +275,7 @@ export async function createProviderForkThread({
   createThread = createDiscordForkThread,
   generateSessionId = randomUUID,
   resolveForkWorkspace = () => null,
+  prepareForkWorkspace = null,
 } = {}) {
   const normalizedProvider = normalizeForkProvider(provider);
   const normalizedParentSessionId = normalizeForkSessionId(parentSessionId);
@@ -307,7 +308,7 @@ export async function createProviderForkThread({
   if (normalizedProvider === 'claude' && !plannedForkedSessionId) {
     throw new Error('Claude fork did not receive a generated session id');
   }
-  const forkWorkspaceDir = normalizedProvider === 'claude'
+  const parentWorkspaceDir = normalizedProvider === 'claude'
     ? normalizeForkWorkspaceDir(resolveForkWorkspace({
       provider: normalizedProvider,
       parentSessionId: normalizedParentSessionId,
@@ -315,7 +316,7 @@ export async function createProviderForkThread({
       source,
     }))
     : null;
-  if (normalizedProvider === 'claude' && !forkWorkspaceDir) {
+  if (normalizedProvider === 'claude' && !parentWorkspaceDir) {
     return {
       ok: false,
       reason: 'fork_workspace_unavailable',
@@ -334,12 +335,56 @@ export async function createProviderForkThread({
     throw new Error('Discord thread creation did not return a thread id');
   }
 
+  let forkWorkspaceDir = null;
+  if (typeof prepareForkWorkspace !== 'function') {
+    try {
+      await childThread.delete?.(`${normalizedProvider} fork workspace preparation unavailable`);
+    } catch {
+    }
+    return {
+      ok: false,
+      reason: 'fork_workspace_unavailable',
+      provider: normalizedProvider,
+      parentSessionId: normalizedParentSessionId,
+    };
+  }
+  try {
+    forkWorkspaceDir = normalizeForkWorkspaceDir(await prepareForkWorkspace({
+      provider: normalizedProvider,
+      parentSessionId: normalizedParentSessionId,
+      parentSession: session,
+      parentWorkspaceDir,
+      source,
+      childThread,
+      childThreadId: childThread.id,
+    }));
+  } catch (err) {
+    try {
+      await childThread.delete?.(`${normalizedProvider} fork workspace preparation failed`);
+    } catch {
+    }
+    throw err;
+  }
+  if (!forkWorkspaceDir) {
+    try {
+      await childThread.delete?.(`${normalizedProvider} fork workspace unavailable`);
+    } catch {
+    }
+    return {
+      ok: false,
+      reason: 'fork_workspace_unavailable',
+      provider: normalizedProvider,
+      parentSessionId: normalizedParentSessionId,
+    };
+  }
+
   let forkResult = null;
   let forkedSessionId = plannedForkedSessionId;
   if (normalizedProvider === 'codex') {
     try {
       forkResult = await forkCodexThread({
         threadId: normalizedParentSessionId,
+        cwd: forkWorkspaceDir,
       });
     } catch (err) {
       try {
@@ -371,9 +416,7 @@ export async function createProviderForkThread({
     channel: childThread,
     parentChannelId: key,
   });
-  if (forkWorkspaceDir) {
-    childSession.workspaceDir = forkWorkspaceDir;
-  }
+  childSession.workspaceDir = forkWorkspaceDir;
   const binding = commandActions.bindForkedSession(childSession, {
     sessionId: forkedSessionId,
     parentSessionId: normalizedParentSessionId,

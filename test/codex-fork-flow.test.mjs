@@ -45,6 +45,7 @@ test('createCodexForkThread creates Discord thread before native fork and delete
         events.push('createThread');
         return childThread;
       },
+      prepareForkWorkspace: () => '/repo/fork-workspace',
       async forkCodexThread() {
         events.push('forkCodexThread');
         throw new Error('native fork failed');
@@ -87,6 +88,7 @@ test('createCodexForkThread uses an optional requested Discord thread name', asy
     },
     parentSessionId: 'parent-session',
     threadName: '  Custom   Fork   ',
+    prepareForkWorkspace: () => '/repo/fork-workspace',
     getSession: () => childSession,
     commandActions: {
       bindForkedSession(currentSession, binding) {
@@ -102,6 +104,95 @@ test('createCodexForkThread uses an optional requested Discord thread name', asy
   assert.equal(result.ok, true);
   assert.equal(threadCreates[0].name, 'Custom Fork');
   assert.deepEqual(setNameCalls, []);
+});
+
+test('createCodexForkThread prepares an isolated workspace before native fork and keeps the fork session bound', async () => {
+  const parentSession = {
+    provider: 'codex',
+    language: 'zh',
+    runnerSessionId: 'parent-session',
+    workspaceDir: '/repo/shared-workspace',
+  };
+  const childSession = { provider: 'codex', language: 'zh' };
+  const childThread = {
+    id: 'child-channel',
+    async join() {},
+    async setName() {},
+    async send() {},
+  };
+  let prepared = null;
+  let forkOptions = null;
+
+  const result = await createCodexForkThread({
+    key: 'parent-channel',
+    session: parentSession,
+    source: createForkSource(),
+    parentSessionId: 'parent-session',
+    createThread: async () => childThread,
+    prepareForkWorkspace: ({ childThread: currentThread, parentSession: currentParent }) => {
+      prepared = {
+        childThreadId: currentThread.id,
+        parentWorkspaceDir: currentParent.workspaceDir,
+      };
+      return '/repo/child-workspace';
+    },
+    getSession: () => childSession,
+    commandActions: {
+      bindForkedSession(currentSession, binding) {
+        currentSession.runnerSessionId = binding.sessionId;
+        currentSession.workspaceDir = binding.workspaceDir;
+        return binding;
+      },
+    },
+    async forkCodexThread(options) {
+      forkOptions = options;
+      return { threadId: 'fork-session' };
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(prepared, {
+    childThreadId: 'child-channel',
+    parentWorkspaceDir: '/repo/shared-workspace',
+  });
+  assert.deepEqual(forkOptions, {
+    threadId: 'parent-session',
+    cwd: '/repo/child-workspace',
+  });
+  assert.equal(childSession.workspaceDir, '/repo/child-workspace');
+  assert.equal(childSession.runnerSessionId, 'fork-session');
+  assert.equal(parentSession.workspaceDir, '/repo/shared-workspace');
+  assert.equal(parentSession.runnerSessionId, 'parent-session');
+});
+
+test('createCodexForkThread removes the child thread when isolated workspace preparation fails', async () => {
+  const events = [];
+  const childThread = {
+    id: 'child-channel',
+    async delete(reason) {
+      events.push(`delete:${reason}`);
+    },
+  };
+
+  await assert.rejects(
+    () => createCodexForkThread({
+      key: 'parent-channel',
+      source: createForkSource(),
+      parentSessionId: 'parent-session',
+      createThread: async () => childThread,
+      prepareForkWorkspace: () => {
+        throw new Error('workspace preparation failed');
+      },
+      getSession: () => ({}),
+      commandActions: { bindForkedSession() {} },
+      async forkCodexThread() {
+        throw new Error('native fork should not run');
+      },
+    }),
+    /workspace preparation failed/,
+  );
+
+  assert.deepEqual(events, ['delete:codex fork workspace preparation failed']);
 });
 
 test('createCodexForkThread replays the latest parent agent message into the fork thread', async () => {
@@ -156,6 +247,7 @@ test('createCodexForkThread replays the latest parent agent message into the for
       },
     },
     parentSessionId: 'parent-session',
+    prepareForkWorkspace: () => '/repo/fork-workspace',
     getSession: () => childSession,
     commandActions: {
       bindForkedSession(currentSession, binding) {
@@ -216,6 +308,7 @@ test('createProviderForkThread prepares Claude fork without mutating the parent 
     parentSessionId: 'parent-session',
     generateSessionId: () => 'child-session',
     resolveForkWorkspace: () => '/repo/parent-workspace',
+    prepareForkWorkspace: () => '/repo/fork-workspace',
     getSession: () => childSession,
     commandActions: {
       bindForkedSession(currentSession, binding) {
@@ -239,8 +332,8 @@ test('createProviderForkThread prepares Claude fork without mutating the parent 
   assert.equal(setNameCalls[0].name, 'claude fork child-se from parent-s');
   assert.equal(parentSession.runnerSessionId, 'parent-session');
   assert.equal(childSession.runnerSessionId, 'child-session');
-  assert.equal(childSession.workspaceDir, '/repo/parent-workspace');
-  assert.equal(observedBinding.workspaceDir, '/repo/parent-workspace');
+  assert.equal(childSession.workspaceDir, '/repo/fork-workspace');
+  assert.equal(observedBinding.workspaceDir, '/repo/fork-workspace');
   assert.equal(childSession.forkedFromProvider, 'claude');
   assert.equal(childSession.forkedFromSessionId, 'parent-session');
   assert.equal(childSession.pendingForkFromSessionId, 'parent-session');
@@ -288,6 +381,7 @@ test('formatCodexForkResult makes prompt enqueue failure explicit', async () => 
     key: 'parent-channel',
     source: createForkSource(),
     parentSessionId: 'parent-session',
+    prepareForkWorkspace: () => '/repo/fork-workspace',
     getSession: () => childSession,
     commandActions: {
       bindForkedSession(currentSession, binding) {

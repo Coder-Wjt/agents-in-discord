@@ -274,6 +274,7 @@ function createRouterState(overrides = {}) {
       return payload;
     },
     resolvePath: (value) => value,
+    prepareForkWorkspace: () => '/repo/fork-workspace',
     safeError: (err) => String(err?.message || err),
     ...overrides,
   });
@@ -481,7 +482,7 @@ test('createSlashCommandRouter creates native Codex fork in a new thread and pre
       },
     },
     async forkCodexThread(options) {
-      assert.deepEqual(options, { threadId: 'parent-1' });
+      assert.deepEqual(options, { threadId: 'parent-1', cwd: '/repo/fork-workspace' });
       return { threadId: 'fork-session-1', forkedFromId: 'parent-1' };
     },
     async enqueuePrompt(message, key, content, securityContext) {
@@ -1019,7 +1020,7 @@ test('createSlashCommandRouter creates native Claude fork in a new thread and re
   assert.match(childSession.runnerSessionId, /^[0-9a-f-]{36}$/i);
   assert.equal(childSession.forkedFromSessionId, 'parent-claude-1');
   assert.equal(childSession.forkedFromProvider, 'claude');
-  assert.equal(childSession.workspaceDir, '/repo/parent-workspace');
+  assert.equal(childSession.workspaceDir, '/repo/fork-workspace');
   assert.equal(childSession.pendingForkFromSessionId, 'parent-claude-1');
   assert.equal(threadCreates[0].name, 'claude branch');
   assert.deepEqual(childThread.setNameCalls, []);

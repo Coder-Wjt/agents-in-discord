@@ -503,6 +503,22 @@ const getProjectUpgradeStatus = (options = {}) => (
 ensureDir(DATA_DIR);
 ensureDir(WORKSPACE_ROOT);
 
+function prepareForkWorkspace({ childThreadId } = {}) {
+  const normalizedThreadId = String(childThreadId || '').trim();
+  if (!normalizedThreadId) return null;
+  if (!/^[A-Za-z0-9_-]+$/.test(normalizedThreadId)) {
+    throw new Error('invalid Discord fork thread id for workspace');
+  }
+  const workspaceRoot = path.resolve(WORKSPACE_ROOT);
+  const workspaceDir = path.resolve(workspaceRoot, normalizedThreadId);
+  const relative = path.relative(workspaceRoot, workspaceDir);
+  if (relative.startsWith('..') || path.isAbsolute(relative)) {
+    throw new Error('fork workspace escaped WORKSPACE_ROOT');
+  }
+  ensureDir(workspaceDir);
+  return workspaceDir;
+}
+
 const bootCliHealth = getCliHealth(DEFAULT_PROVIDER);
 if (bootCliHealth.ok) {
   console.log(`🧩 ${getProviderDisplayName(DEFAULT_PROVIDER)} CLI: ${bootCliHealth.version} via ${bootCliHealth.bin}`);
@@ -878,6 +894,7 @@ const appContext = createAppContext({
           ? readClaudeSessionMetaBySessionId(parentSessionId)?.cwd
           : null
       ),
+      prepareForkWorkspace,
       getCodexThreadGoal: (options) => getCodexThreadGoal({
         ...options,
         codexBin: CODEX_BIN,
@@ -946,6 +963,7 @@ const appContext = createAppContext({
           ? readClaudeSessionMetaBySessionId(parentSessionId)?.cwd
           : null
       ),
+      prepareForkWorkspace,
       getCodexThreadGoal: (options) => getCodexThreadGoal({
         ...options,
         codexBin: CODEX_BIN,

@@ -58,6 +58,7 @@ test('createCodexAppServerClient sends initialize then thread/fork', async () =>
       if (request.method === 'thread/fork') {
         assert.deepEqual(request.params, {
           threadId: 'parent-1',
+          cwd: '/repo/fork-workspace',
           excludeTurns: true,
           persistExtendedHistory: true,
         });
@@ -80,7 +81,7 @@ test('createCodexAppServerClient sends initialize then thread/fork', async () =>
     spawnFn: fake.spawnFn,
     env: { HOME: '/tmp/home' },
   });
-  const result = await client.forkThread({ threadId: 'parent-1' });
+  const result = await client.forkThread({ threadId: 'parent-1', cwd: '/repo/fork-workspace' });
 
   assert.equal(result.threadId, 'fork-1');
   assert.equal(result.forkedFromId, 'parent-1');
