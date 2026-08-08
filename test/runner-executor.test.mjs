@@ -530,6 +530,89 @@ test('createRunnerExecutor routes Codex long runtime to the app-server runner', 
   assert.deepEqual(codexLongOptions.disabledMcpServers, ['flomo']);
 });
 
+test('createRunnerExecutor keeps explicit Codex profiles and raw config on the one-shot runner', async () => {
+  for (const sessionOverrides of [
+    { codexProfile: 'work' },
+    { configOverrides: ['foo="bar"'] },
+  ]) {
+    const child = new EventEmitter();
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    child.killed = false;
+    child.kill = () => {
+      child.killed = true;
+      return true;
+    };
+    const spawnCalls = [];
+    let appServerRuns = 0;
+    const executor = createRunnerExecutor({
+      spawnEnv: process.env,
+      ensureDir: () => {},
+      normalizeProvider: (value) => String(value || '').trim().toLowerCase(),
+      getSessionProvider: (session) => session.provider,
+      getProviderBin: () => 'codex',
+      getSessionId: (session) => session.runnerSessionId,
+      resolveModelSetting: () => ({ value: null, source: 'provider' }),
+      resolveCodexProfileSetting: (session) => session.codexProfile
+        ? { value: session.codexProfile, source: 'session override', valid: true, isExplicit: true }
+        : { value: null, source: 'provider default', valid: true, isExplicit: false },
+      resolveReasoningEffortSetting: () => ({ value: null, source: 'provider' }),
+      resolveTimeoutSetting: () => ({ timeoutMs: 0 }),
+      resolveFastModeSetting: () => ({ enabled: false, source: 'config.toml' }),
+      resolveRuntimeModeSetting: () => ({ mode: 'long', supported: true }),
+      resolveCompactStrategySetting: () => ({ strategy: 'hard' }),
+      resolveCompactEnabledSetting: () => ({ enabled: false }),
+      resolveNativeCompactTokenLimitSetting: () => ({ tokens: 0 }),
+      normalizeTimeoutMs: (value) => Number(value || 0),
+      safeError: (err) => String(err?.message || err),
+      stopChildProcess: (target) => target.kill(),
+      startSessionProgressBridge: () => () => {},
+      extractAgentMessageText,
+      isFinalAnswerLikeAgentMessage,
+      spawnFn: (bin, args) => {
+        spawnCalls.push({ bin, args });
+        queueMicrotask(() => {
+          child.stdout.emit('data', Buffer.from([
+            '{"type":"thread.started","thread_id":"codex-thread-1"}',
+            '{"type":"item.completed","item":{"type":"agent_message","phase":"final_answer","text":"one-shot done"}}',
+            '',
+          ].join('\n')));
+          child.emit('close', 0, null);
+        });
+        return child;
+      },
+      createCodexAppServerRunnerFn: () => ({
+        runTask() {
+          appServerRuns += 1;
+          throw new Error('app-server should not run');
+        },
+        closeSession: () => false,
+        closeAll: () => 0,
+        getSnapshot: () => [],
+      }),
+    });
+
+    const result = await executor.runProviderTask({
+      session: {
+        provider: 'codex',
+        mode: 'safe',
+        runnerSessionId: null,
+        configOverrides: [],
+        ...sessionOverrides,
+      },
+      sessionKey: 'discord-thread-1',
+      workspaceDir: '/tmp/workspace',
+      prompt: 'hello',
+    });
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.finalAnswerMessages, ['one-shot done']);
+    assert.equal(appServerRuns, 0);
+    assert.equal(spawnCalls.length, 1);
+    assert.equal(spawnCalls[0].args[0], 'exec');
+  }
+});
+
 test('createRunnerExecutor routes Codex long steer and rejects exec steer', async () => {
   const steerInputs = [];
   const executor = createRunnerExecutor({

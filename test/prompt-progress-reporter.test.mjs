@@ -182,6 +182,30 @@ test('createPromptProgressReporterFactory seeds initial step and updates final p
   assert.equal(harness.cleared.length, 3);
 });
 
+test('createPromptProgressReporterFactory shows the side button only while running and notifies once for attention', async () => {
+  const attentionEvents = [];
+  const runningComponents = [{ type: 1, components: [{ type: 2, custom_id: 'cxs:ask:thread-1' }] }];
+  const harness = createHarness({
+    factoryOptions: {
+      buildRunningTaskComponents: () => runningComponents,
+      onParentAttention: async (input) => {
+        attentionEvents.push(input.event);
+      },
+    },
+  });
+
+  await harness.reporter.start();
+  assert.deepEqual(harness.sent[0].components, runningComponents);
+
+  harness.reporter.onEvent({ type: 'turn.attention.required', kind: 'input' });
+  harness.reporter.onEvent({ type: 'turn.attention.required', kind: 'approval' });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(attentionEvents, [{ type: 'turn.attention.required', kind: 'input' }]);
+
+  await harness.reporter.finish({ ok: true });
+  assert.deepEqual(harness.edits.at(-1).components, []);
+});
+
 test('createPromptProgressReporterFactory dedupes repeated events and keeps activity on the final card', async () => {
   const harness = createHarness();
 

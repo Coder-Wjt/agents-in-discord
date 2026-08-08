@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { EventEmitter } from 'node:events';
 import readline from 'node:readline';
 import { buildCodexAppServerArgs } from './codex-app-server-args.js';
 import { applyCodexOpenAICuratedMarketplaceConfig } from './codex-marketplaces.js';
@@ -257,6 +258,113 @@ export function createCodexAppServerRunner({
 } = {}) {
   const entries = new Map();
 
+  function activeTurns(entry) {
+    return entry?.turnsByThreadId ? [...entry.turnsByThreadId.values()] : [];
+  }
+
+  function hasActiveTurns(entry) {
+    return Boolean(entry?.turnsByThreadId?.size);
+  }
+
+  function detachTurn(entry, turn) {
+    if (!entry || !turn) return;
+    if (entry.turnsByThreadId.get(turn.threadId) === turn) {
+      entry.turnsByThreadId.delete(turn.threadId);
+    }
+    if (turn.turnId && entry.turnsByTurnId.get(turn.turnId) === turn) {
+      entry.turnsByTurnId.delete(turn.turnId);
+    }
+  }
+
+  function resolveTurn(entry, turn, result) {
+    if (!turn || turn.settled) return false;
+    turn.settled = true;
+    detachTurn(entry, turn);
+    if (turn.timeout) clearTimeout(turn.timeout);
+    turn.childHandle?.markClosed?.();
+    entry.lastUsedAt = Date.now();
+    turn.resolve(result);
+    return true;
+  }
+
+  function buildFailedTurnResult(entry, turn, {
+    error,
+    cancelled = Boolean(turn.wasCancelled?.()),
+    timedOut = Boolean(turn.timedOut),
+  } = {}) {
+    promoteGoalContinuationMessages(turn);
+    return {
+      ok: false,
+      cancelled,
+      timedOut,
+      error,
+      logs: turn.logs,
+      messages: turn.messages,
+      finalAnswerMessages: turn.finalAnswerMessages,
+      reasonings: turn.reasonings,
+      usage: turn.usage,
+      threadId: turn.threadId || entry.threadId,
+      meta: turn.meta,
+    };
+  }
+
+  function findNotificationTurn(entry, params = {}) {
+    const eventThreadId = normalizeText(params.threadId);
+    if (eventThreadId) {
+      return entry.turnsByThreadId.get(eventThreadId) || null;
+    }
+    const eventTurnId = normalizeText(params.turnId || params.turn?.id);
+    if (eventTurnId) {
+      return entry.turnsByTurnId.get(eventTurnId) || null;
+    }
+    return entry.turnsByThreadId.size === 1
+      ? entry.turnsByThreadId.values().next().value
+      : null;
+  }
+
+  function rememberTurnId(entry, turn, turnId) {
+    const normalizedTurnId = normalizeText(turnId);
+    if (!turn || turn.settled || !normalizedTurnId) return;
+    if (turn.turnId && entry.turnsByTurnId.get(turn.turnId) === turn) {
+      entry.turnsByTurnId.delete(turn.turnId);
+    }
+    turn.turnId = normalizedTurnId;
+    entry.turnsByTurnId.set(normalizedTurnId, turn);
+  }
+
+  function requestTurnInterrupt(entry, turn) {
+    if (!turn || turn.settled || turn.interruptSent) return;
+    turn.interruptRequested = true;
+    if (!turn.turnId) return;
+    turn.interruptSent = true;
+    send(entry, 'turn/interrupt', {
+      threadId: turn.threadId,
+      turnId: turn.turnId,
+    }).catch((err) => {
+      const error = safeError(err);
+      turn.logs.push(error);
+      turn.onLog?.(error, 'stderr');
+    });
+  }
+
+  function createSideTurnChildHandle(entry, turn) {
+    const handle = new EventEmitter();
+    handle.pid = entry.child?.pid ?? null;
+    handle.exitCode = null;
+    handle.signalCode = null;
+    handle.kill = () => {
+      requestTurnInterrupt(entry, turn);
+      handle.markClosed();
+      return true;
+    };
+    handle.markClosed = () => {
+      if (handle.exitCode !== null) return;
+      handle.exitCode = 0;
+      queueMicrotask(() => handle.emit('close', 0, null));
+    };
+    return handle;
+  }
+
   function closeEntry(entry, reason = 'closed') {
     if (!entry || entry.closed) return false;
     logCodexLongEvent(log, 'close', {
@@ -264,7 +372,7 @@ export function createCodexAppServerRunner({
       pid: entry.child?.pid ?? null,
       threadId: entry.threadId,
       reason,
-      active: Boolean(entry.currentTurn),
+      active: entry.turnsByThreadId.size,
     });
     entry.closed = true;
     if (entry.idleTimer) clearTimeout(entry.idleTimer);
@@ -272,24 +380,8 @@ export function createCodexAppServerRunner({
       slot.reject(new Error(reason));
     }
     entry.pending.clear();
-    if (entry.currentTurn) {
-      const turn = entry.currentTurn;
-      entry.currentTurn = null;
-      if (turn.timeout) clearTimeout(turn.timeout);
-      promoteGoalContinuationMessages(turn);
-      turn.resolve({
-        ok: false,
-        cancelled: Boolean(turn.wasCancelled?.()),
-        timedOut: Boolean(turn.timedOut),
-        error: reason,
-        logs: turn.logs,
-        messages: turn.messages,
-        finalAnswerMessages: turn.finalAnswerMessages,
-        reasonings: turn.reasonings,
-        usage: turn.usage,
-        threadId: turn.threadId || entry.threadId,
-        meta: turn.meta,
-      });
+    for (const turn of activeTurns(entry)) {
+      resolveTurn(entry, turn, buildFailedTurnResult(entry, turn, { error: reason }));
     }
     try {
       stopChildProcess(entry.child);
@@ -310,7 +402,7 @@ export function createCodexAppServerRunner({
       idleMs,
     });
     entry.idleTimer = setTimeout(() => {
-      if (!entry.currentTurn) closeEntry(entry, 'idle timeout');
+      if (!hasActiveTurns(entry) && entry.sideThreadIds.size === 0) closeEntry(entry, 'idle timeout');
     }, idleMs);
     entry.idleTimer.unref?.();
   }
@@ -319,7 +411,7 @@ export function createCodexAppServerRunner({
     if (entries.size < maxSessions) return;
     let oldest = null;
     for (const entry of entries.values()) {
-      if (entry.currentTurn) continue;
+      if (hasActiveTurns(entry)) continue;
       if (!oldest || entry.lastUsedAt < oldest.lastUsedAt) oldest = entry;
     }
     if (!oldest) {
@@ -350,6 +442,19 @@ export function createCodexAppServerRunner({
 
   function handleServerRequest(entry, payload) {
     const method = String(payload?.method || '').trim();
+    const turn = findNotificationTurn(entry, payload?.params || {});
+    const attentionKind = method === 'item/tool/requestUserInput' || method === 'mcpServer/elicitation/request'
+      ? 'input'
+      : method.endsWith('/requestApproval')
+        ? 'approval'
+        : null;
+    if (attentionKind) {
+      turn?.onEvent?.({
+        type: 'turn.attention.required',
+        kind: attentionKind,
+        thread_id: payload?.params?.threadId || turn?.threadId || null,
+      });
+    }
     if (method === 'item/commandExecution/requestApproval') {
       sendResponse(entry, payload.id, { decision: 'cancel' });
       return;
@@ -364,14 +469,13 @@ export function createCodexAppServerRunner({
   function handleNotification(entry, payload) {
     const method = String(payload?.method || '').trim();
     const params = payload?.params || {};
-    const turn = entry.currentTurn;
+    const turn = findNotificationTurn(entry, params);
     const eventThreadId = normalizeText(params.threadId);
     const isSideThreadEvent = Boolean(eventThreadId && entry.sideThreadIds?.has(eventThreadId));
 
-    if (eventThreadId && !isSideThreadEvent && !turn?.sideTargetThreadId) {
+    if (eventThreadId && !entry.threadId && !isSideThreadEvent) {
       entry.threadId = eventThreadId;
     }
-    if (eventThreadId && turn) turn.threadId = eventThreadId;
 
     if (method === 'thread/tokenUsage/updated' && turn) {
       turn.usage = params.tokenUsage || params.usage || turn.usage;
@@ -381,8 +485,8 @@ export function createCodexAppServerRunner({
     if (method === 'turn/started') {
       const turnId = params.turn?.id || params.turnId || null;
       if (turnId) {
-        entry.activeTurnId = turnId;
-        if (turn) turn.turnId = turnId;
+        rememberTurnId(entry, turn, turnId);
+        if (turn?.interruptRequested) requestTurnInterrupt(entry, turn);
       }
       turn?.onEvent?.({ type: 'thread.started', thread_id: params.threadId || entry.threadId });
       return;
@@ -446,8 +550,7 @@ export function createCodexAppServerRunner({
       if (!turn) return;
       const completed = params.turn || {};
       if (completed.id) {
-        entry.activeTurnId = null;
-        turn.turnId = completed.id;
+        rememberTurnId(entry, turn, completed.id);
       }
       const status = String(completed.status || '').trim();
       const ok = status === 'completed';
@@ -457,12 +560,8 @@ export function createCodexAppServerRunner({
         turn.finalAnswerMessages.push(buffered);
       }
       promoteGoalContinuationMessages(turn);
-      if (turn.timeout) clearTimeout(turn.timeout);
-      entry.currentTurn = null;
-      entry.lastUsedAt = Date.now();
-      if (!turn.keepAlive) scheduleIdleClose(entry);
       turn.onEvent?.({ type: 'turn.completed', usage: turn.usage, status });
-      turn.resolve({
+      resolveTurn(entry, turn, {
         ok,
         cancelled: Boolean(turn.wasCancelled?.()) || status === 'interrupted',
         timedOut: false,
@@ -475,6 +574,7 @@ export function createCodexAppServerRunner({
         threadId: turn.threadId || entry.threadId,
         meta: turn.meta,
       });
+      if (!hasActiveTurns(entry) && entry.sideThreadIds.size === 0) scheduleIdleClose(entry);
     }
   }
 
@@ -486,9 +586,9 @@ export function createCodexAppServerRunner({
       const raw = String(line || '').trim();
       if (!raw) return;
       if (source === 'stderr') {
-        if (entry.currentTurn) {
-          entry.currentTurn.logs.push(raw);
-          entry.currentTurn.onLog?.(raw, 'stderr');
+        for (const turn of activeTurns(entry)) {
+          turn.logs.push(raw);
+          turn.onLog?.(raw, 'stderr');
         }
         return;
       }
@@ -497,9 +597,9 @@ export function createCodexAppServerRunner({
       try {
         payload = JSON.parse(raw);
       } catch {
-        if (entry.currentTurn) {
-          entry.currentTurn.logs.push(raw);
-          entry.currentTurn.onLog?.(raw, 'stdout');
+        for (const turn of activeTurns(entry)) {
+          turn.logs.push(raw);
+          turn.onLog?.(raw, 'stdout');
         }
         return;
       }
@@ -533,14 +633,13 @@ export function createCodexAppServerRunner({
     });
     entry.child.on('close', (code, signal) => {
       if (entry.closed) return;
-      const turn = entry.currentTurn;
       logCodexLongEvent(log, 'process-close', {
         key: entry.key,
         pid: entry.child?.pid ?? null,
         threadId: entry.threadId,
         code,
         signal,
-        active: Boolean(turn),
+        active: entry.turnsByThreadId.size,
       });
       entry.closed = true;
       entries.delete(entry.key);
@@ -549,29 +648,15 @@ export function createCodexAppServerRunner({
         slot.reject(new Error(`Codex app-server exited with code ${code ?? 'null'}`));
       }
       entry.pending.clear();
-      if (!turn) return;
-      entry.currentTurn = null;
-      if (turn.timeout) clearTimeout(turn.timeout);
-      turn.resolve({
-        ok: false,
-        cancelled: Boolean(turn.wasCancelled?.()),
-        timedOut: Boolean(turn.timedOut),
-        error: turn.timedOut
+      for (const turn of activeTurns(entry)) {
+        const error = turn.timedOut
           ? 'Codex app-server long runner timed out'
-          : `Codex app-server exited${signal ? ` via signal ${signal}` : ` with code ${code}`}`,
-        logs: turn.logs,
-        messages: turn.messages,
-        finalAnswerMessages: turn.finalAnswerMessages,
-        reasonings: turn.reasonings,
-        usage: turn.usage,
-        threadId: turn.threadId || entry.threadId,
-        meta: turn.meta,
-      });
+          : `Codex app-server exited${signal ? ` via signal ${signal}` : ` with code ${code}`}`;
+        resolveTurn(entry, turn, buildFailedTurnResult(entry, turn, { error }));
+      }
     });
     entry.child.on('error', (err) => {
-      const turn = entry.currentTurn;
-      if (!turn) return;
-      turn.logs.push(safeError(err));
+      for (const turn of activeTurns(entry)) turn.logs.push(safeError(err));
     });
   }
 
@@ -601,7 +686,7 @@ export function createCodexAppServerRunner({
     notify(entry, 'initialized', {});
   }
 
-  function buildThreadParams({ session, workspaceDir, systemPrompt }) {
+  function buildThreadParams({ session, workspaceDir, systemPrompt, readOnly = false }) {
     const codexProfile = resolveCodexProfileSetting(session);
     if (codexProfile?.isExplicit) {
       if (!codexProfile.valid) {
@@ -618,7 +703,13 @@ export function createCodexAppServerRunner({
       resolveCompactEnabledSetting,
       resolveNativeCompactTokenLimitSetting,
     });
-    const permissions = buildPermissionParams(session);
+    const permissions = readOnly
+      ? {
+        approvalPolicy: 'never',
+        approvalsReviewer: 'user',
+        sandbox: 'read-only',
+      }
+      : buildPermissionParams(session);
     return {
       cwd: workspaceDir,
       model,
@@ -667,12 +758,26 @@ export function createCodexAppServerRunner({
     boundaryItems = [],
   } = {}) {
     const key = normalizeText(sessionKey) || normalizeText(getSessionId(session)) || 'default';
-    const entry = getOrCreateEntry({ key, session, workspaceDir, systemPrompt });
-    const parentThreadId = await ensureThread(entry, { session, workspaceDir, systemPrompt });
+    const entry = entries.get(key);
+    const requestedParentThreadId = normalizeText(getSessionId(session));
+    const parentThreadId = normalizeText(entry?.threadId);
+    const parentTurn = parentThreadId ? entry?.turnsByThreadId?.get(parentThreadId) : null;
+    if (!entry || entry.closed || !parentThreadId || !parentTurn) {
+      throw new Error('The main Codex task is no longer running');
+    }
+    if (requestedParentThreadId && requestedParentThreadId !== parentThreadId) {
+      throw new Error('The running Codex task no longer matches this Discord thread');
+    }
+    entry.lastUsedAt = Date.now();
+    if (entry.idleTimer) {
+      clearTimeout(entry.idleTimer);
+      entry.idleTimer = null;
+    }
     const baseParams = buildThreadParams({
       session,
       workspaceDir,
-      systemPrompt: [systemPrompt, sideDeveloperInstructions].filter(Boolean).join('\n\n'),
+      systemPrompt: [entry.systemPrompt, sideDeveloperInstructions].filter(Boolean).join('\n\n'),
+      readOnly: true,
     });
     const forkResult = await send(entry, 'thread/fork', {
       threadId: parentThreadId,
@@ -757,10 +862,11 @@ export function createCodexAppServerRunner({
       key,
       child,
       signature,
+      systemPrompt: String(systemPrompt || '').trim(),
       requestedThreadId: requestedSessionId || null,
       threadId: null,
-      activeTurnId: null,
-      currentTurn: null,
+      turnsByThreadId: new Map(),
+      turnsByTurnId: new Map(),
       pending: new Map(),
       nextId: 1,
       idleTimer: null,
@@ -790,6 +896,7 @@ export function createCodexAppServerRunner({
     inputImages = [],
     targetThreadId = null,
     onSpawn,
+    onThreadReady,
     wasCancelled,
     onEvent,
     onLog,
@@ -826,6 +933,7 @@ export function createCodexAppServerRunner({
       } else {
         entry = getOrCreateEntry({ key, session, workspaceDir, systemPrompt });
         await ensureThread(entry, { session, workspaceDir, systemPrompt });
+        onThreadReady?.(entry.threadId);
       }
     } catch (err) {
       if (entry && !sideTargetThreadId) closeEntry(entry, 'startup failed');
@@ -844,12 +952,13 @@ export function createCodexAppServerRunner({
       };
     }
 
-    if (entry.currentTurn) {
+    const threadId = sideTargetThreadId || entry.threadId;
+    if (entry.turnsByThreadId.has(threadId)) {
       return {
         ok: false,
         cancelled: false,
         timedOut: false,
-        error: 'Codex app-server long session already has an active turn',
+        error: 'Codex app-server thread already has an active turn',
         logs: [],
         messages: [],
         finalAnswerMessages: [],
@@ -860,7 +969,6 @@ export function createCodexAppServerRunner({
       };
     }
 
-    onSpawn?.(entry.child);
     logCodexLongEvent(log, 'turn-start', {
       key,
       pid: entry.child?.pid ?? null,
@@ -880,7 +988,7 @@ export function createCodexAppServerRunner({
         finalAnswerMessages: [],
         reasonings: [],
         usage: null,
-        threadId: sideTargetThreadId || entry.threadId,
+        threadId,
         sideTargetThreadId,
         keepAlive: Boolean(sideTargetThreadId),
         isGoalContinuation: isCodexGoalContinuationPrompt(prompt),
@@ -890,13 +998,24 @@ export function createCodexAppServerRunner({
         reasoningSummaryByItemId: new Map(),
         timedOut: false,
         timeout: null,
+        settled: false,
+        interruptRequested: false,
+        interruptSent: false,
+        childHandle: null,
       };
-      entry.currentTurn = turn;
+      entry.turnsByThreadId.set(threadId, turn);
+      turn.childHandle = sideTargetThreadId ? createSideTurnChildHandle(entry, turn) : null;
+      onSpawn?.(turn.childHandle || entry.child);
 
       if (timeoutMs > 0) {
         turn.timeout = setTimeout(() => {
           turn.timedOut = true;
-          closeEntry(entry, 'Codex app-server long runner timed out');
+          requestTurnInterrupt(entry, turn);
+          resolveTurn(entry, turn, buildFailedTurnResult(entry, turn, {
+            error: 'Codex app-server long runner timed out',
+            timedOut: true,
+          }));
+          if (!hasActiveTurns(entry) && entry.sideThreadIds.size === 0) scheduleIdleClose(entry);
         }, timeoutMs);
       }
 
@@ -910,25 +1029,16 @@ export function createCodexAppServerRunner({
       }).then((result) => {
         const turnId = result?.turn?.id || result?.turnId || null;
         if (turnId) {
-          entry.activeTurnId = turnId;
-          turn.turnId = turnId;
+          rememberTurnId(entry, turn, turnId);
+          if (turn.interruptRequested) requestTurnInterrupt(entry, turn);
         }
       }).catch((err) => {
-        if (turn.timeout) clearTimeout(turn.timeout);
-        entry.currentTurn = null;
-        resolve({
-          ok: false,
+        resolveTurn(entry, turn, buildFailedTurnResult(entry, turn, {
+          error: safeError(err),
           cancelled: false,
           timedOut: false,
-          error: safeError(err),
-          logs: turn.logs,
-          messages: turn.messages,
-          finalAnswerMessages: turn.finalAnswerMessages,
-          reasonings: turn.reasonings,
-          usage: turn.usage,
-          threadId: turn.threadId || entry.threadId,
-          meta: turn.meta,
-        });
+        }));
+        if (!hasActiveTurns(entry) && entry.sideThreadIds.size === 0) scheduleIdleClose(entry);
       });
     });
   }
@@ -951,7 +1061,8 @@ export function createCodexAppServerRunner({
     }
 
     const entry = entries.get(key);
-    if (!entry || entry.closed || !entry.currentTurn) {
+    const turn = entry?.turnsByThreadId?.get(entry.threadId) || null;
+    if (!entry || entry.closed || !turn) {
       return {
         ok: false,
         steered: false,
@@ -962,9 +1073,8 @@ export function createCodexAppServerRunner({
       };
     }
 
-    const turn = entry.currentTurn;
     const threadId = normalizeText(turn.threadId || entry.threadId);
-    const turnId = normalizeText(entry.activeTurnId || turn.turnId);
+    const turnId = normalizeText(turn.turnId);
     if (!threadId || !turnId) {
       return {
         ok: false,
@@ -995,8 +1105,7 @@ export function createCodexAppServerRunner({
         expectedTurnId: turnId,
       });
       const acceptedTurnId = normalizeText(result?.turnId) || turnId;
-      entry.activeTurnId = acceptedTurnId;
-      turn.turnId = acceptedTurnId;
+      rememberTurnId(entry, turn, acceptedTurnId);
       turn.meta.steerCount = Number(turn.meta.steerCount || 0) + 1;
       turn.onEvent?.({
         type: 'turn.steer',
@@ -1057,12 +1166,12 @@ export function createCodexAppServerRunner({
       };
     }
 
-    const activeTurnTargetsSide = normalizeText(entry.currentTurn?.threadId) === normalizedThreadId;
-    if (entry.activeTurnId && activeTurnTargetsSide) {
+    const activeTurn = entry.turnsByThreadId.get(normalizedThreadId) || null;
+    if (activeTurn?.turnId) {
       try {
         await send(entry, 'turn/interrupt', {
           threadId: normalizedThreadId,
-          turnId: entry.activeTurnId,
+          turnId: activeTurn.turnId,
         });
         cleanup.interrupted = true;
       } catch (err) {
@@ -1076,24 +1185,11 @@ export function createCodexAppServerRunner({
     } catch (err) {
       cleanup.errors.push(`unsubscribe failed: ${safeError(err)}`);
     }
-    if (activeTurnTargetsSide && entry.currentTurn) {
-      const turn = entry.currentTurn;
-      entry.currentTurn = null;
-      entry.activeTurnId = null;
-      if (turn.timeout) clearTimeout(turn.timeout);
-      turn.resolve({
-        ok: false,
-        cancelled: true,
-        timedOut: Boolean(turn.timedOut),
+    if (activeTurn) {
+      resolveTurn(entry, activeTurn, buildFailedTurnResult(entry, activeTurn, {
         error: reason,
-        logs: turn.logs,
-        messages: turn.messages,
-        finalAnswerMessages: turn.finalAnswerMessages,
-        reasonings: turn.reasonings,
-        usage: turn.usage,
-        threadId: turn.threadId || normalizedThreadId,
-        meta: turn.meta,
-      });
+        cancelled: true,
+      }));
     }
     if (normalizeText(entry.threadId) === normalizedThreadId) {
       closeEntry(entry, reason);
@@ -1125,11 +1221,17 @@ export function createCodexAppServerRunner({
 
   function getSnapshot() {
     return [...entries.values()].map((entry) => ({
+      ...(() => {
+        const parentTurn = entry.turnsByThreadId.get(entry.threadId) || null;
+        return {
+          activeTurnId: parentTurn?.turnId || null,
+          activeTurnCount: entry.turnsByThreadId.size,
+        };
+      })(),
       key: entry.key,
       pid: entry.child?.pid ?? null,
       threadId: entry.threadId,
-      activeTurnId: entry.activeTurnId,
-      active: Boolean(entry.currentTurn),
+      active: hasActiveTurns(entry),
       idleMs: Math.max(0, Date.now() - entry.lastUsedAt),
     }));
   }

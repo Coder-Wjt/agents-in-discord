@@ -353,7 +353,7 @@ export function buildSlashCommandEntries({ botProvider = null } = {}) {
     },
     (!lockedProvider || lockedProvider === 'codex') && {
       name: 'side',
-      description: '开启或管理 Codex 临时 side conversation',
+      description: '向运行中的 Codex 主任务旁问，或管理现有旁问',
       configure(builder) {
         return builder
           .addStringOption(o => o.setName('action').setDescription('side 操作').setRequired(false)
@@ -362,7 +362,7 @@ export function buildSlashCommandEntries({ botProvider = null } = {}) {
               { name: 'status', value: 'status' },
               { name: 'close', value: 'close' },
             ))
-          .addStringOption(o => o.setName('name').setDescription('可选：新 side thread 名').setRequired(false));
+          .addStringOption(o => o.setName('question').setDescription('start 时要问的问题').setRequired(false));
       },
     },
     (!lockedProvider || lockedProvider === 'codex') && {

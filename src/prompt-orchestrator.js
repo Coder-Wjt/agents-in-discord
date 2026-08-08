@@ -58,6 +58,7 @@ export function createPromptOrchestrator({
   acquireWorkspace,
   stopChildProcess,
   runTask,
+  notifySideConversation = async () => ({ ok: false, skipped: true }),
   createProgressReporter = () => ({
     async start() {},
     sync() {},
@@ -670,6 +671,12 @@ export function createPromptOrchestrator({
           progress.sync({ forceEmit: true });
           if (channelState.cancelRequested) stopChildProcess(child);
         },
+        onThreadReady: (threadId) => {
+          const normalizedThreadId = String(threadId || '').trim();
+          if (!normalizedThreadId || getSessionId(session) === normalizedThreadId) return;
+          setSessionId(session, normalizedThreadId);
+          saveDb();
+        },
         wasCancelled: () => Boolean(channelState.cancelRequested || channelState.activeRun?.cancelRequested),
         onEvent: progress.onEvent,
         onLog: progress.onLog,
@@ -978,6 +985,7 @@ export function createPromptOrchestrator({
 
       if (parts.length === 0) {
         await safeReply(message, applyCurrentTerminalMention(message, session, '✅ 完成（无可展示文本输出）。'));
+        await notifySideConversation({ source: message, session, kind: 'completed', language }).catch(() => {});
         return { ok: true, cancelled: false };
       }
 
@@ -985,6 +993,7 @@ export function createPromptOrchestrator({
       for (let i = 1; i < parts.length; i += 1) {
         await safeChannelSend(message, parts[i]);
       }
+      await notifySideConversation({ source: message, session, kind: 'completed', language }).catch(() => {});
 
       return { ok: true, cancelled: false };
     } catch (err) {

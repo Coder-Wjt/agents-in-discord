@@ -15,6 +15,7 @@ import {
   formatCodexSideCloseResult,
   formatCodexSideResult,
   formatCodexSideStatus,
+  getCodexSideAvailability,
 } from './codex-side-flow.js';
 import {
   CODEX_GOAL_CONTINUATION_PROMPT,
@@ -169,6 +170,8 @@ export function createSlashCommandRouter({
   forkCodexThread,
   startCodexSideConversation,
   closeCodexSideConversation,
+  buildCodexSideHeaderComponents = () => [],
+  resolveCodexProfileSetting = () => ({ isExplicit: false }),
   resolveForkWorkspace,
   prepareForkWorkspace,
   getCodexThreadGoal,
@@ -826,11 +829,22 @@ export function createSlashCommandRouter({
         await respond({ content: formatCodexSideCloseResult(result, language), flags: 64 });
         return;
       }
-      if (resolveRuntimeModeSetting(session).mode !== 'long') {
+      const sideAvailability = getCodexSideAvailability({
+        session,
+        provider,
+        runtimeMode: resolveRuntimeModeSetting(session).mode,
+        codexProfile: resolveCodexProfileSetting(session),
+      });
+      if (!sideAvailability.ok) {
         await respond({
-          content: formatCodexSideResult({ ok: false, reason: 'unsupported_runtime' }, language),
+          content: formatCodexSideResult({ ok: false, reason: sideAvailability.reason }, language),
           flags: 64,
         });
+        return;
+      }
+      const question = interaction.options.getString('question') || interaction.options.getString('name') || '';
+      if (!String(question).trim()) {
+        await respond({ content: formatCodexSideResult({ ok: false, reason: 'missing_question' }, language), flags: 64 });
         return;
       }
       const result = await createCodexSideConversation({
@@ -838,15 +852,18 @@ export function createSlashCommandRouter({
         session,
         source: interaction,
         parentSessionId: normalizeForkSessionId(getSessionId(session)),
-        threadName: interaction.options.getString('name') || '',
+        question,
         provider,
         getRuntimeSnapshot,
         getSession,
         commandActions,
         startCodexSideConversation,
         closeCodexSideConversation,
+        enqueuePrompt,
+        resolveSecurityContext,
         ensureWorkspace,
         getSessionLanguage,
+        buildHeaderComponents: buildCodexSideHeaderComponents,
       });
       await respond({
         content: formatCodexSideResult(result, language),
@@ -854,7 +871,7 @@ export function createSlashCommandRouter({
       });
     } catch (err) {
       await respond({
-        content: `❌ Codex side 失败：${safeError(err)}`,
+        content: `旁问没有打开：${safeError(err)}`,
         flags: 64,
       });
     }

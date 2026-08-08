@@ -16,6 +16,7 @@ import {
   formatCodexSideCloseResult,
   formatCodexSideResult,
   formatCodexSideStatus,
+  getCodexSideAvailability,
   parseSideTextInput,
 } from './codex-side-flow.js';
 import {
@@ -206,6 +207,8 @@ export function createTextCommandHandler({
   forkCodexThread,
   startCodexSideConversation,
   closeCodexSideConversation,
+  buildCodexSideHeaderComponents = () => [],
+  resolveCodexProfileSetting = () => ({ isExplicit: false }),
   resolveForkWorkspace,
   prepareForkWorkspace,
   getCodexThreadGoal,
@@ -677,8 +680,18 @@ export function createTextCommandHandler({
             await safeReply(message, formatCodexSideCloseResult(result, language));
             return;
           }
-          if (resolveRuntimeModeSetting(session).mode !== 'long') {
-            await safeReply(message, formatCodexSideResult({ ok: false, reason: 'unsupported_runtime' }, language));
+          const sideAvailability = getCodexSideAvailability({
+            session,
+            provider,
+            runtimeMode: resolveRuntimeModeSetting(session).mode,
+            codexProfile: resolveCodexProfileSetting(session),
+          });
+          if (!sideAvailability.ok) {
+            await safeReply(message, formatCodexSideResult({ ok: false, reason: sideAvailability.reason }, language));
+            return;
+          }
+          if (!parsed.question) {
+            await safeReply(message, formatCodexSideResult({ ok: false, reason: 'missing_question' }, language));
             return;
           }
           const result = await createCodexSideConversation({
@@ -686,19 +699,22 @@ export function createTextCommandHandler({
             session,
             source: message,
             parentSessionId: normalizeForkSessionId(getSessionId(session)),
-            threadName: parsed.threadName,
+            question: parsed.question,
             provider,
             getRuntimeSnapshot,
             getSession,
             commandActions,
             startCodexSideConversation,
             closeCodexSideConversation,
+            enqueuePrompt,
+            resolveSecurityContext,
             ensureWorkspace,
             getSessionLanguage,
+            buildHeaderComponents: buildCodexSideHeaderComponents,
           });
           await safeReply(message, formatCodexSideResult(result, language));
         } catch (err) {
-          await safeReply(message, `❌ Codex side 失败：${safeError(err)}`);
+          await safeReply(message, `旁问没有打开：${safeError(err)}`);
         }
         break;
       }

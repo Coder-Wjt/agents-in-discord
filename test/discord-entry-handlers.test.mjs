@@ -25,6 +25,8 @@ function createHarness(overrides = {}) {
     settingsPanel: 0,
     settingsModal: 0,
     goalModal: 0,
+    codexSide: 0,
+    codexSideModal: 0,
   };
 
   const handlers = createDiscordEntryHandlers({
@@ -73,6 +75,8 @@ function createHarness(overrides = {}) {
     isSettingsPanelComponentId: () => false,
     isSettingsPanelModalId: () => false,
     isGoalModalId: () => false,
+    isCodexSideComponentId: () => false,
+    isCodexSideModalId: () => false,
     handleWorkspaceBusyInteraction: async () => {
       calls.workspaceBusy = (calls.workspaceBusy || 0) + 1;
     },
@@ -90,6 +94,12 @@ function createHarness(overrides = {}) {
     },
     handleGoalModalSubmit: async () => {
       calls.goalModal += 1;
+    },
+    handleCodexSideInteraction: async () => {
+      calls.codexSide += 1;
+    },
+    handleCodexSideModalSubmit: async () => {
+      calls.codexSideModal += 1;
     },
     routeSlashCommand: async (payload) => {
       calls.routeSlashCommand.push(payload);
@@ -160,6 +170,27 @@ test('handleInteractionCreate routes settings panel component interactions', asy
   assert.equal(calls.onboarding, 0);
 });
 
+test('handleInteractionCreate routes Codex side buttons', async () => {
+  const { handlers, calls } = createHarness({
+    isCodexSideComponentId: () => true,
+  });
+  const interaction = {
+    customId: 'cxs:ask:parent-channel-1',
+    user: { id: '12345' },
+    isButton: () => true,
+    isStringSelectMenu: () => false,
+    isModalSubmit: () => false,
+    isChatInputCommand: () => false,
+    async reply() {},
+  };
+
+  await handlers.handleInteractionCreate(interaction);
+
+  assert.equal(calls.codexSide, 1);
+  assert.equal(calls.settingsPanel, 0);
+  assert.equal(calls.workspaceBrowser, 0);
+});
+
 test('handleInteractionCreate routes workspace busy action buttons', async () => {
   const { handlers, calls } = createHarness({
     isWorkspaceBusyComponentId: () => true,
@@ -217,6 +248,27 @@ test('handleInteractionCreate routes goal modal submits', async () => {
 
   assert.equal(calls.goalModal, 1);
   assert.equal(calls.settingsModal, 0);
+});
+
+test('handleInteractionCreate routes Codex side modal submits', async () => {
+  const { handlers, calls } = createHarness({
+    isCodexSideModalId: () => true,
+  });
+  const interaction = {
+    customId: 'cxsm:ask:parent-channel-1',
+    user: { id: '12345' },
+    isButton: () => false,
+    isStringSelectMenu: () => false,
+    isModalSubmit: () => true,
+    isChatInputCommand: () => false,
+    async reply() {},
+  };
+
+  await handlers.handleInteractionCreate(interaction);
+
+  assert.equal(calls.codexSideModal, 1);
+  assert.equal(calls.settingsModal, 0);
+  assert.equal(calls.goalModal, 0);
 });
 
 test('handleInteractionCreate defers chat commands and reports unknown commands via editReply', async () => {

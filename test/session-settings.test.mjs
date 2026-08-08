@@ -452,6 +452,18 @@ test('session-settings defaults Claude runtime to normal dash-p mode', () => {
   });
 });
 
+test('session-settings defaults Codex runtime to side-capable long mode', () => {
+  const settings = createSessionSettings({
+    normalizeProvider: testNormalizeProvider,
+  });
+
+  assert.deepEqual(settings.resolveRuntimeModeSetting({ provider: 'codex', runtimeMode: null }), {
+    mode: 'long',
+    supported: true,
+    source: 'env default',
+  });
+});
+
 test('session-settings resolves busy prompt mode with fail-closed steering constraints', () => {
   assert.equal(normalizeBusyPromptMode('queue'), 'queue');
   assert.equal(normalizeBusyPromptMode('steer-if-possible'), 'steer_if_possible');

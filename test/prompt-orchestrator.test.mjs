@@ -190,6 +190,65 @@ test('createPromptOrchestrator.handlePrompt runs task updates session and replie
   });
 });
 
+test('createPromptOrchestrator binds a new Codex thread during the run and notifies the side thread after replying', async () => {
+  const order = [];
+  const notifications = [];
+  let boundDuringRun = null;
+  let harness = null;
+  harness = createOrchestrator({
+    safeReply: async () => {
+      order.push('reply');
+      return { id: 'reply-1', edit: async () => {} };
+    },
+    notifySideConversation: async (input) => {
+      order.push('notify');
+      notifications.push(input);
+      return { ok: true };
+    },
+    runTask: async (options) => {
+      options.onThreadReady?.('fresh-thread-1');
+      boundDuringRun = harness.session.runnerSessionId;
+      options.onSpawn?.({ pid: 123 });
+      return {
+        ok: true,
+        cancelled: false,
+        timedOut: false,
+        error: '',
+        logs: [],
+        notes: [],
+        reasonings: [],
+        messages: [],
+        finalAnswerMessages: ['final answer'],
+        threadId: 'fresh-thread-1',
+        usage: { input_tokens: 7 },
+      };
+    },
+  });
+  harness.session.runnerSessionId = null;
+  harness.session.codexThreadId = null;
+  const message = {
+    id: 'msg-fresh',
+    channel: {
+      id: 'thread-1',
+      async sendTyping() {},
+      async send() {},
+    },
+  };
+  const channelState = { queue: [], cancelRequested: false, activeRun: null };
+
+  const outcome = await harness.orchestrator.handlePrompt(message, 'thread-1', 'do work', channelState);
+
+  assert.deepEqual(outcome, { ok: true, cancelled: false });
+  assert.equal(boundDuringRun, 'fresh-thread-1');
+  assert.equal(harness.session.runnerSessionId, 'fresh-thread-1');
+  assert.equal(harness.session.codexThreadId, 'fresh-thread-1');
+  assert.equal(harness.saveCount > 0, true);
+  assert.deepEqual(order, ['reply', 'notify']);
+  assert.equal(notifications.length, 1);
+  assert.equal(notifications[0].kind, 'completed');
+  assert.equal(notifications[0].session, harness.session);
+});
+
 test('createPromptOrchestrator.handlePrompt continues when Discord typing indicator fails', async () => {
   const harness = createOrchestrator();
   const { replyLog, orchestrator } = harness;

@@ -768,6 +768,8 @@ export function createPromptProgressReporterFactory({
   setIntervalFn = setInterval,
   clearIntervalFn = clearInterval,
   onStreamProcessMessage = null,
+  buildRunningTaskComponents = () => [],
+  onParentAttention = null,
 } = {}) {
   const {
     summarizeCodexEvent = () => '',
@@ -840,6 +842,7 @@ export function createPromptProgressReporterFactory({
     let rerunEmit = false;
     let observedModel = '';
     let lastOmpStageKey = '';
+    let parentAttentionNotified = false;
     const isDuplicateProgressEvent = createProgressEventDeduper({
       ttlMs: progressEventDedupeWindowMs,
       maxKeys: 700,
@@ -906,10 +909,23 @@ export function createPromptProgressReporterFactory({
       return joinLinesWithinLimit(lines, progressMessageMaxChars, truncate);
     };
 
-    const buildPayload = (body) => {
+    const buildPayload = (body, status = 'running') => {
+      let components = [];
+      if (status === 'running') {
+        try {
+          components = buildRunningTaskComponents({
+            message,
+            session,
+            channelState,
+            language: lang,
+          }) || [];
+        } catch {
+          components = [];
+        }
+      }
       return {
         content: body,
-        components: [],
+        components,
       };
     };
 
@@ -1174,6 +1190,12 @@ export function createPromptProgressReporterFactory({
 
     const onEvent = (event) => {
       if (stopped) return;
+      if (event?.type === 'turn.attention.required' && !parentAttentionNotified) {
+        parentAttentionNotified = true;
+        if (typeof onParentAttention === 'function') {
+          void onParentAttention({ message, session, channelState, language: lang, event });
+        }
+      }
       let observedModelChanged = false;
       if (session?.provider === 'claude') {
         const nextObservedModel = extractClaudeObservedModel(event);
@@ -1422,7 +1444,7 @@ export function createPromptProgressReporterFactory({
       const safeBody = joinLinesWithinLimit(lines, progressMessageMaxChars, truncate);
 
       try {
-        await progressMessage.edit(buildPayload(safeBody));
+        await progressMessage.edit(buildPayload(safeBody, 'finished'));
       } catch {
         // ignore
       }

@@ -4,29 +4,23 @@ import { canCreateDiscordForkThread, createSyntheticForkMessage } from './codex-
 
 export const CODEX_SIDE_BOUNDARY_TEXT = [
   'You are now in a Codex side conversation.',
-  'Treat this as a temporary read-only side track by default.',
+  'Treat this as a temporary read-only side track.',
   'Do not change parent session goals, progress, queue, compact state, or reply delivery.',
-  'Do not modify files or run destructive actions unless the user explicitly asks for edits inside this side thread.',
+  'Do not modify files or run destructive actions, even if the user asks from this side thread.',
   'When answering, stay focused on the side question and do not claim that parent state changed.',
 ].join('\n');
 
 export const CODEX_SIDE_DEVELOPER_INSTRUCTIONS = [
   'Side conversation rules:',
   '- This is an ephemeral side thread forked from the parent Codex thread.',
-  '- Prefer explanation, inspection, and lightweight non-destructive exploration.',
-  '- File edits require an explicit user request in this side Discord thread.',
+  '- Only explain, inspect, and perform non-destructive exploration.',
+  '- Never edit files or change external state from this side conversation.',
   '- Never update or complete the parent goal from this side conversation.',
 ].join('\n');
 
 function normalizeText(value) {
   const text = String(value || '').trim();
   return text || null;
-}
-
-function shortenId(value) {
-  const text = normalizeText(value);
-  if (!text) return 'new';
-  return text.length <= 12 ? text : text.slice(0, 8);
 }
 
 function resolveThreadCreateChannel(channel) {
@@ -50,17 +44,17 @@ function getRequesterId(source) {
 export function parseSideTextInput(input = '') {
   const [head, ...rest] = String(input || '').trim().split(/\s+/);
   const raw = String(head || '').trim().toLowerCase();
-  if (!raw) return { action: 'start', threadName: '' };
+  if (!raw) return { action: 'start', question: '' };
   if (['start', 'open', 'new', '开启', '打开'].includes(raw)) {
-    return { action: 'start', threadName: normalizeSideThreadName(rest.join(' ')) };
+    return { action: 'start', question: rest.join(' ').trim() };
   }
   if (['status', 'state', 'show', '查看', '状态'].includes(raw)) {
-    return { action: 'status', threadName: '' };
+    return { action: 'status', question: '' };
   }
   if (['close', 'stop', 'end', '关闭', '结束'].includes(raw)) {
-    return { action: 'close', threadName: '' };
+    return { action: 'close', question: '' };
   }
-  return { action: 'start', threadName: normalizeSideThreadName(input) };
+  return { action: 'start', question: String(input || '').trim() };
 }
 
 export function buildCodexSideBoundaryItems() {
@@ -74,21 +68,20 @@ export function buildCodexSideBoundaryItems() {
   }];
 }
 
-export function formatCodexSideThreadName({ parentSessionId, sideSessionId, threadName = '' } = {}) {
-  const requested = normalizeSideThreadName(threadName);
-  if (requested) return requested;
-  return `codex side ${shortenId(sideSessionId)} from ${shortenId(parentSessionId)}`.slice(0, 100);
+export function formatCodexSideThreadName({ parentChannelName = '' } = {}) {
+  const parentName = normalizeSideThreadName(parentChannelName) || '主任务';
+  return `旁问 · ${parentName}`.slice(0, 100);
 }
 
-async function createDiscordSideThread(source, { parentSessionId, sideSessionId, threadName = '' } = {}) {
+async function createDiscordSideThread(source) {
   const targetChannel = resolveThreadCreateChannel(source?.channel);
   if (!targetChannel) {
-    throw new Error('当前频道不支持创建 Discord thread，无法放置 side conversation。');
+    throw new Error('当前频道不能创建旁问线程。');
   }
   const thread = await targetChannel.threads.create({
-    name: formatCodexSideThreadName({ parentSessionId, sideSessionId, threadName }),
+    name: formatCodexSideThreadName({ parentChannelName: source?.channel?.name }),
     autoArchiveDuration: 1440,
-    reason: `codex side from ${parentSessionId}`,
+    reason: `Codex side conversation from Discord channel ${source?.channel?.id || 'unknown'}`,
   });
   try {
     await thread.join?.();
@@ -97,21 +90,20 @@ async function createDiscordSideThread(source, { parentSessionId, sideSessionId,
   return thread;
 }
 
-function formatSideOriginNotice({ userId, parentSessionId, parentChannelId, sideSessionId, language = 'zh' } = {}) {
+function formatSideOriginNotice({ userId, parentChannelId, language = 'zh' } = {}) {
   const mention = userId ? `<@${userId}> ` : '';
-  const parentLabel = parentChannelId ? `<#${parentChannelId}>` : 'parent Discord thread';
+  const parentLabel = parentChannelId ? `<#${parentChannelId}>` : (language === 'en' ? 'the main task' : '主任务');
   if (language === 'en') {
-    return `${mention}Codex side conversation opened from ${parentLabel}, parent session \`${parentSessionId}\`. Side session: \`${sideSessionId}\`. Inherited context is for reference only; this thread must not change parent state.`;
+    return `${mention}Side question for ${parentLabel}. This thread can inspect and discuss, but cannot change files or external state.`;
   }
-  return `${mention}已从父 Discord thread ${parentLabel}、父 Codex session \`${parentSessionId}\` 开启 side conversation。side session：\`${sideSessionId}\`。继承上下文只用于参考，这里不能改父线程状态。`;
+  return `${mention}这是 ${parentLabel} 的旁问。这里只查阅和讨论，不会改文件或外部状态。`;
 }
 
 async function sendSideOriginNotice(childThread, {
   source,
-  parentSessionId,
   parentChannelId,
-  sideSessionId,
   language,
+  components = [],
 } = {}) {
   if (typeof childThread?.send !== 'function') {
     return { ok: false, skipped: true, error: 'child thread cannot send messages' };
@@ -120,11 +112,10 @@ async function sendSideOriginNotice(childThread, {
   const payload = {
     content: formatSideOriginNotice({
       userId,
-      parentSessionId,
       parentChannelId,
-      sideSessionId,
       language,
     }),
+    components,
   };
   if (userId) payload.allowedMentions = { users: [userId] };
   try {
@@ -136,6 +127,58 @@ async function sendSideOriginNotice(childThread, {
       skipped: false,
       userId,
       error: String(err?.message || err || 'unknown error'),
+    };
+  }
+}
+
+export function getCodexSideAvailability({
+  session,
+  provider = session?.provider || 'codex',
+  runtimeMode = 'long',
+  codexProfile = null,
+} = {}) {
+  if (String(provider || '').trim().toLowerCase() !== 'codex') {
+    return { ok: false, reason: 'provider_unsupported' };
+  }
+  if (['open', 'cleanup_failed'].includes(session?.sideConversation?.status)) {
+    return { ok: false, reason: 'nested_side' };
+  }
+  if (String(runtimeMode || '').trim().toLowerCase() !== 'long') {
+    return { ok: false, reason: 'unsupported_runtime' };
+  }
+  if (Array.isArray(session?.configOverrides) && session.configOverrides.length > 0) {
+    return { ok: false, reason: 'incompatible_config' };
+  }
+  if (codexProfile?.isExplicit) {
+    return { ok: false, reason: 'incompatible_profile' };
+  }
+  return { ok: true, reason: null };
+}
+
+async function enqueueSideQuestion({
+  source,
+  childThread,
+  childSession,
+  question,
+  enqueuePrompt,
+  resolveSecurityContext,
+} = {}) {
+  const normalizedQuestion = String(question || '').trim();
+  if (!normalizedQuestion) return null;
+  if (typeof enqueuePrompt !== 'function') {
+    return { ok: false, enqueued: false, error: '旁问暂时无法接收问题。' };
+  }
+  try {
+    const syntheticMessage = createSyntheticForkMessage(source, childThread);
+    const securityContext = typeof resolveSecurityContext === 'function'
+      ? resolveSecurityContext(childThread, childSession)
+      : null;
+    return await enqueuePrompt(syntheticMessage, childThread.id, normalizedQuestion, securityContext);
+  } catch (err) {
+    return {
+      ok: false,
+      enqueued: false,
+      error: String(err?.message || err || '旁问提交失败'),
     };
   }
 }
@@ -216,7 +259,7 @@ export async function createCodexSideConversation({
   session,
   source,
   parentSessionId,
-  threadName = '',
+  question = '',
   provider = 'codex',
   getRuntimeSnapshot = () => ({ running: false }),
   getSession,
@@ -227,6 +270,7 @@ export async function createCodexSideConversation({
   resolveSecurityContext,
   ensureWorkspace,
   getSessionLanguage = () => 'zh',
+  buildHeaderComponents = () => [],
   createThread = createDiscordSideThread,
   generateSideSeed = randomUUID,
 } = {}) {
@@ -245,7 +289,32 @@ export async function createCodexSideConversation({
     return { ok: false, reason: 'cleanup_failed', error: openSide.cleanupError || 'previous side cleanup failed' };
   }
   if (openSide) {
-    return { ok: true, reused: true, sideSessionId: openSide.sideSessionId, childThread: { id: openSide.sideChannelId }, parentSessionId: normalizedParentSessionId };
+    const childThread = await resolveDiscordSideThread(source, openSide.sideChannelId);
+    if (!childThread) return { ok: false, reason: 'side_thread_missing' };
+    const childSession = getSession(openSide.sideChannelId, {
+      channel: childThread,
+      parentChannelId: key,
+    });
+    const promptQueue = await enqueueSideQuestion({
+      source,
+      childThread,
+      childSession,
+      question,
+      enqueuePrompt,
+      resolveSecurityContext,
+    });
+    return {
+      ok: true,
+      reused: true,
+      sideSessionId: openSide.sideSessionId,
+      childThread,
+      childSession,
+      parentSessionId: normalizedParentSessionId,
+      promptQueue,
+    };
+  }
+  if (!getRuntimeSnapshot(key)?.running) {
+    return { ok: false, reason: 'parent_not_running' };
   }
   if (!canCreateDiscordForkThread(source)) {
     return { ok: false, reason: 'thread_unavailable' };
@@ -260,14 +329,13 @@ export async function createCodexSideConversation({
     throw new Error('bindSideConversation is required for Codex side conversation');
   }
 
-  const runtime = getRuntimeSnapshot(key) || {};
   const workspaceDir = typeof ensureWorkspace === 'function' ? ensureWorkspace(session, key) : session?.workspaceDir;
   const plannedSideSessionId = normalizeText(generateSideSeed()) || `side-${Date.now()}`;
   const requesterId = getRequesterId(source);
   const childThread = await createThread(source, {
     parentSessionId: normalizedParentSessionId,
     sideSessionId: plannedSideSessionId,
-    threadName,
+    parentChannelName: source?.channel?.name || '',
   });
   if (!childThread?.id) {
     throw new Error('Discord thread creation did not return a thread id');
@@ -300,21 +368,15 @@ export async function createCodexSideConversation({
     channel: childThread,
     parentChannelId: key,
   });
-  if (!normalizeSideThreadName(threadName) && typeof childThread.setName === 'function') {
-    try {
-      await childThread.setName(
-        formatCodexSideThreadName({ parentSessionId: normalizedParentSessionId, sideSessionId }),
-        'codex side session assigned',
-      );
-    } catch {
-    }
-  }
   const notice = await sendSideOriginNotice(childThread, {
     source,
-    parentSessionId: normalizedParentSessionId,
     parentChannelId: key,
-    sideSessionId,
     language: getSessionLanguage(session),
+    components: buildHeaderComponents({
+      parentChannelId: key,
+      sideChannelId: childThread.id,
+      language: getSessionLanguage(session),
+    }),
   });
   if (!notice.ok) {
     let cleanup = { ok: false, skipped: true, reason: 'cleanup_unavailable' };
@@ -368,9 +430,14 @@ export async function createCodexSideConversation({
       discordCleanup,
     };
   }
-  const promptQueue = runtime.running ? null : null;
-  void enqueuePrompt;
-  void resolveSecurityContext;
+  const promptQueue = await enqueueSideQuestion({
+    source,
+    childThread,
+    childSession,
+    question,
+    enqueuePrompt,
+    resolveSecurityContext,
+  });
   return {
     ok: true,
     parentSessionId: normalizedParentSessionId,
@@ -431,79 +498,114 @@ export async function closeCodexSideConversationFlow({
 export function formatCodexSideResult(result, language = 'zh') {
   if (!result?.ok) {
     if (result?.reason === 'missing_parent_session') {
-      return language === 'en' ? '❌ No Codex session is bound here yet. Run one task first.' : '❌ 当前频道还没有绑定 Codex session。先跑一轮。';
+      return language === 'en' ? 'This task is not ready for side questions yet.' : '主任务还没准备好接旁问。';
     }
     if (result?.reason === 'provider_unsupported') {
-      return language === 'en' ? '❌ Side conversation is only available for Codex.' : '❌ side conversation 只支持 Codex。';
+      return language === 'en' ? 'Side questions are only available for Codex.' : '旁问只支持 Codex。';
     }
     if (result?.reason === 'nested_side') {
-      return language === 'en' ? '❌ Nested side conversations are not supported.' : '❌ side 线程里不能再开 side。';
+      return language === 'en' ? 'A side question cannot open another side question.' : '旁问里不能再开旁问。';
     }
     if (result?.reason === 'thread_unavailable') {
-      return language === 'en' ? '❌ This Discord channel cannot create a side thread.' : '❌ 当前 Discord 频道不能创建 side thread。';
+      return language === 'en' ? 'This Discord channel cannot create a side thread.' : '当前频道不能创建旁问线程。';
     }
     if (result?.reason === 'side_unavailable' || result?.reason === 'unsupported_runtime') {
-      return language === 'en' ? '❌ Codex side conversation requires Codex long runtime.' : '❌ Codex side conversation 需要 Codex long runtime。';
+      return language === 'en' ? 'This task was started in a mode that cannot answer side questions concurrently.' : '这个任务的运行方式不支持同时旁问。';
+    }
+    if (result?.reason === 'parent_not_running') {
+      return language === 'en' ? 'The main task has already finished.' : '主任务已经结束。';
+    }
+    if (result?.reason === 'incompatible_profile' || result?.reason === 'incompatible_config') {
+      return language === 'en' ? 'This task uses Codex settings that are not side-compatible.' : '这个任务用了暂不兼容旁问的 Codex 设置。';
+    }
+    if (result?.reason === 'missing_question') {
+      return language === 'en' ? 'Add a question after the command.' : '请在命令后面写上问题。';
+    }
+    if (result?.reason === 'side_thread_missing') {
+      return language === 'en' ? 'The existing side thread is no longer available.' : '原来的旁问线程已经不可用，请先关闭后重开。';
     }
     if (result?.reason === 'origin_notice_failed') {
-      return language === 'en' ? `❌ Codex side failed before opening: ${result?.error || 'origin notice failed'}` : `❌ Codex side 开启前失败：${result?.error || 'origin notice failed'}`;
+      return language === 'en' ? `The side thread could not open because its first message failed: ${result?.error || 'unknown error'}` : `旁问没有打开，新线程的首条消息发送失败：${result?.error || '未知错误'}`;
     }
     if (result?.reason === 'binding_failed') {
-      return language === 'en' ? `❌ Codex side failed before binding: ${result?.error || 'binding failed'}` : `❌ Codex side 绑定前失败：${result?.error || 'binding failed'}`;
+      return language === 'en' ? `The side thread could not open because it was not connected to the main task: ${result?.error || 'unknown error'}` : `旁问没有打开，新线程没有连上主任务：${result?.error || '未知错误'}`;
     }
     if (result?.reason === 'cleanup_failed') {
-      return language === 'en' ? `❌ Previous Codex side cleanup failed. Close it again before starting a new side: ${result?.error || 'unknown error'}` : `❌ 上次 Codex side 清理失败。先再关闭一次，再开新的 side：${result?.error || '未知错误'}`;
+      return language === 'en' ? `The previous side thread did not close cleanly. Close it again before retrying: ${result?.error || 'unknown error'}` : `上次旁问没有关干净，请先再关闭一次：${result?.error || '未知错误'}`;
     }
-    return language === 'en' ? `❌ Codex side failed: ${result?.error || result?.reason || 'unknown error'}` : `❌ Codex side 失败：${result?.error || result?.reason || '未知错误'}`;
+    return language === 'en' ? `The side thread could not open: ${result?.error || result?.reason || 'unknown error'}` : `旁问没有打开：${result?.error || result?.reason || '未知错误'}`;
   }
   const channelLabel = result.childThread?.id ? `<#${result.childThread.id}>` : '(new thread)';
   const prefix = result.reused
-    ? (language === 'en' ? 'ℹ️ Existing Codex side conversation' : 'ℹ️ 已有 Codex side conversation')
-    : (language === 'en' ? '✅ Codex side conversation opened' : '✅ 已开启 Codex side conversation');
-  return [
-    `${prefix}：${channelLabel}`,
-    `• side session: \`${result.sideSessionId}\``,
-    `• parent session: \`${result.parentSessionId}\``,
-  ].join('\n');
+    ? (language === 'en' ? 'Sent to the existing side thread' : '已发到现有旁问')
+    : (language === 'en' ? 'Side thread opened' : '旁问已打开');
+  if (result.promptQueue && !result.promptQueue.ok) {
+    return language === 'en'
+      ? `${prefix}: ${channelLabel}. The question could not be sent: ${result.promptQueue.error || result.promptQueue.reason || 'unknown error'}`
+      : `${prefix}：${channelLabel}。问题没有发出去：${result.promptQueue.error || result.promptQueue.reason || '未知错误'}`;
+  }
+  return `${prefix}：${channelLabel}`;
 }
 
 export function formatCodexSideStatus(session, language = 'zh', runtime = null) {
   const meta = getOpenSideMeta(session) || getCurrentSideMeta(session);
   if (!meta) {
-    return language === 'en' ? 'No open Codex side conversation.' : '当前没有打开的 Codex side conversation。';
+    return language === 'en' ? 'No side thread is open.' : '当前没有打开的旁问。';
   }
-  const running = runtime
-    ? (runtime.running || runtime.queued ? (language === 'en' ? 'yes' : '是') : (language === 'en' ? 'no' : '否'))
-    : (language === 'en' ? 'unknown' : '未知');
+  const activityLine = runtime
+    ? (runtime.running || runtime.queued
+      ? (language === 'en' ? 'Answering now.' : '正在回答。')
+      : (language === 'en' ? 'Idle for now.' : '当前空闲。'))
+    : (language === 'en' ? 'Current activity is unknown.' : '当前状态未知。');
   const statusLine = meta.status === 'cleanup_failed'
     ? (language === 'en'
       ? `Cleanup previously failed: ${meta.cleanupError || 'unknown error'}`
       : `上次清理失败：${meta.cleanupError || '未知错误'}`)
-    : (language === 'en' ? 'Codex side conversation is open and temporary.' : 'Codex side conversation 已打开，是临时线程。');
+    : (language === 'en' ? 'The side thread is open.' : '旁问正在进行。');
   return [
     statusLine,
-    `• parent thread: <#${meta.parentChannelId}>`,
-    `• side thread: <#${meta.sideChannelId}>`,
-    `• side session: \`${meta.sideSessionId}\``,
-    `• parent session: \`${meta.parentSessionId}\``,
-    `• opened: ${meta.openedAt || '(unknown)'}`,
-    `• running: ${running}`,
+    `${language === 'en' ? 'Main task' : '主任务'} <#${meta.parentChannelId}>`,
+    `${language === 'en' ? 'Side thread' : '旁问'} <#${meta.sideChannelId}>`,
+    activityLine,
   ].join('\n');
 }
 
 export function formatCodexSideCloseResult(result, language = 'zh') {
   if (!result?.ok) {
     if (result?.reason === 'no_open_side') {
-      return language === 'en' ? 'No open Codex side conversation to close.' : '当前没有可关闭的 Codex side conversation。';
+      return language === 'en' ? 'No side thread is open.' : '当前没有可关闭的旁问。';
     }
-    return language === 'en' ? `❌ Codex side close failed: ${result?.error || 'unknown error'}` : `❌ Codex side 关闭失败：${result?.error || '未知错误'}`;
+    return language === 'en' ? `The side thread could not close: ${result?.error || 'unknown error'}` : `旁问没有关闭：${result?.error || '未知错误'}`;
   }
   const archiveWarning = result.discordArchive && result.discordArchive.ok === false && !result.discordArchive.skipped
-    ? (language === 'en' ? `\n⚠️ Discord thread cleanup warning: ${result.discordArchive.error || 'archive failed'}` : `\n⚠️ Discord thread 清理警告：${result.discordArchive.error || 'archive failed'}`)
+    ? (language === 'en' ? `\nThe conversation closed, but the thread could not be archived: ${result.discordArchive.error || 'unknown error'}` : `\n对话已关闭，但线程没有成功归档：${result.discordArchive.error || '未知错误'}`)
     : '';
   return language === 'en'
-    ? `✅ Closed Codex side conversation \`${result.sideSessionId}\`.${archiveWarning}`
-    : `✅ 已关闭 Codex side conversation：\`${result.sideSessionId}\`。${archiveWarning}`;
+    ? `Side thread closed.${archiveWarning}`
+    : `旁问已关闭。${archiveWarning}`;
+}
+
+export async function notifyCodexSideConversation({ source, session, kind, language = 'zh' } = {}) {
+  const meta = getOpenSideMeta(session);
+  if (!meta || meta.status !== 'open') return { ok: false, skipped: true, reason: 'no_open_side' };
+  const thread = await resolveDiscordSideThread(source, meta.sideChannelId);
+  if (!thread || typeof thread.send !== 'function') {
+    return { ok: false, skipped: false, reason: 'side_thread_missing' };
+  }
+  const mention = meta.requesterId ? `<@${meta.requesterId}> ` : '';
+  const parent = `<#${meta.parentChannelId}>`;
+  const content = kind === 'completed'
+    ? (language === 'en' ? `${mention}The main task has finished ${parent}` : `${mention}主任务已完成 ${parent}`)
+    : (language === 'en' ? `${mention}The main task needs your attention ${parent}` : `${mention}主任务需要你回去确认 ${parent}`);
+  try {
+    await thread.send({
+      content,
+      allowedMentions: meta.requesterId ? { users: [meta.requesterId] } : undefined,
+    });
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, skipped: false, error: String(err?.message || err || 'notification failed') };
+  }
 }
 
 export function createSyntheticSideMessage(source, childThread) {

@@ -25,7 +25,7 @@ export function createRunnerExecutor({
   getSessionId,
   getProviderDefaultWorkspace = () => ({ workspaceDir: null }),
   resolveModelSetting,
-  resolveCodexProfileSetting,
+  resolveCodexProfileSetting = () => ({ value: null, source: 'provider default', valid: true, isExplicit: false }),
   resolveReasoningEffortSetting,
   resolveTimeoutSetting,
   resolveFastModeSetting,
@@ -112,6 +112,7 @@ export function createRunnerExecutor({
     systemPrompt = '',
     inputImages = [],
     onSpawn,
+    onThreadReady,
     wasCancelled,
     onEvent,
     onLog,
@@ -140,7 +141,10 @@ export function createRunnerExecutor({
       });
     }
 
-    if (normalizeProvider(provider) === 'codex' && resolveRuntimeModeSetting(session).mode === 'long') {
+    const codexLongCompatible = normalizeProvider(provider) === 'codex'
+      && !resolveCodexProfileSetting(session)?.isExplicit
+      && !(Array.isArray(session?.configOverrides) && session.configOverrides.length);
+    if (codexLongCompatible && resolveRuntimeModeSetting(session).mode === 'long') {
       const sideMeta = session?.sideConversation?.status === 'open' ? session.sideConversation : null;
       return codexAppServerRunner.runTask({
         session,
@@ -151,6 +155,7 @@ export function createRunnerExecutor({
         inputImages,
         targetThreadId: sideMeta?.sideSessionId || null,
         onSpawn,
+        onThreadReady,
         wasCancelled,
         onEvent,
         onLog,

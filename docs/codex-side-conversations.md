@@ -25,30 +25,32 @@ Primary upstream references:
 
 ## Product Semantics
 
-In Discord, there is no in-place TUI panel, so the side conversation should appear as a separate Discord thread created next to the current thread. The new thread is temporary and linked to its parent. Messages in that side thread run against the ephemeral Codex side thread, not the parent Codex session. In this first Discord implementation, side turns wait until the parent turn is idle because both paths share the same live Codex app-server entry.
+In Discord, there is no in-place TUI panel, so the side conversation appears as a separate Discord thread created next to the current thread. The new thread is temporary and linked to its parent. Messages in that side thread run against the ephemeral Codex side thread, not the parent Codex session. Parent and side turns can run concurrently through the same live Codex app-server entry, with events routed by Codex thread id.
 
-The side conversation inherits the parent Codex history as reference context. It must not continue the parent task by default. It should answer questions, inspect files, explain state, compare options, and run non-mutating checks. It may mutate files only when the user explicitly asks for that mutation inside the side conversation.
+The side conversation inherits the parent Codex history as reference context. It must not continue the parent task. It can answer questions, inspect files, explain state, compare options, and run non-mutating checks. It is always read-only, including when a user asks it to make changes.
 
 The main thread must stay stable. Opening a side conversation must not change the parent thread's bound Codex session, active goal, queue, progress card, reply delivery setting, workspace setting, model setting, or final answer behavior.
 
 ## User Surface
 
-Add a Codex-only side command surface:
+The primary entry is an `Ask aside` / `问一下` button on the running task card. Clicking it opens a question modal. Starting a question creates or reuses a sibling Discord thread named `旁问 · <main thread name>` and submits the question immediately.
+
+Keep these Codex-only command fallbacks:
 
 - Slash command: `/cx_side`
 - Text command: `!side`
 - Close action: `/cx_side action:close` and `!side close`
 - Status action: `/cx_side action:status` and `!side status`
 
-When started from a valid parent thread, the bot creates a Discord side thread and posts an origin notice in it. The notice should identify the parent Discord thread, parent Codex thread id, side Codex thread id, and the fact that the inherited history is reference-only.
+When started from a valid parent thread, the bot creates a Discord side thread and posts an origin notice in it. The notice links the parent Discord thread and explains the read-only boundary without exposing provider session ids. The header provides actions to return to the main task, send information to the running main task, and close the side thread.
 
 Starting side from inside an existing side conversation should fail closed for the first version. The official TUI allows only one active side conversation and asks the user to return before starting another. Matching that behavior avoids nested cleanup and accidental context confusion.
 
 ## Runtime Requirements
 
-The first version should require Codex long runtime for a side conversation opened while the parent is running. Long runtime has a live app-server entry, so it can fork the currently loaded parent thread in the same way the TUI does.
+Side questions require Codex long runtime and a currently running parent turn. Long runtime has a live app-server entry, so it can fork the currently loaded parent thread in the same way the TUI does.
 
-Even when the parent is idle, the side conversation must stay attached to the parent long-runtime app-server entry. Local smoke testing against Codex CLI 0.130 confirmed that an `ephemeral: true` fork can be created and injected, but it cannot be resumed later from a fresh app-server process (`no rollout found for thread id ...`). This means side start, side turns, side close, interrupt, and unsubscribe all need to route through the parent live app-server entry.
+An already-open side conversation stays attached to the parent long-runtime app-server entry and can receive follow-up questions. Local smoke testing against Codex CLI 0.130 confirmed that an `ephemeral: true` fork cannot be resumed later from a fresh app-server process (`no rollout found for thread id ...`). Side start, turns, close, interrupt, and unsubscribe therefore route through the parent live app-server entry. A new side conversation is refused once the parent task has finished.
 
 If the parent is running in exec runtime, side start must fail closed with a clear message. Exec has no live app-server handle for the active turn, so pretending to open side would be misleading.
 
@@ -66,7 +68,7 @@ Extend the Codex app-server client layer with explicit helpers for:
 
 The side fork config must preserve the parent runtime choices that affect model behavior: model, reasoning effort where supported, service tier, cwd, sandbox, approval policy, approvals reviewer, Fast mode, compact settings, and developer/system instructions. It must append the side developer instructions instead of replacing existing project instructions.
 
-The injected boundary item must be a hidden model-visible user message equivalent to upstream's side boundary. It must say that inherited history before the boundary is reference-only, not the current task; only instructions after the boundary are active; file, git, config, permission, and workspace mutations are forbidden unless the user explicitly asks for them in the side conversation.
+The injected boundary item must be a hidden model-visible user message equivalent to upstream's side boundary. It must say that inherited history before the boundary is reference-only, not the current task; only instructions after the boundary are active; file, git, config, permission, and workspace mutations are forbidden even when requested from the side conversation.
 
 The side thread must not call `turn/start` until after `thread/inject_items` has succeeded. If injection fails, the implementation must cleanup the fork and report failure.
 
@@ -98,15 +100,15 @@ Messages in the side Discord thread should use the same progress-card and proces
 
 The parent progress card must not be edited by side activity. The parent queue must not receive side messages. The side queue must be independent.
 
-If the parent task changes state while the side is open, the first version only needs status visibility through `/cx_side status`. It does not need to live-update a TUI-style label such as "main needs approval".
+When the main task finishes, or needs user input or approval, the side thread receives one short notification linking back to the main task. Side activity never edits the main progress card.
 
 ## Safety Rules
 
-Side must default to non-mutating behavior at the instruction layer. It can read files, search files, inspect state, and run checks that do not modify repo-tracked files. It must not edit files, change git state, install dependencies, alter config, request broader permissions, or approve risky actions unless the side user explicitly asks for that mutation inside the side thread.
+Side is non-mutating at both the instruction and runtime layers. It can read files, search files, inspect state, and run checks that do not modify repo-tracked files. The fork always uses the read-only sandbox with approval disabled. It must not edit files, change git state, install dependencies, alter config, request broader permissions, or approve risky actions.
 
 The implementation must not rely only on prompt text for all safety. The command surface and runtime should preserve existing sandbox, approval, and workspace protections. Prompt boundaries reduce accidental continuation; they are not a replacement for provider permission controls.
 
-Workspace locking should treat side turns like ordinary turns for mutation safety. In this implementation, side questions fail closed while the parent turn is running because both use the same live app-server entry. If the side request explicitly asks for mutation while the parent is active in the same workspace, it should fail closed rather than write concurrently.
+Side and parent queues are independent. Read-only side questions can run while the parent is active. Mutation-shaped side prompts fail before entering the runner, and the read-only sandbox remains the final enforcement boundary.
 
 ## Non-Goals
 
@@ -126,26 +128,24 @@ Each row must be covered by automated tests or a documented manual verification 
 
 | Case | Setup | Expected result |
 | --- | --- | --- |
-| Start side from idle Codex long thread | Parent has a bound Codex thread id and a live long-runtime app-server entry | Bot creates a side Discord thread, forks the Codex thread with `ephemeral: true`, injects the boundary, binds side metadata, and posts origin notices in parent and side |
+| Start side after the main task finishes | Parent has a bound Codex thread id but no active turn | Bot refuses clearly and creates no Discord or provider side state |
 | Start side after parent app-server was evicted or restarted | Parent has only a persisted Codex thread id, no live app-server entry | Bot refuses with a clear unavailable message; it must not create an ephemeral side that will later fail to resume |
-| Start side from running Codex long thread | Parent has an active long-runtime turn | Bot opens side without queueing behind the parent, parent progress card and active turn keep running, and side prompts fail closed until the parent turn is idle |
+| Start side from running Codex long thread | Parent has an active long-runtime turn | Bot opens side without queueing behind the parent, and parent and side answers stay isolated |
 | Start side from Codex exec running thread | Parent active runtime is exec | Bot refuses with a clear unsupported-runtime message and creates no side metadata |
 | Start side before first Codex user turn | No persisted parent Codex thread id exists | Bot refuses with the equivalent of "send a message first, then try side again" |
 | Start side on Claude/Antigravity | Provider is not Codex | Bot refuses and does not create Discord or provider state |
 | Start nested side | Current Discord thread is already a side thread | Bot refuses and points to closing or returning to the parent first |
-| Duplicate open side | Parent already has an open side | Bot refuses or returns the existing side link; it must not create a second hidden side by accident |
+| Duplicate open side | Parent already has an open side | Bot submits the new question to the existing side thread and does not create a second fork |
 | Fork succeeds but boundary injection fails | Mock `thread/inject_items` failure | Bot interrupts/unsubscribes the side fork, marks no usable side session, and reports the preparation failure |
 | Discord side thread creation fails | Missing thread permission or unsupported channel | Bot does not fork Codex, reports that Discord cannot create the side thread |
 | Origin notice send fails | Side Discord thread exists but send fails | Bot reports the failure and cleans provider side state, unless retryable handling is explicitly implemented |
-| Side asks a read-only question while parent idle | User asks "what files are relevant?" | Side answer uses side Codex thread, parent session id does not change, parent final reply does not include side answer |
-| Side asks a read-only question while parent active | Parent is active in the same live app-server entry | Bot refuses the side prompt until the parent turn is idle, so it does not fail later in the runner |
-| Side asks to modify while parent active | Parent is active in same workspace and side asks for code edit | Bot queues or refuses mutation; it must not allow concurrent writes against the same workspace |
-| Side explicitly asks to mutate while parent idle | Parent idle, side asks for a small edit | Existing sandbox/approval/workspace protections apply; mutation stays in the same workspace and is attributed to side thread progress |
+| Side asks a read-only question while parent active | Parent is active in the same live app-server entry | Side runs concurrently, parent session id does not change, and neither answer appears in the other Discord thread |
+| Side asks to modify | Side asks for a code edit while the parent is active or idle | Bot refuses the mutation and the provider fork remains read-only |
 | Close idle side | No active side turn | Bot unsubscribes side thread, marks metadata closed, archives/locks Discord side thread where possible |
 | Close running side | Side has active turn id | Bot interrupts the turn, then unsubscribes, then closes metadata |
 | Close cleanup partially fails | `thread/unsubscribe` or Discord archive fails | Bot reports exact failed step and keeps metadata retryable; it does not pretend side is closed |
 | Parent state after side close | Side opened, used, then closed | Parent session id, active goal, queue, reply delivery, workspace, model, and progress card are unchanged |
-| Side status | Parent has open side | Status shows parent thread, side thread, provider ids, created time, and whether a side turn is running |
+| Side status | Parent has open side | Status links the main and side Discord threads and shows whether the side is answering, without exposing provider ids |
 | Normal fork regression | Existing `/cx_fork` flow | Durable fork behavior remains unchanged and still creates a normal Discord thread/session |
 | Steer regression | Codex long thread with `steer_if_possible` | Existing steer behavior still routes busy prompts into parent active turn, not into side |
 | Process-message regression | Side and parent both use stream reply mode | Side process messages stay in side thread; parent process/final messages are not duplicated |
@@ -156,10 +156,11 @@ Add focused tests around these modules:
 
 - `codex-app-server` for `thread/inject_items`, `thread/unsubscribe`, and interrupt helpers.
 - `codex-app-server-runner` for forking from a live long entry, running side turns through the parent app-server entry, preserving the parent thread id, and cleaning side entries.
+- interaction tests for the running-card button, modal submission, thread reuse, main-task steering, and close action.
 - command surface tests for `/cx_side` and text `!side`.
 - side-flow tests for start, close, status, duplicate open, nested side, provider unsupported, exec unsupported, and injection failure cleanup.
 - session-store tests for side metadata persistence and retryable partial cleanup.
-- queue/runtime tests proving parent and side queues are independent.
+- queue/runtime tests proving parent and side queues are independent and can run concurrently.
 - regression tests proving ordinary fork, steer, compact, process-message streaming, and status output are unchanged.
 
 The minimum final verification command is:
@@ -176,11 +177,13 @@ Manual verification is still required because Discord thread creation, Discord a
 
 Run against a real Codex bot after tests pass:
 
-- In a Codex long-runtime thread with an existing session, start `/cx_side`.
-- Confirm the parent receives a side link and the side thread receives an origin notice.
-- Ask the side thread a read-only question about the repo.
+- Start a long Codex task and click `Ask aside` / `问一下` on its running card.
+- Submit a question and confirm a naturally named side thread opens with a parent link and three header actions.
+- Ask another read-only question and confirm the existing side thread is reused.
 - Confirm the parent thread gets no side answer and its session/status remain unchanged.
-- While a parent task is running, start side and confirm side prompts fail closed until the parent is idle.
+- Confirm the parent and side answer concurrently.
+- Ask the side to modify a file and confirm the request is refused.
+- Use `Tell main task` and confirm the update reaches the active parent turn.
 - Close side and confirm no further side messages are accepted as an active provider session.
 - Try `/cx_side` from a Claude/Antigravity thread and from an exec-running Codex thread and confirm both fail closed.
 

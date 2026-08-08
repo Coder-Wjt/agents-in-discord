@@ -468,7 +468,7 @@ test('createChannelQueue adds retry button when unexpected processing error bubb
   ]);
 });
 
-test('createChannelQueue refuses mutating side prompt while parent is active', async () => {
+test('createChannelQueue refuses mutating side prompt', async () => {
   const runtime = createChannelRuntimeStore({
     cloneProgressPlan: (plan) => (plan ? JSON.parse(JSON.stringify(plan)) : null),
     truncate: (text, max) => (text.length <= max ? text : `${text.slice(0, max - 3)}...`),
@@ -501,22 +501,22 @@ test('createChannelQueue refuses mutating side prompt while parent is active', a
   const result = await queue.enqueuePrompt(message, 'side-thread', '帮我修改这个文件');
 
   assert.equal(result.ok, false);
-  assert.equal(result.reason, 'side_mutation_blocked_by_parent');
+  assert.equal(result.reason, 'side_mutation_blocked');
   assert.equal(runtime.getChannelState('side-thread').queue.length, 0);
   assert.deepEqual(handled, []);
-  assert.match(replyLog[0].payload, /父线程还有任务在跑/);
+  assert.match(replyLog[0].payload, /不能改文件或外部状态/);
 
   const directVerbMessage = createMessage('side-direct', replyLog, reactionLog);
   const directVerbResult = await queue.enqueuePrompt(directVerbMessage, 'side-thread', '修改这个文件');
 
   assert.equal(directVerbResult.ok, false);
-  assert.equal(directVerbResult.reason, 'side_mutation_blocked_by_parent');
+  assert.equal(directVerbResult.reason, 'side_mutation_blocked');
   assert.equal(runtime.getChannelState('side-thread').queue.length, 0);
   assert.deepEqual(handled, []);
-  assert.match(replyLog[1].payload, /父线程还有任务在跑/);
+  assert.match(replyLog[1].payload, /不能改文件或外部状态/);
 });
 
-test('createChannelQueue refuses side prompt while parent is active', async () => {
+test('createChannelQueue runs read-only side prompt while parent is active', async () => {
   const runtime = createChannelRuntimeStore({
     cloneProgressPlan: (plan) => (plan ? JSON.parse(JSON.stringify(plan)) : null),
     truncate: (text, max) => (text.length <= max ? text : `${text.slice(0, max - 3)}...`),
@@ -549,8 +549,9 @@ test('createChannelQueue refuses side prompt while parent is active', async () =
   const message = createMessage('side-read', replyLog, reactionLog);
   const result = await queue.enqueuePrompt(message, 'side-thread', '看下这个模块负责什么');
 
-  assert.equal(result.ok, false);
-  assert.equal(result.reason, 'side_blocked_by_parent_running');
-  assert.deepEqual(handled, []);
-  assert.match(replyLog[0].payload, /side 线程先等父线程空闲/);
+  assert.equal(result.ok, true);
+  assert.equal(result.enqueued, true);
+  await waitFor(() => handled.length === 1);
+  assert.deepEqual(handled, ['看下这个模块负责什么']);
+  assert.deepEqual(replyLog, []);
 });

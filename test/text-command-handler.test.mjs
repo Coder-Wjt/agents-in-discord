@@ -399,6 +399,7 @@ test('createTextCommandHandler opens Codex side conversation from text command',
   const threadCreates = [];
   const threadMessages = [];
   const sideStarts = [];
+  const queuedPrompts = [];
   const childThread = {
     id: 'side-channel-1',
     async join() {},
@@ -442,6 +443,11 @@ test('createTextCommandHandler opens Codex side conversation from text command',
       sideStarts.push(options);
       return { ok: true, parentThreadId: 'parent-1', sideThreadId: 'side-session-1' };
     },
+    resolveSecurityContext: () => ({ profile: 'team' }),
+    async enqueuePrompt(_message, key, prompt, securityContext) {
+      queuedPrompts.push({ key, prompt, securityContext });
+      return { ok: true, enqueued: true, queuedAhead: 0 };
+    },
     safeReply: async (_message, payload) => {
       replies.push(payload);
     },
@@ -465,11 +471,16 @@ test('createTextCommandHandler opens Codex side conversation from text command',
   assert.equal(parentSession.openSideConversation.sideSessionId, 'side-session-1');
   assert.equal(parentSession.openSideConversation.requesterId, 'user-1');
   assert.equal(childSession.runnerSessionId, 'side-session-1');
-  assert.equal(threadCreates[0].name, 'side notes');
+  assert.equal(threadCreates[0].name, '旁问 · 主任务');
   assert.equal(sideStarts[0].boundaryItems.length, 1);
-  assert.match(threadMessages[0].content, /^<@user-1> 已从父 Discord thread <#channel-1>、父 Codex session `parent-1` 开启 side conversation。/);
-  assert.match(threadMessages[0].content, /继承上下文只用于参考/);
-  assert.match(replies[0], /已开启 Codex side conversation：<#side-channel-1>/);
+  assert.match(threadMessages[0].content, /^<@user-1> 这是 <#channel-1> 的旁问。/);
+  assert.match(threadMessages[0].content, /不会改文件或外部状态/);
+  assert.deepEqual(queuedPrompts, [{
+    key: 'side-channel-1',
+    prompt: 'side notes',
+    securityContext: { profile: 'team' },
+  }]);
+  assert.match(replies[0], /旁问已打开：<#side-channel-1>/);
 });
 
 test('createTextCommandHandler refuses Codex side on exec runtime before creating a thread', async () => {
@@ -506,7 +517,7 @@ test('createTextCommandHandler refuses Codex side on exec runtime before creatin
   }, 'channel-1', '!side');
 
   assert.deepEqual(threadCreates, []);
-  assert.match(replies[0], /需要 Codex long runtime/);
+  assert.match(replies[0], /运行方式不支持同时旁问/);
 });
 
 test('createTextCommandHandler creates native Claude fork from text command', async () => {

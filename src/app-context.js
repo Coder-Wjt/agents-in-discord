@@ -11,6 +11,7 @@ import { createDiscordAccessPolicy } from './discord-access-policy.js';
 import { createDiscordEntryHandlers } from './discord-entry-handlers.js';
 import { createDiscordLifecycle } from './discord-lifecycle.js';
 import { createSingleInstanceLock } from './single-instance-lock.js';
+import { notifyCodexSideConversation } from './codex-side-flow.js';
 import { formatWorkspaceBusyReport as formatWorkspaceBusyReportBase } from './workspace-busy-report.js';
 
 export function createAppContext({
@@ -93,6 +94,7 @@ export function createAppContext({
   let buildWorkspaceBusyPayload = ({ key, session, userId, workspaceDir, owner }) => ({
     content: formatWorkspaceBusyReport(session, workspaceDir, owner),
   });
+  let buildCodexSideRunningTaskComponents = () => [];
 
   const {
     runtimePresentationOptions = {},
@@ -157,6 +159,14 @@ export function createAppContext({
       acquireWorkspace: workspaceRuntime.acquireWorkspace,
       formatWorkspaceBusyReport,
       buildWorkspaceBusyPayload: (input) => buildWorkspaceBusyPayload(input),
+      buildRunningTaskComponents: (input) => buildCodexSideRunningTaskComponents(input),
+      onParentAttention: ({ message, session, language }) => notifyCodexSideConversation({
+        source: message,
+        session,
+        kind: 'attention',
+        language,
+      }),
+      notifySideConversation: notifyCodexSideConversation,
       slashRef: promptSlashRef,
     },
     channelQueueOptions: {
@@ -174,6 +184,7 @@ export function createAppContext({
     settingsPanelOptions = {},
     reportOptions = {},
     workspaceBrowserOptions = {},
+    sideInteractionOptions = {},
     slashRouterOptions = {},
     textCommandOptions = {},
     ...commandSurfaceRest
@@ -267,6 +278,24 @@ export function createAppContext({
       addFavoriteWorkspace: sessionStore.addFavoriteWorkspace,
       removeFavoriteWorkspace: sessionStore.removeFavoriteWorkspace,
     },
+    sideInteractionOptions: {
+      ...sideInteractionOptions,
+      getSession: sessionStore.getSession,
+      getSessionId: identity.getSessionId,
+      getSessionProvider: identity.getSessionProvider,
+      getSessionLanguage: sessionSettings.getSessionLanguage,
+      resolveRuntimeModeSetting: sessionSettings.resolveRuntimeModeSetting,
+      resolveCodexProfileSetting: sessionSettings.resolveCodexProfileSetting,
+      getRuntimeSnapshot: promptRuntime.getRuntimeSnapshot,
+      commandActions,
+      startCodexSideConversation: promptRuntime.startCodexSideConversation,
+      closeCodexSideConversation: promptRuntime.closeCodexSideConversation,
+      enqueuePrompt: promptRuntime.enqueuePrompt,
+      resolveSecurityContext: securityPolicy.resolveSecurityContext,
+      ensureWorkspace: sessionStore.ensureWorkspace,
+      cancelChannelWork: promptRuntime.cancelChannelWork,
+      steerProviderTask: promptRuntime.steerProviderTask,
+    },
     slashRouterOptions: {
       ...slashRouterOptions,
       getSession: sessionStore.getSession,
@@ -275,6 +304,7 @@ export function createAppContext({
       getSessionId: identity.getSessionId,
       getEffectiveSecurityProfile: sessionSettings.getEffectiveSecurityProfile,
       resolveModelSetting: sessionSettings.resolveModelSetting,
+      resolveCodexProfileSetting: sessionSettings.resolveCodexProfileSetting,
       resolveReasoningEffortSetting: sessionSettings.resolveReasoningEffortSetting,
       getRuntimeSnapshot: promptRuntime.getRuntimeSnapshot,
       resolveFastModeSetting: sessionSettings.resolveFastModeSetting,
@@ -305,6 +335,7 @@ export function createAppContext({
       getSessionLanguage: sessionSettings.getSessionLanguage,
       commandActions,
       resolveModelSetting: sessionSettings.resolveModelSetting,
+      resolveCodexProfileSetting: sessionSettings.resolveCodexProfileSetting,
       resolveReasoningEffortSetting: sessionSettings.resolveReasoningEffortSetting,
       getEffectiveSecurityProfile: sessionSettings.getEffectiveSecurityProfile,
       resolveFastModeSetting: sessionSettings.resolveFastModeSetting,
@@ -325,6 +356,9 @@ export function createAppContext({
       closeCodexSideConversation: promptRuntime.closeCodexSideConversation,
     },
   });
+  if (typeof commandSurface.buildCodexSideRunningTaskComponents === 'function') {
+    buildCodexSideRunningTaskComponents = commandSurface.buildCodexSideRunningTaskComponents;
+  }
   if (typeof commandSurface.buildWorkspaceBusyPayload === 'function') {
     buildWorkspaceBusyPayload = commandSurface.buildWorkspaceBusyPayload;
   }
@@ -344,12 +378,16 @@ export function createAppContext({
     isSettingsPanelComponentId: commandSurface.isSettingsPanelComponentId,
     isSettingsPanelModalId: commandSurface.isSettingsPanelModalId,
     isGoalModalId: commandSurface.isGoalModalId,
+    isCodexSideComponentId: commandSurface.isCodexSideComponentId,
+    isCodexSideModalId: commandSurface.isCodexSideModalId,
     handleWorkspaceBusyInteraction: commandSurface.handleWorkspaceBusyInteraction,
     handleWorkspaceBrowserInteraction: commandSurface.handleWorkspaceBrowserInteraction,
     handleOnboardingButtonInteraction: commandSurface.handleOnboardingButtonInteraction,
     handleSettingsPanelInteraction: commandSurface.handleSettingsPanelInteraction,
     handleSettingsPanelModalSubmit: commandSurface.handleSettingsPanelModalSubmit,
     handleGoalModalSubmit: commandSurface.handleGoalModalSubmit,
+    handleCodexSideInteraction: commandSurface.handleCodexSideInteraction,
+    handleCodexSideModalSubmit: commandSurface.handleCodexSideModalSubmit,
     routeSlashCommand: commandSurface.routeSlashCommand,
     shouldDeferInteraction: (interaction, commandName) => !commandSurface.shouldHandleSlashCommandBeforeDefer?.({ interaction, commandName }),
     normalizeSlashCommandName: commandSurface.normalizeSlashCommandName,

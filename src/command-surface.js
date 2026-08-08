@@ -1,4 +1,5 @@
 import { createOnboardingFlow } from './onboarding-flow.js';
+import { createCodexSideInteractionSurface } from './codex-side-interactions.js';
 import { createReportFormatters } from './report-formatters.js';
 import {
   buildSlashCommands,
@@ -21,6 +22,7 @@ export function createCommandSurface({
   settingsPanelOptions = {},
   reportOptions = {},
   workspaceBrowserOptions = {},
+  sideInteractionOptions = {},
   slashRouterOptions = {},
   textCommandOptions = {},
 } = {}) {
@@ -72,6 +74,16 @@ export function createCommandSurface({
     slashRef,
   });
 
+  const sideInteractions = createCodexSideInteractionSurface({
+    ActionRowBuilder: settingsPanelOptions.ActionRowBuilder,
+    ButtonBuilder: settingsPanelOptions.ButtonBuilder,
+    ButtonStyle: settingsPanelOptions.ButtonStyle,
+    ModalBuilder: settingsPanelOptions.ModalBuilder,
+    TextInputBuilder: settingsPanelOptions.TextInputBuilder,
+    TextInputStyle: settingsPanelOptions.TextInputStyle,
+    ...sideInteractionOptions,
+  });
+
   const routeSlashCommand = createSlashCommandRouter({
     botProvider,
     defaultUiLanguage,
@@ -113,6 +125,7 @@ export function createCommandSurface({
     openWorkspaceBrowser: workspaceBrowser.openWorkspaceBrowser,
     openSettingsPanel: settingsPanel.openSettingsPanel,
     openModelSettingsPanel: settingsPanel.openModelSettingsPanel,
+    buildCodexSideHeaderComponents: sideInteractions.buildHeaderComponents,
   });
 
   const handleCommand = createTextCommandHandler({
@@ -152,12 +165,16 @@ export function createCommandSurface({
     formatReasoningEffortHelp: reports.formatReasoningEffortHelp,
     parseOnboardingConfigAction: onboarding.parseOnboardingConfigAction,
     openWorkspaceBrowser: workspaceBrowser.openWorkspaceBrowser,
+    buildCodexSideHeaderComponents: sideInteractions.buildHeaderComponents,
   });
 
   return {
     formatWorkspaceBusyReport: reports.formatWorkspaceBusyReport,
     buildWorkspaceBusyPayload: workspaceBusyActions.buildWorkspaceBusyPayload,
+    buildCodexSideRunningTaskComponents: sideInteractions.buildRunningTaskComponents,
     handleCommand,
+    handleCodexSideInteraction: sideInteractions.handleComponent,
+    handleCodexSideModalSubmit: sideInteractions.handleModalSubmit,
     handleOnboardingButtonInteraction: onboarding.handleOnboardingButtonInteraction,
     handleSettingsPanelInteraction: settingsPanel.handleSettingsPanelInteraction,
     handleSettingsPanelModalSubmit: settingsPanel.handleSettingsPanelModalSubmit,
@@ -165,6 +182,8 @@ export function createCommandSurface({
     handleWorkspaceBusyInteraction: workspaceBusyActions.handleWorkspaceBusyInteraction,
     handleWorkspaceBrowserInteraction: workspaceBrowser.handleWorkspaceBrowserInteraction,
     isOnboardingButtonId: onboarding.isOnboardingButtonId,
+    isCodexSideComponentId: sideInteractions.isComponentId,
+    isCodexSideModalId: sideInteractions.isModalId,
     isSettingsPanelComponentId: settingsPanel.isSettingsPanelComponentId,
     isSettingsPanelModalId: settingsPanel.isSettingsPanelModalId,
     isGoalModalId: routeSlashCommand.isGoalModalId,

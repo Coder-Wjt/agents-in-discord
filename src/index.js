@@ -408,8 +408,8 @@ const CLAUDE_RUNTIME_MODE = normalizeSessionRuntimeMode(
   process.env.CLAUDE__RUNTIME_MODE || process.env.CLAUDE_RUNTIME_MODE || 'normal',
 ) || 'normal';
 const CODEX_RUNTIME_MODE = normalizeSessionRuntimeMode(
-  process.env.CODEX__RUNTIME_MODE || process.env.CODEX_RUNTIME_MODE || 'normal',
-) || 'normal';
+  process.env.CODEX__RUNTIME_MODE || process.env.CODEX_RUNTIME_MODE || 'long',
+) || 'long';
 const CLAUDE_LONG_IDLE_MS = normalizeIntervalMs(
   process.env.CLAUDE__LONG_IDLE_MS || process.env.CLAUDE_LONG_IDLE_MS,
   15 * 60_000,

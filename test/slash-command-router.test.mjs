@@ -543,6 +543,7 @@ test('createSlashCommandRouter opens Codex side conversation without changing pa
     },
   };
   const sideStarts = [];
+  const queuedPrompts = [];
   const state = createRouterState({
     getSession(key) {
       return key === 'side-channel-1' ? childSession : parentSession;
@@ -578,6 +579,11 @@ test('createSlashCommandRouter opens Codex side conversation without changing pa
       sideStarts.push(options);
       return { ok: true, parentThreadId: 'parent-1', sideThreadId: 'side-session-1' };
     },
+    resolveSecurityContext: () => ({ profile: 'team' }),
+    async enqueuePrompt(_message, key, prompt, securityContext) {
+      queuedPrompts.push({ key, prompt, securityContext });
+      return { ok: true, enqueued: true, queuedAhead: 0 };
+    },
   });
   const interaction = createInteraction('cx_side', { action: 'start', name: 'ask aside' });
   interaction.channel = {
@@ -604,14 +610,19 @@ test('createSlashCommandRouter opens Codex side conversation without changing pa
   assert.equal(parentSession.openSideConversation.requesterId, 'user-1');
   assert.equal(childSession.runnerSessionId, 'side-session-1');
   assert.equal(childSession.workspaceDir, '/repo');
-  assert.equal(threadCreates[0].name, 'ask aside');
+  assert.equal(threadCreates[0].name, '旁问 · 主任务');
   assert.equal(sideStarts.length, 1);
   assert.equal(sideStarts[0].sessionKey, 'channel-1');
   assert.equal(sideStarts[0].boundaryItems.length, 1);
   assert.equal(threadMessages.length, 1);
-  assert.match(threadMessages[0].content, /^<@user-1> 已从父 Discord thread <#channel-1>、父 Codex session `parent-1` 开启 side conversation。/);
-  assert.match(threadMessages[0].content, /继承上下文只用于参考/);
-  assert.match(state.replies[0].content, /已开启 Codex side conversation：<#side-channel-1>/);
+  assert.match(threadMessages[0].content, /^<@user-1> 这是 <#channel-1> 的旁问。/);
+  assert.match(threadMessages[0].content, /不会改文件或外部状态/);
+  assert.deepEqual(queuedPrompts, [{
+    key: 'side-channel-1',
+    prompt: 'ask aside',
+    securityContext: { profile: 'team' },
+  }]);
+  assert.match(state.replies[0].content, /旁问已打开：<#side-channel-1>/);
 });
 
 test('createSlashCommandRouter cleans provider side thread when origin notice cannot be sent', async () => {
@@ -637,6 +648,7 @@ test('createSlashCommandRouter cleans provider side thread when origin notice ca
       return key === 'side-channel-1' ? childSession : parentSession;
     },
     getSessionId: (currentSession) => currentSession?.runnerSessionId || null,
+    getRuntimeSnapshot: () => ({ running: true, queued: 0 }),
     resolveRuntimeModeSetting: () => ({ mode: 'long', supported: true, source: 'session override' }),
     ensureWorkspace: () => '/repo',
     commandActions: {
@@ -654,7 +666,7 @@ test('createSlashCommandRouter cleans provider side thread when origin notice ca
       return { ok: true, unsubscribed: true };
     },
   });
-  const interaction = createInteraction('cx_side', { action: 'start' });
+  const interaction = createInteraction('cx_side', { action: 'start', question: '查一下失败原因' });
   interaction.channel = {
     id: 'channel-1',
     threads: {
@@ -680,7 +692,7 @@ test('createSlashCommandRouter cleans provider side thread when origin notice ca
   assert.deepEqual(deletes, ['Codex side origin notice failed']);
   assert.equal(bindCalls, 0);
   assert.equal(parentSession.openSideConversation, undefined);
-  assert.match(state.replies[0].content, /开启前失败：missing access/);
+  assert.match(state.replies[0].content, /首条消息发送失败：missing access/);
 });
 
 test('createSlashCommandRouter cleans provider side thread when side binding fails', async () => {
@@ -702,6 +714,7 @@ test('createSlashCommandRouter cleans provider side thread when side binding fai
       return key === 'side-channel-1' ? childSession : parentSession;
     },
     getSessionId: (currentSession) => currentSession?.runnerSessionId || null,
+    getRuntimeSnapshot: () => ({ running: true, queued: 0 }),
     resolveRuntimeModeSetting: () => ({ mode: 'long', supported: true, source: 'session override' }),
     ensureWorkspace: () => '/repo',
     commandActions: {
@@ -717,7 +730,7 @@ test('createSlashCommandRouter cleans provider side thread when side binding fai
       return { ok: true, unsubscribed: true };
     },
   });
-  const interaction = createInteraction('cx_side', { action: 'start' });
+  const interaction = createInteraction('cx_side', { action: 'start', question: '查一下绑定失败' });
   interaction.channel = {
     id: 'channel-1',
     threads: {
@@ -740,7 +753,7 @@ test('createSlashCommandRouter cleans provider side thread when side binding fai
   assert.equal(sideCloses[0].threadId, 'side-session-1');
   assert.deepEqual(deletes, ['Codex side binding failed']);
   assert.equal(parentSession.openSideConversation, undefined);
-  assert.match(state.replies[0].content, /绑定前失败：db write failed/);
+  assert.match(state.replies[0].content, /没有连上主任务：db write failed/);
 });
 
 test('createSlashCommandRouter closes open Codex side conversation and records cleanup failure', async () => {
@@ -792,7 +805,7 @@ test('createSlashCommandRouter closes open Codex side conversation and records c
   assert.equal(parentSession.openSideConversation.status, 'cleanup_failed');
   assert.equal(childSession.sideConversation.status, 'cleanup_failed');
   assert.equal(state.getCancelCalls()[0].key, 'side-channel-1');
-  assert.match(state.replies[0].content, /关闭失败：unsubscribe failed/);
+  assert.match(state.replies[0].content, /旁问没有关闭：unsubscribe failed/);
 });
 
 test('createSlashCommandRouter can retry close after side cleanup failure', async () => {
@@ -851,7 +864,7 @@ test('createSlashCommandRouter can retry close after side cleanup failure', asyn
   assert.equal(handled, true);
   assert.equal(parentSession.openSideConversation.status, 'closed');
   assert.equal(childSession.sideConversation.status, 'closed');
-  assert.match(state.replies[0].content, /已关闭 Codex side conversation/);
+  assert.match(state.replies[0].content, /旁问已关闭/);
 });
 
 test('createSlashCommandRouter closes Codex side conversation from the side thread itself', async () => {
@@ -921,7 +934,7 @@ test('createSlashCommandRouter closes Codex side conversation from the side thre
   assert.equal(sideSession.sideConversation.status, 'closed');
   assert.equal(state.getCancelCalls()[0].key, 'side-channel-1');
   assert.deepEqual(archiveCalls.map((call) => call.method), ['setLocked', 'setArchived']);
-  assert.match(state.replies[0].content, /已关闭 Codex side conversation/);
+  assert.match(state.replies[0].content, /旁问已关闭/);
 });
 
 test('createSlashCommandRouter refuses Codex side before creating Discord thread on exec runtime', async () => {
@@ -954,7 +967,7 @@ test('createSlashCommandRouter refuses Codex side before creating Discord thread
 
   assert.equal(handled, true);
   assert.deepEqual(threadCreates, []);
-  assert.match(state.replies[0].content, /需要 Codex long runtime/);
+  assert.match(state.replies[0].content, /运行方式不支持同时旁问/);
 });
 
 test('createSlashCommandRouter creates native Claude fork in a new thread and records pending fork source', async () => {

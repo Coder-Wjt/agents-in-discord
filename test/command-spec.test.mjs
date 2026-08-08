@@ -39,6 +39,7 @@ test('buildSlashCommandEntries includes aliases and provider toggle only in shar
   const fastEntry = sharedEntries.find((entry) => entry.name === 'fast');
   const runtimeEntry = sharedEntries.find((entry) => entry.name === 'runtime');
   const forkEntry = sharedEntries.find((entry) => entry.name === 'fork');
+  const sideEntry = sharedEntries.find((entry) => entry.name === 'side');
   const goalEntry = sharedEntries.find((entry) => entry.name === 'goal');
   const extraInfoEntry = sharedEntries.find((entry) => entry.name === 'extra_info');
 
@@ -50,6 +51,7 @@ test('buildSlashCommandEntries includes aliases and provider toggle only in shar
   assert.ok(fastEntry);
   assert.ok(runtimeEntry);
   assert.ok(forkEntry);
+  assert.ok(sideEntry);
   assert.ok(goalEntry);
   assert.deepEqual(extraInfoEntry.aliases, ['extrainfo']);
   assert.ok(sharedEntries.some((entry) => entry.name === 'provider'));
@@ -62,6 +64,23 @@ test('buildSlashCommandEntries includes aliases and provider toggle only in shar
   assert.ok(buildSlashCommandEntries({ botProvider: 'claude' }).some((entry) => entry.name === 'fork'));
   assert.ok(buildSlashCommandEntries({ botProvider: 'codex' }).some((entry) => entry.name === 'fork'));
   assert.ok(buildSlashCommandEntries({ botProvider: 'codex' }).some((entry) => entry.name === 'goal'));
+
+  const sideOptions = sideEntry.configure({
+    options: [],
+    addStringOption(configure) {
+      const option = {
+        data: { choices: [] },
+        setName(name) { this.data.name = name; return this; },
+        setDescription(description) { this.data.description = description; return this; },
+        setRequired(required) { this.data.required = required; return this; },
+        addChoices(...choices) { this.data.choices.push(...choices); return this; },
+      };
+      configure(option);
+      this.options.push(option.data);
+      return this;
+    },
+  }).options;
+  assert.deepEqual(sideOptions.map((option) => option.name), ['action', 'question']);
 
   const lockedSessions = lockedEntries.find((entry) => entry.name === 'sessions');
   const lockedResume = lockedEntries.find((entry) => entry.name === 'resume');

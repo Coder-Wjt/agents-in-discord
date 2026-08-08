@@ -307,6 +307,55 @@ test('createCodexAppServerRunner forwards completed native reasoning summaries a
   runner.closeAll('test done');
 });
 
+test('createCodexAppServerRunner reports when the main task needs user attention', async () => {
+  const fake = createFakeAppServerSpawn({ autoComplete: false });
+  const events = [];
+  const runner = createCodexAppServerRunner({
+    spawnEnv: { HOME: '/tmp/home' },
+    getProviderBin: () => 'codex-test',
+    getSessionId: () => null,
+    resolveModelSetting: () => ({ value: null }),
+    resolveCodexProfileSetting: () => ({ value: null, isExplicit: false, valid: true }),
+    resolveReasoningEffortSetting: () => ({ value: null }),
+    resolveFastModeSetting: () => ({ enabled: false, source: 'env default' }),
+    resolveCompactStrategySetting: () => ({ strategy: 'hard' }),
+    resolveCompactEnabledSetting: () => ({ enabled: false }),
+    resolveNativeCompactTokenLimitSetting: () => ({ tokens: 0 }),
+    resolveTimeoutSetting: () => ({ timeoutMs: 0 }),
+    normalizeTimeoutMs: (value) => Number(value || 0),
+    safeError: (err) => String(err?.message || err),
+    stopChildProcess: (target) => target.kill(),
+    idleMs: 0,
+    spawnFn: fake.spawnFn,
+    log: () => {},
+  });
+
+  const resultPromise = runner.runTask({
+    session: { provider: 'codex', mode: 'safe' },
+    sessionKey: 'discord-thread-attention',
+    workspaceDir: '/tmp/workspace',
+    prompt: 'ask before continuing',
+    onEvent: (event) => events.push(event),
+  });
+  await waitFor(() => fake.writes.some((line) => JSON.parse(line).method === 'turn/start'));
+
+  fake.child.stdout.write(`${JSON.stringify({
+    id: 99,
+    method: 'item/tool/requestUserInput',
+    params: { threadId: 'thread-1', turnId: 'turn-1' },
+  })}\n`);
+  await waitFor(() => events.some((event) => event.type === 'turn.attention.required'));
+
+  assert.deepEqual(events.find((event) => event.type === 'turn.attention.required'), {
+    type: 'turn.attention.required',
+    kind: 'input',
+    thread_id: 'thread-1',
+  });
+  fake.completeTurn();
+  await resultPromise;
+  runner.closeAll('test done');
+});
+
 test('createCodexAppServerRunner promotes commentary output only for Codex goal continuation', async () => {
   const completedItems = [
     { type: 'agentMessage', id: 'item-1', text: '本地加严验收通过。', phase: 'commentary' },
@@ -398,7 +447,7 @@ test('createCodexAppServerRunner resumes an existing thread before starting a tu
 });
 
 test('createCodexAppServerRunner forks side thread as ephemeral and injects boundary items', async () => {
-  const fake = createFakeAppServerSpawn();
+  const fake = createFakeAppServerSpawn({ autoComplete: false });
   const runner = createCodexAppServerRunner({
     spawnEnv: { HOME: '/tmp/home' },
     getProviderBin: () => 'codex-test',
@@ -419,11 +468,20 @@ test('createCodexAppServerRunner forks side thread as ephemeral and injects boun
     log: () => {},
   });
 
+  const parentRun = runner.runTask({
+    session: { provider: 'codex', mode: 'safe', runnerSessionId: 'parent-thread-1' },
+    sessionKey: 'discord-thread-1',
+    workspaceDir: '/tmp/workspace',
+    prompt: 'long parent task',
+    systemPrompt: 'parent instructions',
+  });
+  await waitFor(() => fake.writes.some((line) => JSON.parse(line).method === 'turn/start'));
+
   const result = await runner.forkSideThread({
     session: { provider: 'codex', mode: 'safe', runnerSessionId: 'parent-thread-1' },
     sessionKey: 'discord-thread-1',
     workspaceDir: '/tmp/workspace',
-    systemPrompt: 'parent instructions',
+    systemPrompt: 'different caller context',
     sideDeveloperInstructions: 'side rules',
     boundaryItems: [{ type: 'message', role: 'user', content: [] }],
   });
@@ -432,25 +490,31 @@ test('createCodexAppServerRunner forks side thread as ephemeral and injects boun
   assert.equal(result.parentThreadId, 'parent-thread-1');
   assert.equal(result.sideThreadId, 'side-thread-1');
   const methods = fake.writes.map((line) => JSON.parse(line).method);
-  assert.deepEqual(methods, ['initialize', 'initialized', 'thread/resume', 'thread/fork', 'thread/inject_items']);
+  assert.deepEqual(methods, ['initialize', 'initialized', 'thread/resume', 'turn/start', 'thread/fork', 'thread/inject_items']);
   const forkRequest = fake.writes.map((line) => JSON.parse(line)).find((request) => request.method === 'thread/fork');
   assert.equal(forkRequest.params.threadId, 'parent-thread-1');
   assert.equal(forkRequest.params.ephemeral, true);
+  assert.equal(forkRequest.params.approvalPolicy, 'never');
+  assert.equal(forkRequest.params.approvalsReviewer, 'user');
+  assert.equal(forkRequest.params.sandbox, 'read-only');
   assert.match(forkRequest.params.developerInstructions, /parent instructions/);
   assert.match(forkRequest.params.developerInstructions, /side rules/);
   const injectRequest = fake.writes.map((line) => JSON.parse(line)).find((request) => request.method === 'thread/inject_items');
   assert.equal(injectRequest.params.threadId, 'side-thread-1');
   assert.equal(injectRequest.params.items.length, 1);
 
-  const sideRun = await runner.runTask({
+  const sideRun = runner.runTask({
     session: { provider: 'codex', mode: 'safe', runnerSessionId: 'side-thread-1' },
     sessionKey: 'discord-thread-1',
     workspaceDir: '/tmp/workspace',
     prompt: 'side hello',
     targetThreadId: 'side-thread-1',
   });
-  assert.equal(sideRun.ok, true);
-  assert.equal(sideRun.threadId, 'side-thread-1');
+  await waitFor(() => fake.writes.filter((line) => JSON.parse(line).method === 'turn/start').length === 2);
+  fake.completeTurn();
+  const sideResult = await sideRun;
+  assert.equal(sideResult.ok, true);
+  assert.equal(sideResult.threadId, 'side-thread-1');
   fake.child.stdout.write(`${JSON.stringify({ method: 'thread/tokenUsage/updated', params: { threadId: 'side-thread-1', tokenUsage: { totalTokens: 1 } } })}\n`);
   await sleep(5);
   const turnRequest = fake.writes.map((line) => JSON.parse(line)).filter((request) => request.method === 'turn/start').pop();
@@ -465,11 +529,128 @@ test('createCodexAppServerRunner forks side thread as ephemeral and injects boun
   assert.equal(cleanup.interrupted, false);
   assert.equal(fake.child.killed, false);
   assert.equal(runner.getSnapshot()[0].threadId, 'parent-thread-1');
+  fake.child.stdout.write(`${JSON.stringify({
+    method: 'turn/completed',
+    params: { threadId: 'parent-thread-1', turn: { id: 'turn-parent', status: 'completed' } },
+  })}\n`);
+  await parentRun;
+  runner.closeAll('test done');
+});
+
+test('createCodexAppServerRunner refuses a side fork when the parent task is not running', async () => {
+  const fake = createFakeAppServerSpawn({ autoComplete: false });
+  const runner = createCodexAppServerRunner({
+    spawnEnv: { HOME: '/tmp/home' },
+    getProviderBin: () => 'codex-test',
+    getSessionId: (session) => session.runnerSessionId || null,
+    resolveModelSetting: () => ({ value: null }),
+    resolveCodexProfileSetting: () => ({ value: null, isExplicit: false, valid: true }),
+    resolveReasoningEffortSetting: () => ({ value: null }),
+    resolveFastModeSetting: () => ({ enabled: false, source: 'env default' }),
+    resolveCompactStrategySetting: () => ({ strategy: 'hard' }),
+    resolveCompactEnabledSetting: () => ({ enabled: false }),
+    resolveNativeCompactTokenLimitSetting: () => ({ tokens: 0 }),
+    resolveTimeoutSetting: () => ({ timeoutMs: 0 }),
+    normalizeTimeoutMs: (value) => Number(value || 0),
+    safeError: (err) => String(err?.message || err),
+    stopChildProcess: (target) => target.kill(),
+    idleMs: 0,
+    spawnFn: fake.spawnFn,
+    log: () => {},
+  });
+
+  await assert.rejects(
+    runner.forkSideThread({
+      session: { provider: 'codex', mode: 'safe', runnerSessionId: 'parent-thread-1' },
+      sessionKey: 'discord-thread-1',
+      workspaceDir: '/tmp/workspace',
+    }),
+    /main Codex task is no longer running/,
+  );
+  assert.deepEqual(fake.calls, []);
+});
+
+test('createCodexAppServerRunner runs parent and side turns concurrently without mixing output', async () => {
+  const fake = createFakeAppServerSpawn({ autoComplete: false });
+  const runner = createCodexAppServerRunner({
+    spawnEnv: { HOME: '/tmp/home' },
+    getProviderBin: () => 'codex-test',
+    getSessionId: (session) => session.runnerSessionId || null,
+    resolveModelSetting: () => ({ value: null }),
+    resolveCodexProfileSetting: () => ({ value: null, isExplicit: false, valid: true }),
+    resolveReasoningEffortSetting: () => ({ value: null }),
+    resolveFastModeSetting: () => ({ enabled: false, source: 'env default' }),
+    resolveCompactStrategySetting: () => ({ strategy: 'hard' }),
+    resolveCompactEnabledSetting: () => ({ enabled: false }),
+    resolveNativeCompactTokenLimitSetting: () => ({ tokens: 0 }),
+    resolveTimeoutSetting: () => ({ timeoutMs: 0 }),
+    normalizeTimeoutMs: (value) => Number(value || 0),
+    safeError: (err) => String(err?.message || err),
+    stopChildProcess: (target) => target.kill(),
+    idleMs: 0,
+    spawnFn: fake.spawnFn,
+    log: () => {},
+  });
+
+  const parentRun = runner.runTask({
+    session: { provider: 'codex', mode: 'safe', runnerSessionId: 'parent-thread-1' },
+    sessionKey: 'discord-thread-1',
+    workspaceDir: '/tmp/workspace',
+    prompt: 'long parent task',
+  });
+  await waitFor(() => fake.writes.filter((line) => JSON.parse(line).method === 'turn/start').length === 1);
+
+  const fork = await runner.forkSideThread({
+    session: { provider: 'codex', mode: 'safe', runnerSessionId: 'parent-thread-1' },
+    sessionKey: 'discord-thread-1',
+    workspaceDir: '/tmp/workspace',
+  });
+  const sideRun = runner.runTask({
+    session: { provider: 'codex', mode: 'safe', runnerSessionId: fork.sideThreadId },
+    sessionKey: 'discord-thread-1',
+    workspaceDir: '/tmp/workspace',
+    prompt: 'read-only side question',
+    targetThreadId: fork.sideThreadId,
+  });
+  await waitFor(() => fake.writes.filter((line) => JSON.parse(line).method === 'turn/start').length === 2);
+  assert.equal(runner.getSnapshot()[0].activeTurnCount, 2);
+
+  fake.child.stdout.write(`${JSON.stringify({
+    method: 'item/completed',
+    params: {
+      threadId: 'side-thread-1',
+      turnId: 'turn-side',
+      item: { type: 'agentMessage', id: 'side-answer', text: 'side answer', phase: 'final_answer' },
+    },
+  })}\n`);
+  fake.child.stdout.write(`${JSON.stringify({
+    method: 'turn/completed',
+    params: { threadId: 'side-thread-1', turn: { id: 'turn-side', status: 'completed' } },
+  })}\n`);
+  const sideResult = await sideRun;
+  assert.deepEqual(sideResult.finalAnswerMessages, ['side answer']);
+  assert.equal(runner.getSnapshot()[0].activeTurnCount, 1);
+
+  fake.child.stdout.write(`${JSON.stringify({
+    method: 'item/completed',
+    params: {
+      threadId: 'parent-thread-1',
+      turnId: 'turn-parent',
+      item: { type: 'agentMessage', id: 'parent-answer', text: 'parent answer', phase: 'final_answer' },
+    },
+  })}\n`);
+  fake.child.stdout.write(`${JSON.stringify({
+    method: 'turn/completed',
+    params: { threadId: 'parent-thread-1', turn: { id: 'turn-parent', status: 'completed' } },
+  })}\n`);
+  const parentResult = await parentRun;
+  assert.deepEqual(parentResult.finalAnswerMessages, ['parent answer']);
+  assert.equal(parentResult.finalAnswerMessages.includes('side answer'), false);
   runner.closeAll('test done');
 });
 
 test('createCodexAppServerRunner unsubscribes side thread when boundary injection fails', async () => {
-  const fake = createFakeAppServerSpawn({ failInject: true });
+  const fake = createFakeAppServerSpawn({ autoComplete: false, failInject: true });
   const runner = createCodexAppServerRunner({
     spawnEnv: { HOME: '/tmp/home' },
     getProviderBin: () => 'codex-test',
@@ -489,6 +670,14 @@ test('createCodexAppServerRunner unsubscribes side thread when boundary injectio
     spawnFn: fake.spawnFn,
     log: () => {},
   });
+
+  const parentRun = runner.runTask({
+    session: { provider: 'codex', mode: 'safe', runnerSessionId: 'parent-thread-1' },
+    sessionKey: 'discord-thread-1',
+    workspaceDir: '/tmp/workspace',
+    prompt: 'long parent task',
+  });
+  await waitFor(() => fake.writes.some((line) => JSON.parse(line).method === 'turn/start'));
 
   await assert.rejects(
     () => runner.forkSideThread({
@@ -504,11 +693,14 @@ test('createCodexAppServerRunner unsubscribes side thread when boundary injectio
     'initialize',
     'initialized',
     'thread/resume',
+    'turn/start',
     'thread/fork',
     'thread/inject_items',
     'thread/unsubscribe',
   ]);
   assert.equal(requests.at(-1).params.threadId, 'side-thread-1');
+  fake.completeTurn();
+  await parentRun;
   runner.closeAll('test done');
 });
 

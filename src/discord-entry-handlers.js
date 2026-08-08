@@ -24,12 +24,16 @@ export function createDiscordEntryHandlers({
   isSettingsPanelComponentId,
   isSettingsPanelModalId,
   isGoalModalId,
+  isCodexSideComponentId = () => false,
+  isCodexSideModalId = () => false,
   handleWorkspaceBusyInteraction,
   handleWorkspaceBrowserInteraction,
   handleOnboardingButtonInteraction,
   handleSettingsPanelInteraction,
   handleSettingsPanelModalSubmit,
   handleGoalModalSubmit,
+  handleCodexSideInteraction,
+  handleCodexSideModalSubmit,
   routeSlashCommand,
   shouldDeferInteraction = () => true,
   normalizeSlashCommandName,
@@ -213,7 +217,8 @@ export function createDiscordEntryHandlers({
       const commandButton = interaction.isButton() ? parseCommandActionButtonId(interaction.customId) : null;
       const isOnboarding = interaction.isButton() && isOnboardingButtonId(interaction.customId);
       const isSettingsPanel = isSettingsPanelComponentId(interaction.customId);
-      if (!isWorkspaceBusy && !isWorkspaceBrowser && !isOnboarding && !commandButton && !isSettingsPanel) return;
+      const isCodexSide = interaction.isButton() && isCodexSideComponentId(interaction.customId);
+      if (!isWorkspaceBusy && !isWorkspaceBrowser && !isOnboarding && !commandButton && !isSettingsPanel && !isCodexSide) return;
       logger.log(`[interaction] kind=${interaction.isButton() ? 'button' : 'select'} id=${interaction.customId} user=${interaction.user?.tag || interaction.user?.id || 'unknown'} channel=${interaction.channelId || 'unknown'}`);
       try {
         if (!isAllowedUser(interaction.user.id)) {
@@ -239,6 +244,10 @@ export function createDiscordEntryHandlers({
           }
           return;
         }
+        if (isCodexSide) {
+          await handleCodexSideInteraction(interaction, (payload) => sendInteractionResponse(interaction, payload));
+          return;
+        }
         if (isWorkspaceBusy) {
           await handleWorkspaceBusyInteraction(interaction);
           return;
@@ -262,7 +271,8 @@ export function createDiscordEntryHandlers({
     if (typeof interaction.isModalSubmit === 'function' && interaction.isModalSubmit()) {
       const isSettingsModal = isSettingsPanelModalId(interaction.customId);
       const isGoalModal = isGoalModalId?.(interaction.customId);
-      if (!isSettingsModal && !isGoalModal) return;
+      const isCodexSideModal = isCodexSideModalId(interaction.customId);
+      if (!isSettingsModal && !isGoalModal && !isCodexSideModal) return;
       logger.log(`[interaction] kind=modal id=${interaction.customId} user=${interaction.user?.tag || interaction.user?.id || 'unknown'} channel=${interaction.channelId || 'unknown'}`);
       try {
         if (!isAllowedUser(interaction.user.id)) {
@@ -275,6 +285,8 @@ export function createDiscordEntryHandlers({
         }
         if (isSettingsModal) {
           await handleSettingsPanelModalSubmit(interaction);
+        } else if (isCodexSideModal) {
+          await handleCodexSideModalSubmit(interaction, (payload) => sendInteractionResponse(interaction, payload));
         } else {
           await handleGoalModalSubmit(interaction);
         }
