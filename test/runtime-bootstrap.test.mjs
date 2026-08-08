@@ -16,6 +16,7 @@ import {
   readCodexModelCatalog,
   readCodexProfileCatalog,
   readClaudeModelCatalog,
+  readOmpDefaults,
   readPiFamilyModelCatalog,
   readProviderModelCatalog,
   renderMissingDiscordTokenHint,
@@ -741,6 +742,33 @@ test('readPiFamilyModelCatalog reads models from the CLI JSON catalog', () => {
   assert.deepEqual(catalog.models[0].supportedReasoningLevels, ['low', 'medium', 'high', 'xhigh', 'max']);
   // Unknown thinking levels are dropped so the panel cannot offer an unsettable value.
   assert.deepEqual(catalog.models[1].supportedReasoningLevels, ['auto']);
+});
+
+test('readOmpDefaults reads and validates the configured OpenAI service tier', () => {
+  const calls = [];
+  const defaults = readOmpDefaults({
+    ompBin: '/usr/local/bin/omp',
+    execFileSyncFn: (bin, args) => {
+      calls.push({ bin, args });
+      return JSON.stringify({ key: 'tier.openai', value: 'priority', type: 'enum' });
+    },
+    now: () => 1_000,
+  });
+
+  assert.deepEqual(calls, [{
+    bin: '/usr/local/bin/omp',
+    args: ['config', 'get', 'tier.openai', '--json'],
+  }]);
+  assert.deepEqual(defaults, {
+    serviceTier: 'priority',
+    fastMode: true,
+    source: 'OMP config',
+  });
+  assert.throws(() => readOmpDefaults({
+    ompBin: '/usr/local/bin/omp-invalid-tier',
+    execFileSyncFn: () => JSON.stringify({ key: 'tier.openai', value: 'unexpected' }),
+    now: () => 2_000,
+  }), /invalid tier\.openai/);
 });
 
 test('readPiFamilyModelCatalog caches per provider and reports failures', () => {

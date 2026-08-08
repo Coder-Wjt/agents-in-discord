@@ -72,6 +72,7 @@ export function buildRunnerArgs({
       mode,
       model,
       effort,
+      fastMode,
     });
   }
 
@@ -187,6 +188,7 @@ function buildPiFamilyArgs({
   mode,
   model,
   effort,
+  fastMode,
 }) {
   const isOmp = provider === 'omp';
   const args = ['-p', '--mode', 'json'];
@@ -199,6 +201,9 @@ function buildPiFamilyArgs({
   }
   if (model) args.push('--model', model);
   if (effort) args.push('--thinking', effort);
+  if (isOmp && typeof fastMode === 'boolean') {
+    args.push('--service-tier', fastMode ? 'priority' : 'none');
+  }
   if (sessionId) args.push(isOmp ? '--resume' : '--session', sessionId);
   args.push(prompt);
   return args;

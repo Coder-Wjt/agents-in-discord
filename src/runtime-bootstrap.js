@@ -12,6 +12,8 @@ const CODEX_MODEL_CATALOG_CACHE = new Map();
 const CLAUDE_MODEL_CATALOG_CACHE = new Map();
 const ANTIGRAVITY_MODEL_CATALOG_CACHE = new Map();
 const PI_FAMILY_MODEL_CATALOG_CACHE = new Map();
+const OMP_DEFAULTS_CACHE = new Map();
+const OMP_OPENAI_SERVICE_TIERS = new Set(['none', 'auto', 'default', 'flex', 'scale', 'priority']);
 const ANTIGRAVITY_DOCUMENTED_MODELS = Object.freeze([
   'Gemini 3.5 Flash',
   'Gemini 3.1 Pro (High)',
@@ -562,6 +564,47 @@ export function readAntigravityModelCatalog({
 }
 
 const PI_FAMILY_REASONING_LEVELS = new Set(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'auto']);
+
+export function readOmpDefaults({
+  ompBin = 'omp',
+  env = process.env,
+  execFileSyncFn = execFileSync,
+  now = Date.now,
+  ttlMs = 5 * 60_000,
+} = {}) {
+  const resolvedBin = String(ompBin || '').trim() || 'omp';
+  const cached = OMP_DEFAULTS_CACHE.get(resolvedBin);
+  const currentTime = typeof now === 'function' ? now() : Date.now();
+  if (cached && currentTime - cached.timestamp < ttlMs) return cached.defaults;
+
+  const raw = execFileSyncFn(resolvedBin, ['config', 'get', 'tier.openai', '--json'], {
+    encoding: 'utf-8',
+    env,
+    maxBuffer: 1024 * 1024,
+    timeout: 10_000,
+  });
+  let payload;
+  try {
+    payload = JSON.parse(String(raw || ''));
+  } catch (err) {
+    throw new Error('OMP returned unparseable tier.openai JSON', { cause: err });
+  }
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload) || payload.key !== 'tier.openai') {
+    throw new Error('OMP returned an invalid tier.openai config response');
+  }
+  const serviceTier = String(payload.value || '').trim().toLowerCase();
+  if (!OMP_OPENAI_SERVICE_TIERS.has(serviceTier)) {
+    throw new Error(`OMP returned invalid tier.openai value: ${serviceTier || '(empty)'}`);
+  }
+
+  const defaults = {
+    serviceTier,
+    fastMode: serviceTier === 'priority',
+    source: 'OMP config',
+  };
+  OMP_DEFAULTS_CACHE.set(resolvedBin, { timestamp: currentTime, defaults });
+  return defaults;
+}
 
 function normalizePiFamilyModelCatalog(raw) {
   let payload = null;

@@ -560,7 +560,7 @@ export function createSlashCommandRouter({
     const provider = getSessionProvider(session);
     const language = getSessionLanguage(session);
     const action = parseFastModeAction(interaction.options.getString('action'));
-    if (provider !== 'codex') {
+    if (provider !== 'codex' && provider !== 'omp') {
       await respond({
         content: formatFastModeConfigReport(language, provider, { enabled: false, supported: false, source: 'provider unsupported' }, false),
         flags: 64,

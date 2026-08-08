@@ -176,7 +176,12 @@ function createPanel({
       claude: 'Claude Code',
       antigravity: 'Antigravity CLI',
     }[provider] || provider),
-    getSupportedReasoningEffortLevels: (provider) => provider === 'antigravity' ? [] : (provider === 'claude' ? ['high', 'medium', 'low'] : ['xhigh', 'high', 'medium', 'low']),
+    getSupportedReasoningEffortLevels: (provider) => {
+      if (provider === 'antigravity') return [];
+      if (provider === 'claude') return ['high', 'medium', 'low'];
+      if (provider === 'omp') return ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'auto'];
+      return ['xhigh', 'high', 'medium', 'low'];
+    },
     getModelCatalog: () => modelCatalog || {
       models: [
         {
@@ -219,12 +224,14 @@ function createPanel({
       value: currentSession?.effort || currentSession?.inheritedEffort || 'high',
       source: currentSession?.effortSource || (currentSession?.effort ? 'session override' : 'config.toml'),
     }),
-    resolveFastModeSetting: (currentSession) => currentSession?.provider === 'codex'
+    resolveFastModeSetting: (currentSession) => currentSession?.provider === 'codex' || currentSession?.provider === 'omp'
       ? {
-        enabled: currentSession?.fastMode ?? currentSession?.inheritedFastMode ?? true,
+        enabled: currentSession?.fastMode ?? currentSession?.inheritedFastMode ?? currentSession?.provider === 'codex',
         supported: true,
         source: currentSession?.fastModeSource
-          || (currentSession?.fastMode === null || currentSession?.fastMode === undefined ? 'config.toml' : 'session override'),
+          || (currentSession?.fastMode === null || currentSession?.fastMode === undefined
+            ? (currentSession?.provider === 'codex' ? 'config.toml' : 'provider default')
+            : 'session override'),
       }
       : { enabled: false, supported: false, source: 'provider unsupported' },
     resolveRuntimeModeSetting: (currentSession) => currentSession?.provider === 'claude' || currentSession?.provider === 'codex'
@@ -488,6 +495,52 @@ test('createSettingsPanel updates fast mode through button interaction', async (
   assert.equal(session.fastMode, true);
   assert.equal(updates.length, 1);
   assert.match(updates[0].content, /当前项：Fast Mode/);
+  assert.match(updates[0].content, /fast mode：开启（当前频道）/);
+});
+
+test('createSettingsPanel exposes OMP fast mode as the priority service tier', async () => {
+  const session = {
+    provider: 'omp',
+    language: 'zh',
+    mode: 'dangerous',
+    fastMode: null,
+  };
+  const updates = [];
+  const panel = createPanel({
+    session,
+    botProvider: 'omp',
+    commandActions: {
+      setFastMode(currentSession, enabled) {
+        currentSession.fastMode = enabled;
+        return { fastModeSetting: { enabled, supported: true, source: 'session override' } };
+      },
+    },
+  });
+
+  const opened = panel.openSettingsPanel({
+    key: 'thread-1',
+    session,
+    userId: '12345',
+    activeSection: 'fast',
+  });
+  assert.match(opened.content, /当前项：Fast Mode/);
+  assert.match(opened.content, /priority/);
+  assert.ok(opened.components.length <= 5);
+
+  await panel.handleSettingsPanelInteraction({
+    customId: 'stg:set:fast:on:12345',
+    channelId: 'thread-1',
+    user: { id: '12345' },
+    async update(payload) {
+      updates.push(payload);
+    },
+    async reply() {
+      throw new Error('should not reply');
+    },
+  });
+
+  assert.equal(session.fastMode, true);
+  assert.equal(updates.length, 1);
   assert.match(updates[0].content, /fast mode：开启（当前频道）/);
 });
 
@@ -886,6 +939,53 @@ test('createSettingsPanel exposes a compact model-only panel', () => {
   const labels = payload.components.flatMap((row) => row.components.map((component) => component.data.label));
   assert.ok(labels.includes('手写模型名'));
   assert.ok(!labels.includes('xhigh'));
+  assert.ok(labels.includes('关闭'));
+});
+
+test('createSettingsPanel keeps the OMP model section within Discord row limits', () => {
+  const session = {
+    provider: 'omp',
+    language: 'zh',
+    mode: 'dangerous',
+    model: 'openai-codex/gpt-5.6-sol',
+    effort: null,
+  };
+  const panel = createPanel({
+    session,
+    modelCatalog: {
+      models: [
+        {
+          slug: 'ccswitch-newapi/gpt-5.6-sol',
+          displayName: 'GPT-5.6 Sol (CCSwitch NewAPI)',
+          supportedReasoningLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
+          visibility: 'catalog',
+        },
+      ],
+      error: null,
+    },
+  });
+
+  const payload = panel.openSettingsPanel({
+    key: 'thread-1',
+    session,
+    userId: '12345',
+    activeSection: 'model',
+  });
+
+  assert.ok(payload.components.length <= 5);
+  const labels = payload.components.flatMap((row) => row.components.map((component) => component.data.label));
+  assert.deepEqual(labels.filter((label) => ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'auto', 'default'].includes(label)), [
+    'off',
+    'minimal',
+    'low',
+    'medium',
+    'high',
+    'xhigh',
+    'max',
+    'auto',
+    'default',
+  ]);
+  assert.ok(labels.includes('手写模型名'));
   assert.ok(labels.includes('关闭'));
 });
 

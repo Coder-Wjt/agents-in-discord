@@ -178,6 +178,31 @@ function extractProgressPayload(event) {
   return null;
 }
 
+function isOmpTextDeltaEvent(event) {
+  if (normalizeProgressEventType(event?.type || '') !== 'message_update') return false;
+  return normalizeProgressEventType(event?.assistantMessageEvent?.type || '') === 'text_delta';
+}
+
+function extractOmpAssistantTurn(event) {
+  if (normalizeProgressEventType(event?.type || '') !== 'message_end') return null;
+  const message = event?.message;
+  if (!message || normalizeProgressEventType(message.role || '') !== 'assistant') return null;
+  const stopReason = normalizeProgressEventType(message.stopReason || message.stop_reason || '')
+    .replace(/_/g, '');
+  const text = Array.isArray(message.content)
+    ? message.content
+      .filter((part) => normalizeProgressEventType(part?.type || '') === 'text')
+      .map((part) => String(part?.text || '').trim())
+      .filter(Boolean)
+      .join('\n\n')
+      .trim()
+    : '';
+  return {
+    text,
+    continuesWithTools: stopReason === 'tooluse',
+  };
+}
+
 function parseSubagentNotificationFromText(rawText) {
   const text = String(rawText || '');
   if (!text.includes('<subagent_notification>')) return null;
@@ -814,6 +839,7 @@ export function createPromptProgressReporterFactory({
     let isEmitting = false;
     let rerunEmit = false;
     let observedModel = '';
+    let lastOmpStageKey = '';
     const isDuplicateProgressEvent = createProgressEventDeduper({
       ttlMs: progressEventDedupeWindowMs,
       maxKeys: 700,
@@ -1155,6 +1181,29 @@ export function createPromptProgressReporterFactory({
           observedModel = nextObservedModel;
           session.lastObservedModel = nextObservedModel;
           observedModelChanged = true;
+        }
+      }
+      if (session?.provider === 'omp') {
+        // OMP emits one message_update event per token, followed by a complete
+        // message_end before a tool run. Only the complete turn is readable.
+        if (isOmpTextDeltaEvent(event)) return;
+        const ompTurn = extractOmpAssistantTurn(event);
+        if (ompTurn) {
+          if (ompTurn.continuesWithTools && ompTurn.text) {
+            const safe = sanitizeProgressDisplayText(ompTurn.text);
+            const key = normalizeActivityKey(safe);
+            if (safe && key && key !== lastOmpStageKey) {
+              lastOmpStageKey = key;
+              events += 1;
+              appendActivity(safe, { stream: false });
+              latestStep = truncate(normalizeProgressText(safe), progressTextPreviewChars);
+              latestStepAt = now();
+              void deliverStageMessage(safe);
+              syncActiveRun();
+              void emit(false);
+            }
+          }
+          return;
         }
       }
       if (session?.provider === 'codex') {

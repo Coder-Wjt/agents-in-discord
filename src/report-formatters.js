@@ -982,10 +982,26 @@ export function createReportFormatters({
   }
 
   function formatFastModeConfigHelp(language, provider = 'codex') {
-    if (provider !== 'codex') {
+    if (provider !== 'codex' && provider !== 'omp') {
       return language === 'en'
         ? `Current provider ${getProviderDisplayName(provider)} does not expose Fast mode.`
         : `当前 provider ${getProviderDisplayName(provider)} 不支持 Fast mode。`;
+    }
+    if (provider === 'omp') {
+      if (language === 'en') {
+        return [
+          'Usage: `!fast <on|off|status|default>`',
+          `Slash: \`${slashRef('fast')} <on|off|status|default>\``,
+          'Default: `default` follows the parent channel first, then the OMP default without adding a session override.',
+          'Note: On uses service tier `priority`; Off uses `none` for normal processing.',
+        ].join('\n');
+      }
+      return [
+        '用法：`!fast <on|off|status|default>`',
+        `Slash：\`${slashRef('fast')} <on|off|status|default>\``,
+        '默认：`default` 会优先继承父频道，否则跟随 OMP 默认，不添加当前会话覆盖。',
+        '说明：开启使用 service tier `priority`，关闭使用 `none` 普通处理。',
+      ].join('\n');
     }
     if (language === 'en') {
       return [
@@ -1009,17 +1025,24 @@ export function createReportFormatters({
         ? `⚠️ Current provider ${getProviderDisplayName(provider)} does not support Fast mode.`
         : `⚠️ 当前 provider ${getProviderDisplayName(provider)} 不支持 Fast mode。`;
     }
+    const note = provider === 'omp'
+      ? (language === 'en'
+        ? '• note: On passes OMP service tier `priority`; Off passes `none`; default leaves OMP unchanged.'
+        : '• 说明：开启会传给 OMP service tier `priority`，关闭传 `none`，default 不覆盖 OMP。')
+      : (language === 'en'
+        ? '• note: when the effective setting is off, the bot explicitly passes `features.fast_mode=false`; channel and parent overrides are also passed through to mirror Codex `/fast`.'
+        : '• 说明：只要当前生效值是关闭，bot 就会在非交互 `codex exec` 中显式透传 `features.fast_mode=false`；频道和父频道覆盖也会继续透传，对齐 Codex 里的 `/fast` 行为。');
     if (language === 'en') {
       return [
         changed ? '✅ Fast mode updated' : 'ℹ️ Fast mode',
         `• status: ${formatFastModeLabel(fastModeSetting.enabled, language)} (${formatSettingSourceLabel(fastModeSetting.source, language)})`,
-        '• note: when the effective setting is off, the bot explicitly passes `features.fast_mode=false`; channel and parent overrides are also passed through to mirror Codex `/fast`.',
+        note,
       ].join('\n');
     }
     return [
       changed ? '✅ Fast mode 已更新' : 'ℹ️ 当前 Fast mode',
       `• 状态：${formatFastModeLabel(fastModeSetting.enabled, language)}（${formatSettingSourceLabel(fastModeSetting.source, language)}）`,
-      '• 说明：只要当前生效值是关闭，bot 就会在非交互 `codex exec` 中显式透传 `features.fast_mode=false`；频道和父频道覆盖也会继续透传，对齐 Codex 里的 `/fast` 行为。',
+      note,
     ].join('\n');
   }
 
@@ -1199,7 +1222,7 @@ export function createReportFormatters({
         '**Model & Runtime**',
         `• \`${slashRef('model')}\` — choose model and effort from a compact panel`,
         `• \`!model <name|default>\` — type a custom model directly`,
-        provider === 'codex' ? `• \`${slashRef('fast')} <on|off|status|default>\` / \`!fast <...>\` — toggle Codex Fast mode for this channel` : null,
+        (provider === 'codex' || provider === 'omp') ? `• \`${slashRef('fast')} <on|off|status|default>\` / \`!fast <...>\` — toggle ${getProviderDisplayName(provider)} Fast mode for this channel` : null,
         (provider === 'claude' || provider === 'codex') ? `• \`${slashRef('runtime')} <normal|long|status|default>\` / \`!runtime <...>\` — switch ${getProviderDisplayName(provider)} runtime mode for this channel` : null,
         reasoningLevels.length ? null : `• effort — not exposed by current provider (${getProviderDisplayName(provider)})`,
         compact.supportsNativeLimit
@@ -1258,7 +1281,7 @@ export function createReportFormatters({
         '**模型 & 执行**',
         `• \`${slashRef('model')}\` — 打开只包含模型和推理力度的小面板`,
         `• \`!model <name|default>\` — 手写设置自定义 model`,
-        provider === 'codex' ? `• \`${slashRef('fast')} <on|off|status|default>\` / \`!fast <...>\` — 切换当前频道的 Codex Fast mode` : null,
+        (provider === 'codex' || provider === 'omp') ? `• \`${slashRef('fast')} <on|off|status|default>\` / \`!fast <...>\` — 切换当前频道的 ${getProviderDisplayName(provider)} Fast mode` : null,
         (provider === 'claude' || provider === 'codex') ? `• \`${slashRef('runtime')} <normal|long|status|default>\` / \`!runtime <...>\` — 切换当前频道的 ${getProviderDisplayName(provider)} 接入方式` : null,
       reasoningLevels.length ? null : `• effort — 当前 provider (${getProviderDisplayName(provider)}) 未暴露`,
       compact.supportsNativeLimit

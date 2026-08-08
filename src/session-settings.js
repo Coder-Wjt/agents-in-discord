@@ -404,6 +404,7 @@ export function createSessionSettings({
     source: 'provider',
     error: null,
   }),
+  readOmpDefaults = () => ({ serviceTier: 'none', fastMode: false, source: 'OMP config' }),
   readCodexProfileCatalog = () => ({ profiles: [], configPath: '' }),
   normalizeProvider = (provider) => String(provider || '').trim().toLowerCase() || 'codex',
   getSupportedCompactStrategies = () => ['hard', 'native', 'off'],
@@ -482,7 +483,7 @@ export function createSessionSettings({
 
   function resolveFastModeSetting(session) {
     const provider = normalizeProvider(session?.provider);
-    if (provider !== 'codex') {
+    if (provider !== 'codex' && provider !== 'omp') {
       return {
         enabled: false,
         supported: false,
@@ -492,20 +493,38 @@ export function createSessionSettings({
 
     const sessionFastMode = normalizeSessionFastMode(session?.fastMode);
     if (sessionFastMode !== null) {
-      return {
+      const setting = {
         enabled: sessionFastMode,
         supported: true,
         source: 'session override',
       };
+      if (provider === 'omp') setting.serviceTier = sessionFastMode ? 'priority' : 'none';
+      return setting;
     }
 
     const parentSession = resolveParentSession(session);
     const parentFastMode = normalizeSessionFastMode(readProviderScopedValue(parentSession, provider, 'fastMode'));
     if (parentFastMode !== null) {
-      return {
+      const setting = {
         enabled: parentFastMode,
         supported: true,
         source: 'parent channel',
+      };
+      if (provider === 'omp') setting.serviceTier = parentFastMode ? 'priority' : 'none';
+      return setting;
+    }
+
+    if (provider === 'omp') {
+      const defaults = readOmpDefaults();
+      const serviceTier = String(defaults?.serviceTier || '').trim().toLowerCase();
+      if (!['none', 'auto', 'default', 'flex', 'scale', 'priority'].includes(serviceTier)) {
+        throw new Error(`invalid OMP tier.openai default: ${serviceTier || '(empty)'}`);
+      }
+      return {
+        enabled: serviceTier === 'priority',
+        supported: true,
+        serviceTier,
+        source: 'provider default',
       };
     }
 

@@ -490,7 +490,7 @@ export function createSettingsPanel({
     if (!botProvider) sections.push('provider');
     if (provider === 'codex') sections.push('profile');
     sections.push('model');
-    if (provider === 'codex') sections.push('fast');
+    if (provider === 'codex' || provider === 'omp') sections.push('fast');
     if (provider === 'codex' || provider === 'claude') sections.push('runtime');
     if (getSupportedReasoningEffortLevels(provider).length) sections.push('effort');
     sections.push('compact', 'reply', 'language', 'mode', 'workspace');
@@ -767,9 +767,13 @@ export function createSettingsPanel({
         const selected = snapshot.fastMode.source === 'session override'
           ? (snapshot.fastMode.enabled ? 'on' : 'off')
           : 'follow';
-        const followLabel = snapshot.isThread
-          ? (snapshot.language === 'en' ? 'Follow parent/global' : '跟随父频道/全局')
-          : (snapshot.language === 'en' ? 'Follow global' : '跟随全局');
+        const followLabel = snapshot.provider === 'omp'
+          ? (snapshot.isThread
+            ? (snapshot.language === 'en' ? 'Follow parent/OMP default' : '跟随父频道/OMP 默认')
+            : (snapshot.language === 'en' ? 'Follow OMP default' : '跟随 OMP 默认'))
+          : (snapshot.isThread
+            ? (snapshot.language === 'en' ? 'Follow parent/global' : '跟随父频道/全局')
+            : (snapshot.language === 'en' ? 'Follow global' : '跟随全局'));
         return [
           new ActionRowBuilder().addComponents(
             new ButtonBuilder()
@@ -970,6 +974,15 @@ function formatOverviewSection(snapshot) {
           ? 'Choose a model from the CLI catalog, type a custom model, or tune effort here. Provider default clears this channel override.'
           : '可以从 CLI 读取到的模型里选择，也可以手写模型名。推理力度也放在这里一起调，使用 provider 默认会清掉当前频道覆盖。';
       case 'fast':
+        if (snapshot.provider === 'omp') {
+          return snapshot.language === 'en'
+            ? (snapshot.isThread
+              ? 'On uses OMP priority service tier; Off uses the normal tier. "Follow parent/OMP default" inherits the parent first and otherwise leaves OMP\'s tier setting unchanged.'
+              : 'On uses OMP priority service tier; Off uses the normal tier. "Follow OMP default" removes the channel override and leaves OMP\'s tier setting unchanged.')
+            : (snapshot.isThread
+              ? '开启会使用 OMP 的 priority service tier，关闭会使用普通等级。跟随父频道/OMP 默认会优先继承父频道，否则不覆盖 OMP 自己的等级设置。'
+              : '开启会使用 OMP 的 priority service tier，关闭会使用普通等级。跟随 OMP 默认会清除当前频道覆盖，不改动 OMP 自己的等级设置。');
+        }
         return snapshot.language === 'en'
           ? (snapshot.isThread
             ? 'Fast mode only exists on Codex. "Follow parent/global" means this thread stops overriding and inherits the parent channel setting first, then `~/.codex/config.toml` (which stays on unless `[features].fast_mode = false` is set).'
@@ -1064,8 +1077,8 @@ function formatOverviewSection(snapshot) {
               ? `• fast mode: ${formatFastModeLabel(snapshot.fastMode.enabled, snapshot.language)} (${formatSettingSourceLabel(snapshot.fastMode.source, snapshot.language)})`
               : `• fast mode：${formatFastModeLabel(snapshot.fastMode.enabled, snapshot.language)}（${formatSettingSourceLabel(snapshot.fastMode.source, snapshot.language)}）`)
             : (snapshot.language === 'en'
-              ? '• fast mode: n/a (Codex only)'
-              : '• fast mode：不适用（仅 Codex）'),
+              ? '• fast mode: n/a (Codex and OMP only)'
+              : '• fast mode：不适用（仅 Codex 和 OMP）'),
           snapshot.runtimeMode.supported
             ? (snapshot.language === 'en'
               ? `• runtime: ${formatRuntimeModeLabel(snapshot.runtimeMode.mode, snapshot.language)} (${formatSettingSourceLabel(snapshot.runtimeMode.source, snapshot.language)})`
@@ -1121,10 +1134,21 @@ function formatOverviewSection(snapshot) {
     const modelPanelGeneration = (section === 'model' || section === 'defaults')
       ? issuedGeneration
       : '';
+    const sectionControls = buildSectionControls(key, session, userId, section, snapshot, modelPanelGeneration);
+    const closeRow = buildCloseRow(session, userId);
+    if (section === 'model') {
+      const lastControlRow = sectionControls.at(-1);
+      if (lastControlRow && lastControlRow.components.length < 5) {
+        lastControlRow.addComponents(...closeRow.components);
+      } else {
+        sectionControls.push(closeRow);
+      }
+    } else {
+      sectionControls.push(closeRow);
+    }
     const components = [
       ...buildSectionNavigation(session, userId, section),
-      ...buildSectionControls(key, session, userId, section, snapshot, modelPanelGeneration),
-      buildCloseRow(session, userId),
+      ...sectionControls,
     ];
     const payload = {
       content: formatSettingsContent(key, session, section, notice),

@@ -82,6 +82,7 @@ test('buildSlashCommandEntries includes aliases and provider toggle only in shar
   const ompEntries = buildSlashCommandEntries({ botProvider: 'omp' });
   assert.deepEqual(ompEntries.find((entry) => entry.name === 'sessions').aliases, ['omp_sessions']);
   assert.deepEqual(ompEntries.find((entry) => entry.name === 'resume').aliases, ['omp_resume']);
+  assert.ok(ompEntries.some((entry) => entry.name === 'fast'));
   assert.deepEqual(
     lockedCompact.configure({
       addStringOption(configure) {

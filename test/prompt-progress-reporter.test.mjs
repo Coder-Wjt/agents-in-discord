@@ -245,6 +245,68 @@ test('createPromptProgressReporterFactory can stream deduped process messages wh
   assert.match(harness.edits.at(-1).content, /process: 我先检查一下这个仓库的入口文件。/);
 });
 
+test('createPromptProgressReporterFactory turns OMP token deltas into readable stage messages', async () => {
+  const harness = createHarness({
+    session: { provider: 'omp' },
+    factoryOptions: {
+      presentation: createRealPresentation(),
+    },
+  });
+
+  await harness.reporter.start();
+  harness.channelState.activeRun.phase = 'exec';
+
+  for (const delta of ['Using', ' agent', '-browser', ' to', ' inspect', ' the', ' live', ' site.']) {
+    harness.reporter.onEvent({
+      type: 'message_update',
+      assistantMessageEvent: { type: 'text_delta', delta },
+    });
+  }
+
+  assert.deepEqual(harness.streamed, []);
+  assert.equal(harness.channelState.activeRun.progressEvents, 0);
+
+  harness.reporter.onEvent({
+    type: 'message_end',
+    message: {
+      role: 'assistant',
+      stopReason: 'toolUse',
+      content: [
+        { type: 'text', text: 'Using agent-browser to inspect the live site.' },
+        { type: 'toolCall', name: 'browser', arguments: { url: 'https://writes.atou.cc/' } },
+      ],
+    },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(harness.streamed, ['Using agent-browser to inspect the live site.']);
+  assert.equal(harness.channelState.activeRun.progressEvents, 1);
+
+  harness.reporter.onEvent({
+    type: 'tool_execution_start',
+    toolName: 'browser',
+    args: { url: 'https://writes.atou.cc/' },
+    intent: 'Inspecting the live site and repository workflow',
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(harness.streamed, ['Using agent-browser to inspect the live site.']);
+  assert.match(harness.edits.at(-1).content, /latest activity: Inspecting the live site and repository workflow/);
+  assert.doesNotMatch(harness.edits.at(-1).content, /latest activity: browser:/);
+
+  harness.reporter.onEvent({
+    type: 'message_end',
+    message: {
+      role: 'assistant',
+      stopReason: 'stop',
+      content: [{ type: 'text', text: 'The site is healthy and the workflow is documented.' }],
+    },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(harness.streamed, ['Using agent-browser to inspect the live site.']);
+});
+
 test('createPromptProgressReporterFactory streams Codex command executions', async () => {
   const harness = createHarness({
     factoryOptions: {

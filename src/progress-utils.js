@@ -762,6 +762,8 @@ export function summarizeCodexEvent(ev, options = {}) {
   }
 
   if (type === 'tool_execution_start') {
+    const intent = extractToolExecutionIntent(ev, options);
+    if (intent) return intent;
     const toolName = normalizeWhitespace(ev.toolName || ev.tool_name || '') || 'tool';
     const detail = summarizeKnownArgObject(ev.args || {}, options);
     return detail ? `${toolName}: ${detail}` : `tool ${toolName}`;
@@ -1035,6 +1037,23 @@ function extractApiErrorSummary(ev, payload, options = {}) {
   return `${prefix}: ${truncate(detail, previewChars)}`;
 }
 
+function extractToolExecutionIntent(ev, options = {}) {
+  const previewChars = Math.max(60, Number(options.previewChars || DEFAULT_PREVIEW_CHARS));
+  const args = ev?.args && typeof ev.args === 'object' ? ev.args : {};
+  const toolArgs = ev?.toolArgs && typeof ev.toolArgs === 'object' ? ev.toolArgs : {};
+  const intent = normalizeWhitespace(
+    ev?.intent
+      || args.intent
+      || args.i
+      || args.description
+      || toolArgs.intent
+      || toolArgs.i
+      || toolArgs.description
+      || '',
+  );
+  return intent ? truncate(intent, previewChars) : '';
+}
+
 function isLowSignalProcessText(text) {
   const normalized = normalizeWhitespace(text);
   if (!normalized) return true;
@@ -1116,6 +1135,8 @@ export function extractRawProgressTextFromEvent(ev, options = {}) {
   }
 
   if (type === 'tool_execution_start') {
+    const intent = extractToolExecutionIntent(ev, options);
+    if (intent) return intent;
     const toolName = normalizeWhitespace(ev.toolName || ev.tool_name || '') || 'tool';
     const detail = summarizeKnownArgObject(ev.args || {}, options);
     return detail ? `${toolName}: ${detail}` : `tool ${toolName}`;

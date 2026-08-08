@@ -1548,6 +1548,28 @@ test('createSlashCommandRouter updates fast mode for codex provider', async () =
   }]);
 });
 
+test('createSlashCommandRouter updates fast mode for OMP provider', async () => {
+  const state = createRouterState();
+  state.session.provider = 'omp';
+  const interaction = createInteraction('omp_fast');
+  interaction.options.getString = () => 'on';
+
+  const handled = await state.router({
+    interaction,
+    commandName: 'fast',
+    respond: async (payload) => {
+      state.replies.push(payload);
+    },
+  });
+
+  assert.equal(handled, true);
+  assert.deepEqual(state.getFastModeSetting(), { enabled: true, supported: true, source: 'session override' });
+  assert.deepEqual(state.replies, [{
+    content: 'omp:true:true:session override:true',
+    flags: 64,
+  }]);
+});
+
 test('createSlashCommandRouter updates Claude runtime mode and closes current hot process', async () => {
   const state = createRouterState();
   state.session.provider = 'claude';

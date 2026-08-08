@@ -252,9 +252,9 @@ export function buildSlashCommandEntries({ botProvider = null } = {}) {
       name: 'model',
       description: '打开模型与推理力度选择面板',
     },
-    (!lockedProvider || lockedProvider === 'codex') && {
+    (!lockedProvider || lockedProvider === 'codex' || lockedProvider === 'omp') && {
       name: 'fast',
-      description: '切换 Codex Fast mode（on/off/status/default）',
+      description: '切换 Fast mode（Codex/OMP，on/off/status/default）',
       configure(builder) {
         return builder.addStringOption(o => o.setName('action').setDescription('Fast mode 操作').setRequired(true)
           .addChoices(

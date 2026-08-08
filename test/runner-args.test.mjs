@@ -119,6 +119,55 @@ test('createRunnerArgsBuilder keeps Pi and OMP resume syntax separate', () => {
   ]);
 });
 
+test('createRunnerArgsBuilder maps OMP fast overrides to service tier without affecting Pi', () => {
+  const { buildSessionRunnerArgs } = createRunnerArgsBuilder({
+    defaultModel: null,
+    normalizeProvider: (value) => value,
+    getSessionId: (session) => session.runnerSessionId,
+    resolveModelSetting: (session) => ({ value: session.model || null, source: 'session override' }),
+    resolveReasoningEffortSetting: (session) => ({ value: session.effort || null, source: 'session override' }),
+    resolveFastModeSetting: (session) => ({
+      enabled: session.effectiveFastMode,
+      supported: session.provider === 'omp',
+      serviceTier: session.effectiveFastMode ? 'priority' : 'none',
+      source: session.fastModeSource,
+    }),
+  });
+  const build = (provider, effectiveFastMode, fastModeSource) => buildSessionRunnerArgs({
+    provider,
+    session: {
+      provider,
+      mode: 'dangerous',
+      model: 'ccswitch-newapi/gpt-5.6-sol',
+      effort: 'high',
+      effectiveFastMode,
+      fastModeSource,
+      runnerSessionId: null,
+    },
+    workspaceDir: '/tmp/workspace',
+    prompt: 'inspect',
+  });
+
+  const enabled = build('omp', true, 'session override');
+  assert.deepEqual(enabled.slice(enabled.indexOf('--service-tier'), enabled.indexOf('--service-tier') + 2), [
+    '--service-tier',
+    'priority',
+  ]);
+
+  const disabled = build('omp', false, 'parent channel');
+  assert.deepEqual(disabled.slice(disabled.indexOf('--service-tier'), disabled.indexOf('--service-tier') + 2), [
+    '--service-tier',
+    'none',
+  ]);
+
+  const providerDefault = build('omp', false, 'provider default');
+  assert.deepEqual(providerDefault.slice(providerDefault.indexOf('--service-tier'), providerDefault.indexOf('--service-tier') + 2), [
+    '--service-tier',
+    'none',
+  ]);
+  assert.equal(build('pi', true, 'session override').includes('--service-tier'), false);
+});
+
 test('createRunnerArgsBuilder adds native compact config for fresh codex sessions when enabled', () => {
   const { buildSessionRunnerArgs } = createRunnerArgsBuilder({
     defaultModel: 'gpt-5-codex',

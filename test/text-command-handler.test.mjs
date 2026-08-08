@@ -815,6 +815,35 @@ test('createTextCommandHandler updates codex fast mode', async () => {
   assert.deepEqual(replies, ['codex:true:session override:true']);
 });
 
+test('createTextCommandHandler updates OMP fast mode', async () => {
+  const replies = [];
+  const session = { provider: 'omp', language: 'zh', fastMode: null };
+
+  const handleCommand = createTextCommandHandler({
+    getSession: () => session,
+    getSessionProvider: (currentSession) => currentSession.provider,
+    getSessionLanguage: () => 'zh',
+    parseFastModeAction: () => ({ type: 'set', enabled: true }),
+    resolveFastModeSetting: () => ({ enabled: false, supported: true, source: 'provider default' }),
+    commandActions: {
+      setFastMode(currentSession, enabled) {
+        currentSession.fastMode = enabled;
+        return { fastModeSetting: { enabled, supported: true, source: 'session override' } };
+      },
+    },
+    formatFastModeConfigHelp: () => 'help',
+    formatFastModeConfigReport: (_language, provider, setting, changed) => `${provider}:${setting.enabled}:${setting.source}:${changed}`,
+    safeReply: async (_message, payload) => {
+      replies.push(payload);
+    },
+  });
+
+  await handleCommand(createMessage(), 'thread-1', '!fast on');
+
+  assert.equal(session.fastMode, true);
+  assert.deepEqual(replies, ['omp:true:session override:true']);
+});
+
 test('createTextCommandHandler updates extra info config', async () => {
   const replies = [];
   const session = { provider: 'codex', language: 'zh', extraInfoEnabled: null, extraInfoText: null };

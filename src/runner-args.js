@@ -242,6 +242,16 @@ export function createRunnerArgsBuilder({
     const effort = resolveReasoningEffortSetting(session).value;
     if (model) args.push('--model', model);
     if (effort) args.push('--thinking', effort);
+    if (isOmp) {
+      const fastMode = resolveFastModeSetting(session);
+      if (fastMode.supported) {
+        const serviceTier = String(fastMode.serviceTier || '').trim().toLowerCase();
+        if (!['none', 'auto', 'default', 'flex', 'scale', 'priority'].includes(serviceTier)) {
+          throw new Error(`invalid OMP service tier: ${serviceTier || '(empty)'}`);
+        }
+        args.push('--service-tier', serviceTier);
+      }
+    }
 
     const systemText = String(systemPrompt || '').trim();
     if (systemText) args.push('--append-system-prompt', systemText);

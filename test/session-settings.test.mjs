@@ -80,6 +80,18 @@ test('session-settings resolves timeout security profile and compact values with
     supported: true,
     source: 'config.toml',
   });
+  assert.deepEqual(settings.resolveFastModeSetting({ provider: 'omp', fastMode: 'on' }), {
+    enabled: true,
+    supported: true,
+    serviceTier: 'priority',
+    source: 'session override',
+  });
+  assert.deepEqual(settings.resolveFastModeSetting({ provider: 'omp' }), {
+    enabled: false,
+    supported: true,
+    serviceTier: 'none',
+    source: 'provider default',
+  });
   assert.deepEqual(settings.resolveTaskRetrySetting({
     taskMaxAttempts: '4',
     taskRetryBaseDelayMs: '1500',
@@ -149,6 +161,17 @@ test('session-settings lets thread fast mode inherit the parent channel provider
         nativeCompactTokenLimit: null,
         configOverrides: [],
       },
+      omp: {
+        runnerSessionId: null,
+        model: 'ccswitch-newapi/gpt-5.6-sol',
+        effort: 'high',
+        fastMode: true,
+        compactStrategy: 'native',
+        compactEnabled: null,
+        compactThresholdTokens: null,
+        nativeCompactTokenLimit: null,
+        configOverrides: [],
+      },
     },
   };
   const settings = createSessionSettings({
@@ -164,6 +187,16 @@ test('session-settings lets thread fast mode inherit the parent channel provider
   }), {
     enabled: true,
     supported: true,
+    source: 'parent channel',
+  });
+  assert.deepEqual(settings.resolveFastModeSetting({
+    provider: 'omp',
+    parentChannelId: 'channel-1',
+    fastMode: null,
+  }), {
+    enabled: true,
+    supported: true,
+    serviceTier: 'priority',
     source: 'parent channel',
   });
   assert.deepEqual(settings.resolveModelSetting({

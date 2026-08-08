@@ -148,6 +148,18 @@ function createFormatters(overrides = {}) {
   return createReportFormatters({ ...base, ...overrides });
 }
 
+test('fast mode reports explain OMP priority service tier behavior', () => {
+  const formatters = createFormatters();
+
+  assert.match(formatters.formatFastModeConfigHelp('zh', 'omp'), /priority/);
+  assert.match(formatters.formatFastModeConfigHelp('zh', 'omp'), /OMP 默认/);
+  assert.match(formatters.formatFastModeConfigReport('zh', 'omp', {
+    enabled: true,
+    supported: true,
+    source: 'session override',
+  }, true), /service tier.*priority/i);
+});
+
 test('createReportFormatters.formatStatusReport uses provider defaults for model and effort', () => {
   const formatters = createFormatters();
   const session = {

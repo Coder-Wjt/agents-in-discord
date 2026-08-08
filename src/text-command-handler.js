@@ -745,7 +745,7 @@ export function createTextCommandHandler({
       case 'fast': {
         const provider = getSessionProvider(session);
         const language = getSessionLanguage(session);
-        if (provider !== 'codex') {
+        if (provider !== 'codex' && provider !== 'omp') {
           await safeReply(message, formatFastModeConfigReport(language, provider, { enabled: false, supported: false, source: 'provider unsupported' }, false));
           break;
         }
