@@ -221,6 +221,17 @@ export function normalizeSessionCompactTokenLimit(value) {
   return Math.floor(n);
 }
 
+export function formatCompactThresholdValue(setting, language = 'en') {
+  if (setting?.source === 'provider unsupported') {
+    return language === 'en' ? 'n/a' : '不适用';
+  }
+  const tokens = normalizeSessionCompactTokenLimit(setting?.tokens);
+  if (tokens === null) {
+    return language === 'en' ? 'not set' : '未设置';
+  }
+  return String(tokens);
+}
+
 export function normalizeSessionCompactEnabled(value) {
   if (value === null || value === undefined || value === '') return null;
   if (typeof value === 'boolean') return value;
@@ -364,6 +375,7 @@ export function createSessionSettings({
   codexRuntimeMode = 'long',
   compactOnThreshold = true,
   maxInputTokensBeforeCompact = 250000,
+  compactThresholdDefaults = null,
   modelAutoCompactTokenLimit = maxInputTokensBeforeCompact,
   defaultReplyDeliveryMode = 'card_mention',
   readDefaultReplyDeliveryMode = () => defaultReplyDeliveryMode,
@@ -408,6 +420,11 @@ export function createSessionSettings({
   readCodexProfileCatalog = () => ({ profiles: [], configPath: '' }),
   normalizeProvider = (provider) => String(provider || '').trim().toLowerCase() || 'codex',
   getSupportedCompactStrategies = () => ['hard', 'native', 'off'],
+  getProviderCompactCapabilities = (provider) => ({
+    strategies: getSupportedCompactStrategies(provider),
+    supportsNativeStrategy: true,
+    supportsNativeLimit: normalizeProvider(provider) === 'codex',
+  }),
   getParentSession = () => null,
 } = {}) {
   let resolveParentSessionFn = getParentSession;
@@ -773,6 +790,12 @@ export function createSessionSettings({
   function resolveCompactStrategySetting(session) {
     const provider = normalizeProvider(session?.provider);
     const supportedStrategies = new Set(getSupportedCompactStrategies(provider));
+    if (supportedStrategies.size === 0) {
+      return {
+        strategy: 'off',
+        source: 'provider unsupported',
+      };
+    }
     const sessionStrategy = normalizeSessionCompactStrategy(session?.compactStrategy);
     if (sessionStrategy) {
       return {
@@ -797,12 +820,15 @@ export function createSessionSettings({
   }
 
   function resolveCompactEnabledSetting(session) {
+    const provider = normalizeProvider(session?.provider);
+    if (getSupportedCompactStrategies(provider).length === 0) {
+      return { enabled: false, source: 'provider unsupported' };
+    }
     const enabled = normalizeSessionCompactEnabled(session?.compactEnabled);
     if (enabled !== null) {
       return { enabled, source: 'session override' };
     }
 
-    const provider = normalizeProvider(session?.provider);
     const parentSession = resolveParentSession(session);
     const parentEnabled = normalizeSessionCompactEnabled(readProviderScopedValue(parentSession, provider, 'compactEnabled'));
     if (parentEnabled !== null) {
@@ -812,20 +838,72 @@ export function createSessionSettings({
     return { enabled: compactOnThreshold, source: 'env default' };
   }
 
+  function readStrictCompactTokenLimit(value, context) {
+    if (value === null || value === undefined || value === '') return null;
+    const tokens = Number(value);
+    if (!Number.isSafeInteger(tokens) || tokens <= 0) {
+      throw new Error(`invalid compact threshold ${context}: ${String(value)}`);
+    }
+    return tokens;
+  }
+
+  function resolveProviderCompactThresholdDefault(provider) {
+    const configured = compactThresholdDefaults?.[provider];
+    if (configured !== null && configured !== undefined) {
+      const rawTokens = typeof configured === 'object' && !Array.isArray(configured)
+        ? configured.tokens
+        : configured;
+      if (rawTokens === null || rawTokens === undefined || rawTokens === '') {
+        return {
+          tokens: null,
+          source: configured?.source || 'provider default',
+        };
+      }
+      const tokens = Number(rawTokens);
+      if (!Number.isSafeInteger(tokens) || tokens <= 0) {
+        throw new Error(`invalid compact threshold default for ${provider}: ${String(rawTokens)}`);
+      }
+      return {
+        tokens,
+        source: configured?.source || 'provider env',
+      };
+    }
+
+    if (provider !== 'codex') {
+      return { tokens: null, source: 'provider default' };
+    }
+    const tokens = Number(maxInputTokensBeforeCompact);
+    if (!Number.isSafeInteger(tokens) || tokens <= 0) {
+      throw new Error(`invalid compact threshold default for codex: ${String(maxInputTokensBeforeCompact)}`);
+    }
+    return { tokens, source: 'env default' };
+  }
+
   function resolveCompactThresholdSetting(session) {
-    const tokens = normalizeSessionCompactTokenLimit(session?.compactThresholdTokens);
+    const provider = normalizeProvider(session?.provider);
+    const providerDefault = resolveProviderCompactThresholdDefault(provider);
+    if (getSupportedCompactStrategies(provider).length === 0) {
+      return { tokens: null, source: 'provider unsupported' };
+    }
+
+    const tokens = readStrictCompactTokenLimit(
+      session?.compactThresholdTokens,
+      `override for ${provider}`,
+    );
     if (tokens !== null) {
       return { tokens, source: 'session override' };
     }
 
-    const provider = normalizeProvider(session?.provider);
     const parentSession = resolveParentSession(session);
-    const parentTokens = normalizeSessionCompactTokenLimit(readProviderScopedValue(parentSession, provider, 'compactThresholdTokens'));
+    const parentTokens = readStrictCompactTokenLimit(
+      readProviderScopedValue(parentSession, provider, 'compactThresholdTokens'),
+      `parent override for ${provider}`,
+    );
     if (parentTokens !== null) {
       return { tokens: parentTokens, source: 'parent channel' };
     }
 
-    return { tokens: maxInputTokensBeforeCompact, source: 'env default' };
+    return providerDefault;
   }
 
   function resolveReplyDeliverySetting(session) {
@@ -876,28 +954,49 @@ export function createSessionSettings({
 
   function resolveNativeCompactTokenLimitSetting(session) {
     const provider = normalizeProvider(session?.provider);
-    const direct = normalizeSessionCompactTokenLimit(session?.nativeCompactTokenLimit);
+    const capabilities = getProviderCompactCapabilities(provider);
+    if (!capabilities?.supportsNativeLimit) {
+      return {
+        tokens: null,
+        source: capabilities?.supportsNativeStrategy ? 'provider default' : 'provider unsupported',
+      };
+    }
+
+    const direct = readStrictCompactTokenLimit(
+      session?.nativeCompactTokenLimit,
+      `native override for ${provider}`,
+    );
     if (direct !== null) {
       return { tokens: direct, source: 'session override' };
     }
 
-    const threshold = normalizeSessionCompactTokenLimit(session?.compactThresholdTokens);
+    const threshold = readStrictCompactTokenLimit(
+      session?.compactThresholdTokens,
+      `override for ${provider}`,
+    );
     if (threshold !== null) {
       return { tokens: threshold, source: 'session threshold fallback' };
     }
 
     const parentSession = resolveParentSession(session);
-    const parentDirect = normalizeSessionCompactTokenLimit(readProviderScopedValue(parentSession, provider, 'nativeCompactTokenLimit'));
+    const parentDirect = readStrictCompactTokenLimit(
+      readProviderScopedValue(parentSession, provider, 'nativeCompactTokenLimit'),
+      `parent native override for ${provider}`,
+    );
     if (parentDirect !== null) {
       return { tokens: parentDirect, source: 'parent channel' };
     }
 
-    const parentThreshold = normalizeSessionCompactTokenLimit(readProviderScopedValue(parentSession, provider, 'compactThresholdTokens'));
+    const parentThreshold = readStrictCompactTokenLimit(
+      readProviderScopedValue(parentSession, provider, 'compactThresholdTokens'),
+      `parent override for ${provider}`,
+    );
     if (parentThreshold !== null) {
       return { tokens: parentThreshold, source: 'parent channel threshold fallback' };
     }
 
-    return { tokens: modelAutoCompactTokenLimit, source: 'env default' };
+    const tokens = readStrictCompactTokenLimit(modelAutoCompactTokenLimit, 'native default for codex');
+    return { tokens, source: 'env default' };
   }
 
   function getProviderDefaults(provider) {

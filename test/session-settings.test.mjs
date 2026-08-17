@@ -24,7 +24,10 @@ import {
   parseReasoningEffortInput,
   parseWorkspaceCommandAction,
 } from '../src/session-settings.js';
-import { normalizeProvider as testNormalizeProvider } from '../src/provider-metadata.js';
+import {
+  getSupportedCompactStrategies as testGetSupportedCompactStrategies,
+  normalizeProvider as testNormalizeProvider,
+} from '../src/provider-metadata.js';
 
 test('session-settings normalizes ui language labels and fallbacks', () => {
   const settings = createSessionSettings({ defaultUiLanguage: 'en' });
@@ -128,6 +131,95 @@ test('session-settings resolves timeout security profile and compact values with
     tokens: 320_000,
     source: 'env default',
   });
+});
+
+test('session-settings isolates compact threshold defaults by provider without losing explicit overrides', () => {
+  const settings = createSessionSettings({
+    maxInputTokensBeforeCompact: 272_000,
+    compactThresholdDefaults: {
+      codex: { tokens: 272_000, source: 'provider env' },
+      claude: { tokens: null, source: 'provider default' },
+      cursor: { tokens: null, source: 'provider default' },
+      grok: { tokens: null, source: 'provider default' },
+      antigravity: { tokens: null, source: 'provider default' },
+      zcode: { tokens: null, source: 'provider default' },
+      pi: { tokens: null, source: 'provider default' },
+      omp: { tokens: null, source: 'provider default' },
+    },
+    getParentSession: (session) => session?.parentChannelId ? {
+      provider: session.provider,
+      compactThresholdTokens: 180_000,
+    } : null,
+    normalizeProvider: testNormalizeProvider,
+    getSupportedCompactStrategies: testGetSupportedCompactStrategies,
+  });
+
+  assert.deepEqual(settings.resolveCompactThresholdSetting({ provider: 'codex' }), {
+    tokens: 272_000,
+    source: 'provider env',
+  });
+  for (const provider of ['claude', 'grok', 'antigravity', 'zcode', 'pi', 'omp']) {
+    assert.deepEqual(settings.resolveCompactThresholdSetting({ provider }), {
+      tokens: null,
+      source: 'provider default',
+    });
+  }
+  assert.deepEqual(settings.resolveCompactThresholdSetting({ provider: 'cursor' }), {
+    tokens: null,
+    source: 'provider unsupported',
+  });
+  for (const provider of ['codex', 'claude', 'grok', 'antigravity', 'zcode', 'pi', 'omp']) {
+    assert.deepEqual(settings.resolveCompactThresholdSetting({
+      provider,
+      compactThresholdTokens: 272_000,
+    }), {
+      tokens: 272_000,
+      source: 'session override',
+    });
+    assert.deepEqual(settings.resolveCompactThresholdSetting({
+      provider,
+      parentChannelId: 'parent-1',
+    }), {
+      tokens: 180_000,
+      source: 'parent channel',
+    });
+  }
+  assert.deepEqual(settings.resolveCompactThresholdSetting({
+    provider: 'cursor',
+    compactThresholdTokens: 272_000,
+  }), {
+    tokens: null,
+    source: 'provider unsupported',
+  });
+});
+
+test('session-settings rejects malformed provider compact threshold defaults instead of using Codex fallback', () => {
+  for (const provider of ['codex', 'claude', 'cursor', 'grok', 'antigravity', 'zcode', 'pi', 'omp']) {
+    const settings = createSessionSettings({
+      maxInputTokensBeforeCompact: 272_000,
+      compactThresholdDefaults: {
+        [provider]: { tokens: 'broken', source: 'provider env' },
+      },
+      normalizeProvider: testNormalizeProvider,
+      getSupportedCompactStrategies: testGetSupportedCompactStrategies,
+    });
+
+    assert.throws(
+      () => settings.resolveCompactThresholdSetting({ provider }),
+      new RegExp(`invalid compact threshold default for ${provider}`, 'i'),
+    );
+  }
+  const settings = createSessionSettings({
+    compactThresholdDefaults: {
+      grok: { tokens: 123.5, source: 'provider env' },
+    },
+    normalizeProvider: testNormalizeProvider,
+    getSupportedCompactStrategies: testGetSupportedCompactStrategies,
+  });
+  assert.throws(
+    () => settings.resolveCompactThresholdSetting({ provider: 'grok' }),
+    /invalid compact threshold default for grok/i,
+  );
 });
 
 test('session-settings lets thread fast mode inherit the parent channel provider-scoped override', () => {
@@ -669,6 +761,18 @@ test('session-settings provides compact descriptions and provider defaults', () 
     source: 'settings.json',
     settingsPath: '/tmp/agy-settings.json',
     error: null,
+  });
+});
+
+test('session-settings disables bot-managed compaction when a provider exposes no compact strategy', () => {
+  const settings = createSessionSettings({
+    normalizeProvider: testNormalizeProvider,
+    getSupportedCompactStrategies: (provider) => provider === 'cursor' ? [] : ['hard', 'native', 'off'],
+  });
+
+  assert.deepEqual(settings.resolveCompactStrategySetting({ provider: 'cursor', compactStrategy: 'hard' }), {
+    strategy: 'off',
+    source: 'provider unsupported',
   });
 });
 
