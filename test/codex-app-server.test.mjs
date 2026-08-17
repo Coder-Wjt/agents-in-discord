@@ -32,7 +32,9 @@ function createFakeSpawn({ onRequest } = {}) {
       write(chunk) {
         writes.push(String(chunk));
         const request = JSON.parse(String(chunk));
-        const response = onRequest?.(request) || { id: request.id, result: {} };
+        const response = Object.prototype.hasOwnProperty.call(request, 'id')
+          ? onRequest?.(request) || { id: request.id, result: {} }
+          : null;
         if (response) {
           child.stdout.write(`${JSON.stringify(response)}\n`);
         }
@@ -88,7 +90,13 @@ test('createCodexAppServerClient sends initialize then thread/fork', async () =>
   assert.deepEqual(fake.calls.map((call) => [call.bin, call.args]), [
     ['codex-test', ['app-server', '--listen', 'stdio://']],
   ]);
-  assert.deepEqual(fake.writes.map((line) => JSON.parse(line).method), ['initialize', 'thread/fork']);
+  const writes = fake.writes.map((line) => JSON.parse(line));
+  assert.deepEqual(writes.map((message) => message.method), [
+    'initialize',
+    'initialized',
+    'thread/fork',
+  ]);
+  assert.equal(Object.prototype.hasOwnProperty.call(writes[1], 'id'), false);
 });
 
 test('createCodexAppServerClient can disable MCP servers for one app-server process', async () => {
@@ -221,7 +229,7 @@ test('forkCodexThread uses a longer default timeout for native fork', async () =
     for (const handle of handles) clearTimeout(handle);
   }
 
-  assert.deepEqual(delays, [30_000]);
+  assert.deepEqual(delays, [180_000]);
 });
 
 test('Codex goal helpers enable goals and send thread goal requests', async () => {
@@ -271,7 +279,11 @@ test('Codex goal helpers enable goals and send thread goal requests', async () =
   assert.deepEqual(fake.calls.map((call) => [call.bin, call.args]), [
     ['codex-test', ['app-server', '--listen', 'stdio://', '--enable', 'goals']],
   ]);
-  assert.deepEqual(fake.writes.map((line) => JSON.parse(line).method), ['initialize', 'thread/goal/set']);
+  assert.deepEqual(fake.writes.map((line) => JSON.parse(line).method), [
+    'initialize',
+    'initialized',
+    'thread/goal/set',
+  ]);
 });
 
 test('Codex goal helpers use the longer app-server timeout by default', async () => {

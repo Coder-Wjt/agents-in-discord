@@ -268,6 +268,86 @@ test('createCodexForkThread replays the latest parent agent message into the for
   assert.doesNotMatch(threadMessages[1].content, /older answer/);
 });
 
+test('createCodexForkThread replays every chunk of the latest parent agent answer', async () => {
+  const childSession = {};
+  const threadMessages = [];
+  const parentMessages = new Map([
+    ['user-prompt', {
+      id: 'user-prompt',
+      createdTimestamp: 1000,
+      author: { id: 'user-1', bot: false },
+      content: 'do the work',
+    }],
+    ['progress-card', {
+      id: 'progress-card',
+      createdTimestamp: 2000,
+      author: { id: 'bot-1', bot: true },
+      reference: { messageId: 'user-prompt' },
+      content: '✅ task completed',
+    }],
+    ['answer-first', {
+      id: 'answer-first',
+      createdTimestamp: 3000,
+      author: { id: 'bot-1', bot: true },
+      reference: { messageId: 'user-prompt' },
+      content: 'the actual answer',
+    }],
+    ['answer-tail', {
+      id: 'answer-tail',
+      createdTimestamp: 4000,
+      author: { id: 'bot-1', bot: true },
+      content: '• rollout session: `parent-session`',
+    }],
+  ]);
+
+  const result = await createCodexForkThread({
+    key: 'parent-channel',
+    source: {
+      ...createForkSource(),
+      id: 'source-3',
+      client: { user: { id: 'bot-1' } },
+      channel: {
+        id: 'parent-channel',
+        messages: {
+          async fetch() {
+            return parentMessages;
+          },
+        },
+        threads: {
+          async create() {
+            return {
+              id: 'child-channel',
+              async join() {},
+              async setName() {},
+              async send(payload) {
+                threadMessages.push(payload);
+              },
+            };
+          },
+        },
+      },
+    },
+    parentSessionId: 'parent-session',
+    prepareForkWorkspace: () => '/repo/fork-workspace',
+    getSession: () => childSession,
+    commandActions: {
+      bindForkedSession(currentSession, binding) {
+        currentSession.runnerSessionId = binding.sessionId;
+        return binding;
+      },
+    },
+    async forkCodexThread() {
+      return { threadId: 'fork-session' };
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(threadMessages.length, 2);
+  assert.match(threadMessages[1].content, /the actual answer/);
+  assert.match(threadMessages[1].content, /rollout session/);
+  assert.doesNotMatch(threadMessages[1].content, /task completed/);
+});
+
 test('parseForkTextInput treats its only argument as the requested thread name', () => {
   assert.deepEqual(parseForkTextInput('  Demo   fork  '), { threadName: 'Demo fork' });
   assert.deepEqual(parseForkTextInput(''), { threadName: '' });

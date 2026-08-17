@@ -78,24 +78,48 @@ function compareMessageRecency(a, b) {
 async function fetchParentMessages(source) {
   const fetch = source?.channel?.messages?.fetch;
   if (typeof fetch !== 'function') return [];
-  const options = { limit: 25 };
+  const options = { limit: 100 };
   const sourceId = String(source?.id || '').trim();
   if (sourceId) options.before = sourceId;
   return collectionToArray(await fetch.call(source.channel.messages, options));
 }
 
-function findLatestParentAgentMessage(messages, source) {
+function isForkBotMessage(message, botUserId) {
+  const authorId = String(message?.author?.id || '').trim();
+  if (botUserId) return authorId === botUserId;
+  return Boolean(message?.author?.bot);
+}
+
+function getReplyReferenceMessageId(message) {
+  return String(
+    message?.reference?.messageId
+    || message?.reference?.message_id
+    || message?.messageReference?.messageId
+    || '',
+  ).trim() || null;
+}
+
+function findLatestParentAgentMessages(messages, source) {
   const botUserId = getForkBotUserId(source);
   const sourceId = String(source?.id || '').trim();
-  return messages
+  const ordered = messages
     .filter((message) => {
       if (!message || String(message.id || '') === sourceId) return false;
       if (!normalizeMessageContent(message)) return false;
-      const authorId = String(message.author?.id || '').trim();
-      if (botUserId) return authorId === botUserId;
-      return Boolean(message.author?.bot);
+      return true;
     })
-    .sort(compareMessageRecency)[0] || null;
+    .sort(compareMessageRecency);
+  const latestIndex = ordered.findIndex((message) => isForkBotMessage(message, botUserId));
+  if (latestIndex < 0) return [];
+
+  const answer = [];
+  for (let index = latestIndex; index < ordered.length; index += 1) {
+    const message = ordered[index];
+    if (!isForkBotMessage(message, botUserId)) break;
+    answer.push(message);
+    if (getReplyReferenceMessageId(message)) break;
+  }
+  return answer.reverse();
 }
 
 function formatLatestAgentReplayContent(text, language = 'zh') {
@@ -115,14 +139,19 @@ async function replayLatestParentAgentMessage(childThread, {
     return { ok: false, skipped: true, error: 'child thread cannot send messages' };
   }
   try {
-    const latest = findLatestParentAgentMessage(await fetchParentMessages(source), source);
-    const text = normalizeMessageContent(latest);
+    const latest = findLatestParentAgentMessages(await fetchParentMessages(source), source);
+    const text = latest.map(normalizeMessageContent).filter(Boolean).join('\n\n').trim();
     if (!text) return { ok: false, skipped: true, reason: 'no_parent_agent_message' };
     const messages = [];
     for (const content of formatLatestAgentReplayContent(text, language)) {
       messages.push(await childThread.send({ content }));
     }
-    return { ok: true, sourceMessageId: latest.id || null, messages };
+    return {
+      ok: true,
+      sourceMessageId: latest[latest.length - 1]?.id || null,
+      sourceMessageIds: latest.map((message) => message.id).filter(Boolean),
+      messages,
+    };
   } catch (err) {
     return {
       ok: false,

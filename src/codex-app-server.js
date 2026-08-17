@@ -3,7 +3,7 @@ import readline from 'node:readline';
 import { buildCodexAppServerArgs } from './codex-app-server-args.js';
 
 const DEFAULT_APP_SERVER_TIMEOUT_MS = 10_000;
-const DEFAULT_FORK_TIMEOUT_MS = 30_000;
+const DEFAULT_FORK_TIMEOUT_MS = 180_000;
 const DEFAULT_GOAL_TIMEOUT_MS = 30_000;
 
 function normalizeText(value) {
@@ -304,6 +304,7 @@ export function createCodexAppServerClient({
         clientInfo,
         capabilities,
       });
+      writeJsonLine(child.stdin, { method: 'initialized' });
       return await send(method, params);
     } finally {
       cleanup();
