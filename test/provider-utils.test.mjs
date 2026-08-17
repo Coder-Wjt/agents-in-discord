@@ -15,25 +15,28 @@ import {
 
 process.env.CODEX_OPENAI_CURATED_MARKETPLACE_SOURCE = '/tmp/agents-in-discord-missing-openai-curated-marketplace';
 
-test('normalizeCliProvider falls back to codex', () => {
+test('normalizeCliProvider preserves legacy aliases but rejects unknown providers', () => {
   assert.equal(normalizeCliProvider('claude'), 'claude');
   assert.equal(normalizeCliProvider('anthropic'), 'claude');
+  assert.equal(normalizeCliProvider('cursor-agent'), 'cursor');
   assert.equal(normalizeCliProvider('gemini'), 'codex');
   assert.equal(normalizeCliProvider('google'), 'codex');
   assert.equal(normalizeCliProvider('agy'), 'antigravity');
   assert.equal(normalizeCliProvider('antigravity'), 'antigravity');
   assert.equal(normalizeCliProvider('CODEX'), 'codex');
   assert.equal(normalizeCliProvider('openai'), 'codex');
-  assert.equal(normalizeCliProvider('unknown'), 'codex');
+  assert.throws(() => normalizeCliProvider('unknown'), /unsupported provider: unknown/);
   assert.equal(normalizeCliProvider(''), 'codex');
 });
 
 test('provider labels are readable', () => {
   assert.equal(getProviderDisplayName('claude'), 'Claude Code');
   assert.equal(getProviderDisplayName('codex'), 'Codex CLI');
+  assert.equal(getProviderDisplayName('cursor'), 'Cursor Agent');
   assert.equal(getProviderDisplayName('antigravity'), 'Antigravity CLI');
   assert.equal(getProviderShortName('claude'), 'Claude');
   assert.equal(getProviderShortName('codex'), 'Codex');
+  assert.equal(getProviderShortName('cursor'), 'Cursor');
   assert.equal(getProviderShortName('antigravity'), 'Antigravity');
 });
 
@@ -239,6 +242,29 @@ test('buildRunnerArgs builds claude print stream command with prompt delimiter',
     'default',
     '--',
     'run pwd',
+  ]);
+});
+
+test('buildRunnerArgs builds Cursor print stream command with safe sandbox and resume', () => {
+  const args = buildRunnerArgs({
+    provider: 'cursor',
+    sessionId: 'cursor-session-1',
+    workspaceDir: '/tmp/work',
+    prompt: 'inspect',
+    mode: 'safe',
+    model: 'gpt-5.6-sol-high',
+  });
+
+  assert.deepEqual(args, [
+    '--print',
+    '--output-format', 'stream-json',
+    '--trust',
+    '--workspace', '/tmp/work',
+    '--resume', 'cursor-session-1',
+    '--model', 'gpt-5.6-sol-high',
+    '--auto-review',
+    '--sandbox', 'enabled',
+    'inspect',
   ]);
 });
 

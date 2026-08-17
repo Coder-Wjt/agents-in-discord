@@ -3,6 +3,8 @@ import { buildCodexPermissionArgs } from './codex-permissions.js';
 import { buildCodexOpenAICuratedMarketplaceArgs } from './codex-marketplaces.js';
 import { createClaudeProviderAdapter } from './providers/claude.js';
 import { createCodexProviderAdapter } from './providers/codex.js';
+import { createCursorProviderAdapter } from './providers/cursor.js';
+import { createGrokProviderAdapter } from './providers/grok.js';
 import { createAntigravityProviderAdapter } from './providers/antigravity.js';
 import { createZCodeProviderAdapter } from './providers/zcode.js';
 import { createPiProviderAdapter } from './providers/pi.js';
@@ -63,6 +65,24 @@ export function createRunnerArgsBuilder({
         workspaceDir,
         prompt,
         additionalWorkspaceDirs,
+        systemPrompt,
+      }),
+    }),
+    createCursorProviderAdapter({
+      buildArgs: ({ session, workspaceDir, prompt, inputImages = [], systemPrompt = '' }) => buildCursorArgs({
+        session,
+        workspaceDir,
+        prompt,
+        inputImages,
+        systemPrompt,
+      }),
+    }),
+    createGrokProviderAdapter({
+      buildArgs: ({ session, workspaceDir, prompt, inputImages = [], systemPrompt = '' }) => buildGrokArgs({
+        session,
+        workspaceDir,
+        prompt,
+        inputImages,
         systemPrompt,
       }),
     }),
@@ -190,6 +210,61 @@ export function createRunnerArgsBuilder({
     return args;
   }
 
+  function buildGrokArgs({ session, workspaceDir, prompt, inputImages = [], systemPrompt = '' }) {
+    const attachments = inputImages
+      .map((imagePath) => String(imagePath || '').trim())
+      .filter(Boolean)
+      .map((imagePath) => `@${imagePath}`);
+    const promptText = [String(prompt || ''), ...attachments].filter(Boolean).join('\n');
+    const sessionId = getSessionId(session);
+    const args = [
+      '-p', promptText,
+      '--cwd', workspaceDir,
+      '--output-format', 'streaming-json',
+    ];
+    if (sessionId) args.push('--resume', sessionId);
+    else args.push('--session-id', randomUUID());
+    const systemText = String(systemPrompt || '').trim();
+    const model = resolveModelSetting(session).value || defaultModel;
+    const effort = resolveReasoningEffortSetting(session).value;
+    if (systemText) args.push('--rules', systemText);
+    if (model) args.push('--model', model);
+    if (effort) args.push('--effort', effort);
+    if (session.mode === 'dangerous') {
+      args.push('--always-approve');
+    } else {
+      args.push('--always-approve', '--sandbox', 'workspace');
+    }
+    return args;
+  }
+
+  function buildCursorArgs({ session, workspaceDir, prompt, inputImages = [], systemPrompt = '' }) {
+    const attachments = inputImages
+      .map((imagePath) => String(imagePath || '').trim())
+      .filter(Boolean);
+    if (attachments.length) {
+      throw new Error('Cursor Agent does not expose native image input in headless mode');
+    }
+
+    const args = [
+      '--print',
+      '--output-format', 'stream-json',
+      '--trust',
+      '--workspace', workspaceDir,
+    ];
+    const sessionId = getSessionId(session);
+    if (sessionId) args.push('--resume', sessionId);
+    const model = resolveModelSetting(session).value || defaultModel;
+    if (model) args.push('--model', model);
+    if (session.mode === 'dangerous') {
+      args.push('--force', '--sandbox', 'disabled');
+    } else {
+      args.push('--auto-review', '--sandbox', 'enabled');
+    }
+    args.push(composePromptWithSystemFallback(prompt, systemPrompt));
+    return args;
+  }
+
   function buildAntigravityArgs({ session, prompt, systemPrompt = '' }) {
     const args = [];
     const sessionId = getSessionId(session);
@@ -273,6 +348,8 @@ export function createRunnerArgsBuilder({
     buildSessionRunnerArgs,
     buildCodexArgs,
     buildClaudeArgs,
+    buildCursorArgs,
+    buildGrokArgs,
     buildAntigravityArgs,
     buildZCodeArgs,
     buildPiFamilyArgs,

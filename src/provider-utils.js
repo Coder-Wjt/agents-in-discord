@@ -48,6 +48,15 @@ export function buildRunnerArgs({
       pendingForkFromSessionId,
     });
   }
+  if (normalizedProvider === 'cursor') {
+    return buildCursorArgs({
+      sessionId,
+      workspaceDir,
+      prompt,
+      mode,
+      model,
+    });
+  }
   if (normalizedProvider === 'antigravity') {
     return buildAntigravityArgs({
       sessionId,
@@ -89,6 +98,27 @@ export function buildRunnerArgs({
     compactOnThreshold,
     modelAutoCompactTokenLimit,
   });
+}
+
+function buildCursorArgs({
+  sessionId,
+  workspaceDir,
+  prompt,
+  mode,
+  model,
+}) {
+  const args = [
+    '--print',
+    '--output-format', 'stream-json',
+    '--trust',
+    '--workspace', workspaceDir,
+  ];
+  if (sessionId) args.push('--resume', sessionId);
+  if (model) args.push('--model', model);
+  if (mode === 'dangerous') args.push('--force', '--sandbox', 'disabled');
+  else args.push('--auto-review', '--sandbox', 'enabled');
+  args.push(prompt);
+  return args;
 }
 
 function buildCodexArgs({

@@ -75,6 +75,115 @@ test('createRunnerArgsBuilder passes a selected Claude model to fresh and resume
   }
 });
 
+test('createRunnerArgsBuilder builds sandboxed and dangerous Grok headless runs', () => {
+  const { buildSessionRunnerArgs } = createRunnerArgsBuilder({
+    defaultModel: null,
+    normalizeProvider: (value) => value,
+    getSessionId: (session) => session.runnerSessionId,
+    resolveModelSetting: (session) => ({ value: session.model || null, source: 'session override' }),
+    resolveReasoningEffortSetting: (session) => ({ value: session.effort || null, source: 'session override' }),
+  });
+
+  const safe = buildSessionRunnerArgs({
+    provider: 'grok',
+    session: {
+      provider: 'grok',
+      mode: 'safe',
+      model: 'grok-4.5',
+      effort: 'high',
+      runnerSessionId: 'grok-session-1',
+    },
+    workspaceDir: '/tmp/workspace',
+    prompt: 'inspect',
+    systemPrompt: 'discord context',
+    inputImages: ['/tmp/input.png'],
+  });
+  assert.deepEqual(safe, [
+    '-p', 'inspect\n@/tmp/input.png',
+    '--cwd', '/tmp/workspace',
+    '--output-format', 'streaming-json',
+    '--resume', 'grok-session-1',
+    '--rules', 'discord context',
+    '--model', 'grok-4.5',
+    '--effort', 'high',
+    '--always-approve',
+    '--sandbox', 'workspace',
+  ]);
+
+  const dangerous = buildSessionRunnerArgs({
+    provider: 'grok',
+    session: { provider: 'grok', mode: 'dangerous', runnerSessionId: 'grok-session-1' },
+    workspaceDir: '/tmp/workspace',
+    prompt: 'continue',
+  });
+  assert.equal(dangerous.includes('--always-approve'), true);
+  assert.equal(dangerous.includes('--sandbox'), false);
+  assert.equal(dangerous[dangerous.indexOf('--resume') + 1], 'grok-session-1');
+});
+
+test('createRunnerArgsBuilder builds fresh and resumed Cursor headless runs', () => {
+  const { buildSessionRunnerArgs } = createRunnerArgsBuilder({
+    defaultModel: null,
+    normalizeProvider: (value) => value,
+    getSessionId: (session) => session.runnerSessionId,
+    resolveModelSetting: (session) => ({ value: session.model || null, source: 'session override' }),
+  });
+
+  const safe = buildSessionRunnerArgs({
+    provider: 'cursor',
+    session: {
+      provider: 'cursor',
+      mode: 'safe',
+      model: 'gpt-5.6-sol-high',
+      runnerSessionId: 'cursor-session-1',
+    },
+    workspaceDir: '/tmp/workspace',
+    prompt: 'inspect',
+    systemPrompt: 'discord context',
+  });
+  assert.deepEqual(safe, [
+    '--print',
+    '--output-format', 'stream-json',
+    '--trust',
+    '--workspace', '/tmp/workspace',
+    '--resume', 'cursor-session-1',
+    '--model', 'gpt-5.6-sol-high',
+    '--auto-review',
+    '--sandbox', 'enabled',
+    'discord context\n\ninspect',
+  ]);
+
+  const dangerous = buildSessionRunnerArgs({
+    provider: 'cursor',
+    session: { provider: 'cursor', mode: 'dangerous', runnerSessionId: null },
+    workspaceDir: '/tmp/workspace',
+    prompt: 'continue',
+  });
+  assert.deepEqual(dangerous, [
+    '--print',
+    '--output-format', 'stream-json',
+    '--trust',
+    '--workspace', '/tmp/workspace',
+    '--force',
+    '--sandbox', 'disabled',
+    'continue',
+  ]);
+});
+
+test('createRunnerArgsBuilder rejects Cursor image inputs instead of silently dropping them', () => {
+  const { buildSessionRunnerArgs } = createRunnerArgsBuilder({
+    normalizeProvider: (value) => value,
+    getSessionId: () => null,
+  });
+  assert.throws(() => buildSessionRunnerArgs({
+    provider: 'cursor',
+    session: { provider: 'cursor', mode: 'safe' },
+    workspaceDir: '/tmp/workspace',
+    prompt: 'inspect image',
+    inputImages: ['/tmp/input.png'],
+  }), /does not expose native image input/);
+});
+
 test('createRunnerArgsBuilder keeps Pi and OMP resume syntax separate', () => {
   const { buildSessionRunnerArgs } = createRunnerArgsBuilder({
     defaultModel: null,
@@ -259,6 +368,27 @@ test('createRunnerArgsBuilder keeps native compact config for resumed codex sess
     'sess-1',
     'inspect',
   ]);
+});
+
+test('createRunnerArgsBuilder never passes the Codex compact threshold to non-Codex providers', () => {
+  const { buildSessionRunnerArgs } = createRunnerArgsBuilder({
+    normalizeProvider: (value) => value,
+    getSessionId: () => null,
+    resolveCompactStrategySetting: () => ({ strategy: 'native' }),
+    resolveCompactEnabledSetting: () => ({ enabled: true }),
+    resolveNativeCompactTokenLimitSetting: () => ({ tokens: 272_000 }),
+  });
+
+  for (const provider of ['claude', 'cursor', 'grok', 'antigravity', 'zcode', 'pi', 'omp']) {
+    const args = buildSessionRunnerArgs({
+      provider,
+      session: { provider, mode: 'safe', configOverrides: [] },
+      workspaceDir: '/tmp/workspace',
+      prompt: 'inspect',
+    });
+    assert.equal(args.join(' ').includes('272000'), false, provider);
+    assert.equal(args.join(' ').includes('model_auto_compact_token_limit'), false, provider);
+  }
 });
 
 test('createRunnerArgsBuilder passes native image inputs to codex exec', () => {
