@@ -158,6 +158,331 @@ test('createRunnerExecutor completes an OMP JSON turn and preserves its session 
   assert.deepEqual(spawnCalls[0].args, ['-p', '--mode', 'json', '--approval-mode', 'yolo', 'hello']);
 });
 
+test('createRunnerExecutor completes a Cursor JSON turn and preserves its chat id', async () => {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.killed = false;
+  const spawnCalls = [];
+
+  const executor = createRunnerExecutor({
+    spawnEnv: process.env,
+    ensureDir: () => {},
+    normalizeProvider: testNormalizeProvider,
+    getSessionProvider: (session) => session.provider,
+    getProviderBin: () => 'agent',
+    getSessionId: (session) => session.runnerSessionId,
+    resolveModelSetting: () => ({ value: null, source: 'provider' }),
+    resolveReasoningEffortSetting: () => ({ value: null, source: 'provider' }),
+    resolveTimeoutSetting: () => ({ timeoutMs: 0 }),
+    resolveCompactStrategySetting: () => ({ strategy: 'hard' }),
+    resolveCompactEnabledSetting: () => ({ enabled: false }),
+    resolveNativeCompactTokenLimitSetting: () => ({ tokens: 0 }),
+    normalizeTimeoutMs: (value) => Number(value || 0),
+    safeError: (err) => String(err?.message || err),
+    stopChildProcess: () => {},
+    startSessionProgressBridge: () => () => {},
+    extractAgentMessageText,
+    isFinalAnswerLikeAgentMessage,
+    spawnFn: (bin, args) => {
+      spawnCalls.push({ bin, args });
+      setImmediate(() => {
+        child.stdout.emit('data', Buffer.from([
+          '{"type":"system","subtype":"init","session_id":"cursor-session-1","model":"GPT-5.6 Sol"}',
+          '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"CURSOR_DONE"}]},"session_id":"cursor-session-1"}',
+          '{"type":"result","subtype":"success","is_error":false,"result":"CURSOR_DONE","session_id":"cursor-session-1","usage":{"inputTokens":2,"outputTokens":3}}',
+          '',
+        ].join('\n')));
+        child.emit('close', 0, null);
+      });
+      return child;
+    },
+  });
+
+  const result = await executor.runProviderTask({
+    session: { provider: 'cursor', mode: 'safe', runnerSessionId: null },
+    workspaceDir: '/tmp/workspace',
+    prompt: 'hello',
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.threadId, 'cursor-session-1');
+  assert.deepEqual(result.finalAnswerMessages, ['CURSOR_DONE']);
+  assert.deepEqual(result.usage, { inputTokens: 2, outputTokens: 3 });
+  assert.equal(spawnCalls[0].bin, 'agent');
+  assert.deepEqual(spawnCalls[0].args, [
+    '--print',
+    '--output-format', 'stream-json',
+    '--trust',
+    '--workspace', '/tmp/workspace',
+    '--auto-review',
+    '--sandbox', 'enabled',
+    'hello',
+  ]);
+});
+
+test('createRunnerExecutor surfaces Cursor authentication failure instead of a protocol fallback', async () => {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.killed = false;
+
+  const executor = createRunnerExecutor({
+    spawnEnv: process.env,
+    ensureDir: () => {},
+    normalizeProvider: testNormalizeProvider,
+    getSessionProvider: (session) => session.provider,
+    getProviderBin: () => 'agent',
+    getSessionId: () => null,
+    resolveModelSetting: () => ({ value: null, source: 'provider' }),
+    resolveReasoningEffortSetting: () => ({ value: null, source: 'provider' }),
+    resolveTimeoutSetting: () => ({ timeoutMs: 0 }),
+    resolveCompactStrategySetting: () => ({ strategy: 'hard' }),
+    resolveCompactEnabledSetting: () => ({ enabled: false }),
+    resolveNativeCompactTokenLimitSetting: () => ({ tokens: 0 }),
+    normalizeTimeoutMs: (value) => Number(value || 0),
+    safeError: (err) => String(err?.message || err),
+    stopChildProcess: () => {},
+    startSessionProgressBridge: () => () => {},
+    extractAgentMessageText,
+    isFinalAnswerLikeAgentMessage,
+    spawnFn: () => {
+      setImmediate(() => {
+        child.stderr.emit('data', Buffer.from('Not logged in. Run agent login.\n'));
+        child.emit('close', 1, null);
+      });
+      return child;
+    },
+  });
+
+  const result = await executor.runProviderTask({
+    session: { provider: 'cursor', mode: 'safe', runnerSessionId: null },
+    workspaceDir: '/tmp/workspace',
+    prompt: 'hello',
+  });
+
+  assert.equal(result.ok, false);
+  assert.match(result.error, /Not logged in/);
+  assert.doesNotMatch(result.error, /missing result event/);
+});
+
+function createCursorProtocolTestExecutor({ stdout = '', stderr = '', code = 0, signal = null } = {}) {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.killed = false;
+  return createRunnerExecutor({
+    spawnEnv: process.env,
+    ensureDir: () => {},
+    normalizeProvider: testNormalizeProvider,
+    getSessionProvider: (session) => session.provider,
+    getProviderBin: () => 'agent',
+    getSessionId: (session) => session.runnerSessionId,
+    resolveModelSetting: () => ({ value: null, source: 'provider' }),
+    resolveReasoningEffortSetting: () => ({ value: null, source: 'provider' }),
+    resolveTimeoutSetting: () => ({ timeoutMs: 0 }),
+    resolveCompactStrategySetting: () => ({ strategy: 'off' }),
+    resolveCompactEnabledSetting: () => ({ enabled: false }),
+    resolveNativeCompactTokenLimitSetting: () => ({ tokens: 0 }),
+    normalizeTimeoutMs: (value) => Number(value || 0),
+    safeError: (err) => String(err?.message || err),
+    stopChildProcess: () => {},
+    startSessionProgressBridge: () => () => {},
+    extractAgentMessageText,
+    isFinalAnswerLikeAgentMessage,
+    spawnFn: () => {
+      setImmediate(() => {
+        if (stdout) child.stdout.emit('data', Buffer.from(stdout));
+        if (stderr) child.stderr.emit('data', Buffer.from(stderr));
+        child.emit('close', code, signal);
+      });
+      return child;
+    },
+  });
+}
+
+test('createRunnerExecutor rejects malformed Cursor output on a zero exit', async () => {
+  const executor = createCursorProtocolTestExecutor({
+    stdout: '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"unfinished"}]}}\n',
+  });
+  const result = await executor.runProviderTask({
+    session: { provider: 'cursor', mode: 'safe', runnerSessionId: null },
+    workspaceDir: '/tmp/workspace',
+    prompt: 'hello',
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error, 'invalid Cursor JSON stream: missing result event or session id');
+  assert.deepEqual(result.finalAnswerMessages, []);
+});
+
+test('createRunnerExecutor treats a cancelled Cursor process as cancellation, not malformed output', async () => {
+  const executor = createCursorProtocolTestExecutor({ signal: 'SIGTERM' });
+  const result = await executor.runProviderTask({
+    session: { provider: 'cursor', mode: 'safe', runnerSessionId: null },
+    workspaceDir: '/tmp/workspace',
+    prompt: 'wait',
+    wasCancelled: () => true,
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.cancelled, true);
+  assert.equal(result.error, 'cursor exited via signal SIGTERM');
+  assert.doesNotMatch(result.error, /invalid Cursor JSON stream/);
+});
+
+test('createRunnerExecutor completes a Grok JSON turn and preserves its session id', async () => {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.killed = false;
+  const spawnCalls = [];
+
+  const executor = createRunnerExecutor({
+    spawnEnv: process.env,
+    ensureDir: () => {},
+    normalizeProvider: testNormalizeProvider,
+    getSessionProvider: (session) => session.provider,
+    getProviderBin: () => 'grok',
+    getSessionId: (session) => session.runnerSessionId,
+    resolveModelSetting: () => ({ value: null, source: 'provider' }),
+    resolveReasoningEffortSetting: () => ({ value: null, source: 'provider' }),
+    resolveTimeoutSetting: () => ({ timeoutMs: 0 }),
+    resolveCompactStrategySetting: () => ({ strategy: 'hard' }),
+    resolveCompactEnabledSetting: () => ({ enabled: false }),
+    resolveNativeCompactTokenLimitSetting: () => ({ tokens: 0 }),
+    normalizeTimeoutMs: (value) => Number(value || 0),
+    safeError: (err) => String(err?.message || err),
+    stopChildProcess: () => {},
+    startSessionProgressBridge: () => () => {},
+    extractAgentMessageText,
+    isFinalAnswerLikeAgentMessage,
+    spawnFn: (bin, args) => {
+      spawnCalls.push({ bin, args });
+      setImmediate(() => {
+        child.stdout.emit('data', Buffer.from([
+          '{"type":"text","data":"GROK_"}',
+          '{"type":"text","data":"DONE"}',
+          '{"type":"end","stopReason":"EndTurn","sessionId":"93ed097e-09c8-496b-9a45-1c7404101fee","requestId":"request-1"}',
+          '',
+        ].join('\n')));
+        child.emit('close', 0, null);
+      });
+      return child;
+    },
+  });
+
+  const result = await executor.runProviderTask({
+    session: { provider: 'grok', mode: 'safe', runnerSessionId: null },
+    workspaceDir: '/tmp/workspace',
+    prompt: 'hello',
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.threadId, '93ed097e-09c8-496b-9a45-1c7404101fee');
+  assert.deepEqual(result.finalAnswerMessages, ['GROK_DONE']);
+  assert.equal(spawnCalls[0].bin, 'grok');
+  assert.equal(spawnCalls[0].args.includes('--always-approve'), true);
+  assert.equal(spawnCalls[0].args.includes('--permission-mode'), false);
+  assert.equal(spawnCalls[0].args.includes('--sandbox'), true);
+});
+
+test('createRunnerExecutor rejects a cancelled Grok turn and does not promote commentary to final output', async () => {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.killed = false;
+
+  const executor = createRunnerExecutor({
+    spawnEnv: process.env,
+    ensureDir: () => {},
+    normalizeProvider: testNormalizeProvider,
+    getSessionProvider: (session) => session.provider,
+    getProviderBin: () => 'grok',
+    getSessionId: (session) => session.runnerSessionId,
+    resolveModelSetting: () => ({ value: null, source: 'provider' }),
+    resolveReasoningEffortSetting: () => ({ value: null, source: 'provider' }),
+    resolveTimeoutSetting: () => ({ timeoutMs: 0 }),
+    resolveCompactStrategySetting: () => ({ strategy: 'hard' }),
+    resolveCompactEnabledSetting: () => ({ enabled: false }),
+    resolveNativeCompactTokenLimitSetting: () => ({ tokens: 0 }),
+    normalizeTimeoutMs: (value) => Number(value || 0),
+    safeError: (err) => String(err?.message || err),
+    stopChildProcess: () => {},
+    startSessionProgressBridge: () => () => {},
+    extractAgentMessageText,
+    isFinalAnswerLikeAgentMessage,
+    spawnFn: () => {
+      setImmediate(() => {
+        child.stdout.emit('data', Buffer.from([
+          '{"type":"text","data":"I will inspect the workspace."}',
+          '{"type":"tool_call","toolCallId":"call-1","toolName":"run_terminal_command","rawInput":{"command":"pwd"}}',
+          '{"type":"tool_call_update","toolCallId":"call-1","status":"failed"}',
+          '{"type":"end","stopReason":"cancelled","sessionId":"grok-cancelled-session"}',
+          '',
+        ].join('\n')));
+        child.emit('close', 0, null);
+      });
+      return child;
+    },
+  });
+
+  const result = await executor.runProviderTask({
+    session: { provider: 'grok', mode: 'safe', runnerSessionId: null },
+    workspaceDir: '/tmp/workspace',
+    prompt: 'inspect',
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error, 'Grok turn ended with stop reason: cancelled');
+  assert.deepEqual(result.messages, ['I will inspect the workspace.']);
+  assert.deepEqual(result.finalAnswerMessages, []);
+});
+
+test('createRunnerExecutor rejects incomplete Grok output even when the CLI exits zero', async () => {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.killed = false;
+
+  const executor = createRunnerExecutor({
+    spawnEnv: process.env,
+    ensureDir: () => {},
+    normalizeProvider: testNormalizeProvider,
+    getSessionProvider: (session) => session.provider,
+    getProviderBin: () => 'grok',
+    getSessionId: (session) => session.runnerSessionId,
+    resolveModelSetting: () => ({ value: null, source: 'provider' }),
+    resolveReasoningEffortSetting: () => ({ value: null, source: 'provider' }),
+    resolveTimeoutSetting: () => ({ timeoutMs: 0 }),
+    resolveCompactStrategySetting: () => ({ strategy: 'hard' }),
+    resolveCompactEnabledSetting: () => ({ enabled: false }),
+    resolveNativeCompactTokenLimitSetting: () => ({ tokens: 0 }),
+    normalizeTimeoutMs: (value) => Number(value || 0),
+    safeError: (err) => String(err?.message || err),
+    stopChildProcess: () => {},
+    startSessionProgressBridge: () => () => {},
+    extractAgentMessageText,
+    isFinalAnswerLikeAgentMessage,
+    spawnFn: () => {
+      setImmediate(() => {
+        child.stdout.emit('data', Buffer.from('{"type":"text","data":"unfinished"}\n'));
+        child.emit('close', 0, null);
+      });
+      return child;
+    },
+  });
+
+  const result = await executor.runProviderTask({
+    session: { provider: 'grok', mode: 'safe', runnerSessionId: null },
+    workspaceDir: '/tmp/workspace',
+    prompt: 'hello',
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error, 'invalid Grok JSON stream: missing end event or session id');
+});
+
 test('createRunnerExecutor rejects Pi-family model errors even when the CLI exits zero', async () => {
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
@@ -257,6 +582,9 @@ test('createRunnerExecutor parses pretty-printed ZCode JSON and preserves its se
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
   child.killed = false;
+  const bridgeStarts = [];
+  const bridgeEvents = [];
+  let bridgeStops = 0;
 
   const executor = createRunnerExecutor({
     spawnEnv: process.env,
@@ -274,7 +602,18 @@ test('createRunnerExecutor parses pretty-printed ZCode JSON and preserves its se
     normalizeTimeoutMs: (value) => Number(value || 0),
     safeError: (err) => String(err?.message || err),
     stopChildProcess: () => {},
-    startSessionProgressBridge: () => () => {},
+    startSessionProgressBridge: (options) => {
+      bridgeStarts.push(options);
+      options.onEvent({
+        type: 'tool_execution_start',
+        model: 'GLM-5.3',
+        toolName: 'Read',
+        args: { description: 'Read project overview' },
+      });
+      return () => {
+        bridgeStops += 1;
+      };
+    },
     extractAgentMessageText,
     isFinalAnswerLikeAgentMessage,
     spawnFn: () => {
@@ -295,12 +634,19 @@ test('createRunnerExecutor parses pretty-printed ZCode JSON and preserves its se
     session: { provider: 'zcode', mode: 'safe', runnerSessionId: null },
     workspaceDir: '/tmp/workspace',
     prompt: 'hello',
+    onEvent: (event) => bridgeEvents.push(event),
   });
 
   assert.equal(result.ok, true);
   assert.equal(result.threadId, 'sess_zcode_1');
   assert.deepEqual(result.finalAnswerMessages, ['ZCODE_DONE']);
   assert.deepEqual(result.usage, { inputTokens: 42, outputTokens: 3, totalTokens: 45 });
+  assert.equal(bridgeStarts.length, 1);
+  assert.equal(bridgeStarts[0]?.provider, 'zcode');
+  assert.equal(bridgeStarts[0]?.threadId, '');
+  assert.equal(bridgeStarts[0]?.workspaceDir, '/tmp/workspace');
+  assert.equal(bridgeEvents[0]?.type, 'tool_execution_start');
+  assert.equal(bridgeStops, 1);
 });
 
 test('createRunnerExecutor rejects malformed ZCode JSON even when the process exits zero', async () => {

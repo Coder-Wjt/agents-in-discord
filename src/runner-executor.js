@@ -5,6 +5,7 @@ import { createCodexAppServerRunner } from './codex-app-server-runner.js';
 import { CODEX_GOAL_CONTINUATION_PROMPT, isCodexGoalContinuationPrompt } from './codex-goal-flow.js';
 import {
   createRunnerEventParser,
+  isSuccessfulGrokStopReason,
 } from './runner-event-handlers.js';
 import {
   buildClaudeRecoveryPrompt,
@@ -193,6 +194,7 @@ export function createRunnerExecutor({
       onEvent,
       onLog,
       timeoutMs,
+      initialThreadId: normalizeProvider(provider) === 'zcode' ? getSessionId(session) : null,
       goalMonitor: createCodexGoalMonitor({ provider, session, prompt }),
     });
     const normalizedResult = normalizeProvider(provider) === 'claude'
@@ -384,9 +386,15 @@ export function createRunnerExecutor({
 
       const ensureSessionBridge = (nextThreadId) => {
         const id = String(nextThreadId || '').trim();
-        if (!id) return;
+        const normalizedRunnerProvider = normalizeProvider(provider);
+        const bridgeKey = id || (normalizedRunnerProvider === 'zcode' && workspaceDir
+          ? `zcode:${workspaceDir}`
+          : '');
+        if (!bridgeKey) return;
         if (typeof options.onEvent !== 'function') return;
-        if (id === progressBridgeThreadId && typeof stopProgressBridge === 'function') return;
+        if (typeof startSessionProgressBridge !== 'function') return;
+        if (normalizedRunnerProvider === 'zcode' && typeof stopProgressBridge === 'function') return;
+        if (bridgeKey === progressBridgeThreadId && typeof stopProgressBridge === 'function') return;
 
         stopBridges();
         stopProgressBridge = startSessionProgressBridge({
@@ -401,7 +409,7 @@ export function createRunnerExecutor({
             options.onEvent?.(ev);
           },
         });
-        progressBridgeThreadId = id;
+        progressBridgeThreadId = bridgeKey;
       };
 
       const consumeLine = (line, source) => {
@@ -479,6 +487,7 @@ export function createRunnerExecutor({
         resolve(result);
       };
 
+      ensureSessionBridge(options.initialThreadId);
       startGoalMonitor();
 
       child.stdout.on('data', (chunk) => onData(chunk, 'stdout'));
@@ -563,14 +572,40 @@ export function createRunnerExecutor({
           }
           if (piFamilyProtocolError && !logs.includes(piFamilyProtocolError)) logs.push(piFamilyProtocolError);
         }
+        let grokProtocolError = '';
+        if (normalizeProvider(provider) === 'grok') {
+          grokProtocolError = String(meta.grokError || '').trim();
+          if (!grokProtocolError && (!meta.grokSawEnd || !threadId)) {
+            grokProtocolError = 'invalid Grok JSON stream: missing end event or session id';
+          } else if (!grokProtocolError && !isSuccessfulGrokStopReason(meta.grokStopReason)) {
+            grokProtocolError = meta.grokStopReason
+              ? `Grok turn ended with stop reason: ${meta.grokStopReason}`
+              : 'invalid Grok JSON stream: missing stop reason';
+          } else if (!grokProtocolError && finalAnswerMessages.length === 0) {
+            grokProtocolError = 'invalid Grok JSON stream: missing final assistant output';
+          }
+          if (grokProtocolError && !logs.includes(grokProtocolError)) logs.push(grokProtocolError);
+        }
+        let cursorProtocolError = '';
+        if (normalizeProvider(provider) === 'cursor') {
+          cursorProtocolError = String(meta.cursorError || '').trim();
+          if (!cursorProtocolError && !cancelled && !timedOut && code === 0 && (!meta.cursorSawResult || !threadId)) {
+            cursorProtocolError = 'invalid Cursor JSON stream: missing result event or session id';
+          } else if (!cursorProtocolError && !cancelled && !timedOut && code === 0 && finalAnswerMessages.length === 0) {
+            cursorProtocolError = 'invalid Cursor JSON stream: missing final assistant output';
+          }
+          if (cursorProtocolError && !logs.includes(cursorProtocolError)) logs.push(cursorProtocolError);
+        }
         const ok = !zcodeProtocolError
           && !piFamilyProtocolError
+          && !grokProtocolError
+          && !cursorProtocolError
           && (stoppedAfterGoalComplete || stoppedAfterGoalBlocked || (!cancelled && code === 0));
         finish({
           ok,
           cancelled: stoppedAfterGoalComplete || stoppedAfterGoalBlocked ? false : cancelled,
           timedOut,
-          error: ok ? '' : (zcodeProtocolError || piFamilyProtocolError || buildRunnerError({ provider, code, signal, logs })),
+          error: ok ? '' : (zcodeProtocolError || piFamilyProtocolError || grokProtocolError || cursorProtocolError || buildRunnerError({ provider, code, signal, logs })),
           logs,
           messages,
           finalAnswerMessages,
@@ -755,8 +790,8 @@ function formatCodexGoalCompletedMessage(goal) {
 }
 
 function buildRunnerError({ provider, code, signal, logs }) {
+  if (logs.length) return logs[logs.length - 1];
   if (signal) return `${provider} exited via signal ${signal}`;
   if (typeof code === 'number') return `${provider} exited with code ${code}`;
-  if (logs.length) return logs[logs.length - 1];
   return `${provider} run failed`;
 }
