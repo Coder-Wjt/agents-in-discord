@@ -129,6 +129,8 @@ export function getProviderBin(provider, options = {}) {
   const {
     codexBin = 'codex',
     claudeBin = 'claude',
+    cursorBin = 'agent',
+    grokBin = 'grok',
     antigravityBin = 'agy',
     zcodeBin = 'zcode',
     piBin = 'pi',
@@ -137,6 +139,10 @@ export function getProviderBin(provider, options = {}) {
   switch (normalizeProvider(provider)) {
     case 'claude':
       return claudeBin;
+    case 'cursor':
+      return cursorBin;
+    case 'grok':
+      return grokBin;
     case 'antigravity':
       return antigravityBin;
     case 'zcode':
@@ -193,6 +199,8 @@ export function getCliHealth(provider, options = {}) {
   const {
     codexBin = 'codex',
     claudeBin = 'claude',
+    cursorBin,
+    grokBin,
     antigravityBin,
     zcodeBin,
     piBin,
@@ -203,6 +211,8 @@ export function getCliHealth(provider, options = {}) {
   const bin = getProviderBin(provider, {
     codexBin,
     claudeBin,
+    cursorBin,
+    grokBin,
     antigravityBin,
     zcodeBin,
     piBin,

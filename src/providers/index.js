@@ -10,11 +10,13 @@ export function createProviderAdapterRegistry(adapters = []) {
 
   return {
     get(provider) {
-      return byId.get(normalizeProvider(provider)) || byId.get('codex') || null;
+      const normalized = normalizeProvider(provider);
+      const adapter = byId.get(normalized);
+      if (!adapter) throw new Error(`provider adapter not registered: ${normalized}`);
+      return adapter;
     },
     list() {
       return [...byId.values()];
     },
   };
 }
-

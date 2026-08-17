@@ -39,6 +39,46 @@ const PROVIDER_METADATA = Object.freeze({
       workspaceSessionPolicy: 'strict',
     }),
   }),
+  cursor: Object.freeze({
+    aliases: Object.freeze(['cursor', 'cursor-agent']),
+    displayName: 'Cursor Agent',
+    shortName: 'Cursor',
+    defaultBin: 'agent',
+    binEnvName: 'CURSOR_BIN',
+    defaultSlashPrefix: 'cursor',
+    capabilities: Object.freeze({
+      reasoningEffortLevels: Object.freeze([]),
+      rawConfigOverrides: Object.freeze({
+        supported: false,
+      }),
+      compact: Object.freeze({
+        strategies: Object.freeze([]),
+        supportsNativeStrategy: false,
+        supportsNativeLimit: false,
+      }),
+      workspaceSessionPolicy: 'strict',
+    }),
+  }),
+  grok: Object.freeze({
+    aliases: Object.freeze(['grok', 'xai', 'grok-build']),
+    displayName: 'Grok Build',
+    shortName: 'Grok',
+    defaultBin: 'grok',
+    binEnvName: 'GROK_BIN',
+    defaultSlashPrefix: 'grok',
+    capabilities: Object.freeze({
+      reasoningEffortLevels: Object.freeze(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']),
+      rawConfigOverrides: Object.freeze({
+        supported: false,
+      }),
+      compact: Object.freeze({
+        strategies: Object.freeze(['hard', 'native', 'off']),
+        supportsNativeStrategy: true,
+        supportsNativeLimit: false,
+      }),
+      workspaceSessionPolicy: 'strict',
+    }),
+  }),
   antigravity: Object.freeze({
     aliases: Object.freeze(['antigravity', 'agy']),
     displayName: 'Antigravity CLI',
@@ -137,7 +177,12 @@ function findProviderByAlias(value) {
 }
 
 export function normalizeProvider(value, fallback = 'codex') {
-  return findProviderByAlias(value) || fallback;
+  const raw = String(value || '').trim();
+  if (!raw) return fallback;
+  const provider = findProviderByAlias(raw);
+  if (provider) return provider;
+  if (raw.toLowerCase() === 'google' || raw.toLowerCase() === 'gemini') return 'codex';
+  throw new Error(`unsupported provider: ${raw}`);
 }
 
 export function parseOptionalProvider(value) {
@@ -205,6 +250,7 @@ export function providerSupportsCompactStrategy(provider, strategy) {
 }
 
 export function providerSupportsCompactConfigAction(provider, action) {
+  if (getSupportedCompactStrategies(provider).length === 0) return false;
   if (!action || action.type === 'status' || action.type === 'reset') return true;
   if (action.type === 'set_strategy') {
     return providerSupportsCompactStrategy(provider, action.strategy);
@@ -218,6 +264,11 @@ export function providerSupportsCompactConfigAction(provider, action) {
 export function formatCompactConfigUnsupported(provider, action, language = 'en') {
   const displayName = getProviderDisplayName(provider);
   const compact = getProviderCompactCapabilities(provider);
+  if (compact.strategies.length === 0) {
+    return language === 'en'
+      ? `⚠️ ${displayName} does not expose compaction controls.`
+      : `⚠️ ${displayName} 未暴露上下文压缩能力。`;
+  }
   const strategyList = compact.strategies
     .filter((value) => value !== 'native')
     .map((value) => `\`${value}\``)
