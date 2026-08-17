@@ -111,8 +111,10 @@ export function createPromptOrchestrator({
     if (compactSetting.strategy !== 'hard') return false;
     if (!getSessionId(session)) return false;
     const last = toOptionalInt(session.lastInputTokens);
+    const threshold = toOptionalInt(thresholdSetting.tokens);
     if (!Number.isFinite(last)) return false;
-    return last >= thresholdSetting.tokens;
+    if (!Number.isFinite(threshold) || threshold <= 0) return false;
+    return last >= threshold;
   }
 
   function shouldAutoContinueNativeCompact(session) {
@@ -125,8 +127,10 @@ export function createPromptOrchestrator({
     if (compactSetting.strategy !== 'native') return false;
     if (!getSessionId(session)) return false;
     const last = toOptionalInt(session.lastInputTokens);
+    const threshold = toOptionalInt(thresholdSetting.tokens);
     if (!Number.isFinite(last)) return false;
-    return last >= thresholdSetting.tokens;
+    if (!Number.isFinite(threshold) || threshold <= 0) return false;
+    return last >= threshold;
   }
 
   async function compactSessionContext({ session, workspaceDir, onSpawn, wasCancelled, onEvent, onLog }) {

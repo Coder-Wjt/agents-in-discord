@@ -148,6 +148,16 @@ test('createPromptOrchestrator.shouldCompactSession respects strategy threshold 
   assert.equal(orchestrator.shouldCompactSession(session), false);
 });
 
+test('createPromptOrchestrator.shouldCompactSession does not coerce an unset provider threshold to zero', () => {
+  const { session, orchestrator } = createOrchestrator({
+    resolveCompactThresholdSetting: () => ({ tokens: null, source: 'provider default' }),
+  });
+  session.provider = 'grok';
+  session.lastInputTokens = 400_000;
+
+  assert.equal(orchestrator.shouldCompactSession(session), false);
+});
+
 test('createPromptOrchestrator.handlePrompt runs task updates session and replies with result', async () => {
   const harness = createOrchestrator();
   const { session, replyLog, progressCalls, orchestrator } = harness;
