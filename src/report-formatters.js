@@ -1,6 +1,11 @@
 import { formatWorkspaceBusyReport as formatWorkspaceBusyReportBase } from './workspace-busy-report.js';
 import { getProviderCommandAlias } from './command-spec.js';
-import { formatBusyPromptModeLabel, formatCodexProfileLabel, formatReplyDeliveryModeLabel } from './session-settings.js';
+import {
+  formatBusyPromptModeLabel,
+  formatCodexProfileLabel,
+  formatCompactThresholdValue,
+  formatReplyDeliveryModeLabel,
+} from './session-settings.js';
 import { formatCodexGoalBudget, formatCodexGoalStatus } from './codex-goal-flow.js';
 import {
   buildExtraInfoPromptLine,
@@ -155,7 +160,7 @@ export function createReportFormatters({
   function resolveReportedModelSetting(session) {
     const configured = resolveModelSetting(session);
     const observed = String(session?.lastObservedModel || '').trim();
-    if (getSessionProvider(session) === 'claude' && observed) {
+    if (['claude', 'cursor', 'grok', 'zcode'].includes(getSessionProvider(session)) && observed) {
       return { value: observed, source: 'runtime observed' };
     }
     return configured;
@@ -197,6 +202,18 @@ export function createReportFormatters({
     }
     if (source === 'env default') {
       return language === 'en' ? 'env default' : '环境默认';
+    }
+    if (source === 'provider env') {
+      return language === 'en' ? 'provider env' : 'provider 环境配置';
+    }
+    if (source === 'provider default') {
+      return language === 'en' ? 'provider default' : 'provider 默认';
+    }
+    if (source === 'built-in default') {
+      return language === 'en' ? 'built-in default' : '内建默认';
+    }
+    if (source === 'legacy env') {
+      return language === 'en' ? 'legacy env' : '旧版环境配置';
     }
     if (source === 'provider unsupported') {
       return language === 'en' ? 'provider unsupported' : '当前 provider 不支持';
@@ -559,6 +576,7 @@ export function createReportFormatters({
     const runtimeSummary = formatProviderRuntimeSummary(provider, lang);
     const sessionFieldLabel = formatProviderSessionTerm(provider, lang);
     const nativeCompact = formatNativeCompactSetting(provider, nativeLimit, lang);
+    const compactAvailable = getProviderCompactCapabilities(provider).strategies.length > 0;
     const rateLimitLines = formatCodexRateLimitLines(provider, rateLimitReport, lang);
     const goalLines = formatCodexGoalLines(provider, goalReport, lang);
     const projectUpgradeLine = projectUpgradeReport ? formatProjectUpgradeStatusLine(projectUpgradeReport, lang) : null;
@@ -576,12 +594,12 @@ export function createReportFormatters({
         runtimeMode.supported ? `• runtime: ${formatRuntimeModeLabel(runtimeMode.mode, lang)} (${formatSettingSourceLabel(runtimeMode.source, lang)})` : null,
         `• busy prompt: ${formatBusyPromptStatus(busyPromptMode, lang)}`,
         ...workspaceLines,
-        `• compact strategy: ${describeCompactStrategy(compactSetting.strategy, lang)} (${formatSettingSourceLabel(compactSetting.source, lang)})`,
+        compactAvailable ? `• compact strategy: ${describeCompactStrategy(compactSetting.strategy, lang)} (${formatSettingSourceLabel(compactSetting.source, lang)})` : null,
         `• reply delivery: ${formatReplyDeliveryModeLabel(replyDelivery.mode, lang)} (${formatSettingSourceLabel(replyDelivery.source, lang)})`,
         extraInfoLine,
-        `• compact enabled: ${compactEnabled.enabled ? 'on' : 'off'} (${formatSettingSourceLabel(compactEnabled.source, lang)})`,
-        `• compact token limit: ${compactThreshold.tokens} (${formatSettingSourceLabel(compactThreshold.source, lang)})`,
-        `• ${nativeCompact.label}: ${nativeCompact.value}`,
+        compactAvailable ? `• compact enabled: ${compactEnabled.enabled ? 'on' : 'off'} (${formatSettingSourceLabel(compactEnabled.source, lang)})` : null,
+        `• compact token limit: ${formatCompactThresholdValue(compactThreshold, lang)} (${formatSettingSourceLabel(compactThreshold.source, lang)})`,
+        compactAvailable ? `• ${nativeCompact.label}: ${nativeCompact.value}` : null,
         `• ui language: ${formatLanguageLabel(language)}`,
         `• permissions: ${formatPermissionsLabel(session, lang)}`,
         `• cli: ${formatCliHealth(cliHealth, lang)}`,
@@ -607,12 +625,12 @@ export function createReportFormatters({
       runtimeMode.supported ? `• 运行时: ${formatRuntimeModeLabel(runtimeMode.mode, lang)}（${formatSettingSourceLabel(runtimeMode.source, lang)}）` : null,
       `• 运行中消息: ${formatBusyPromptStatus(busyPromptMode, lang)}`,
       ...workspaceLines,
-      `• compact strategy: ${describeCompactStrategy(compactSetting.strategy, lang)}（${formatSettingSourceLabel(compactSetting.source, lang)}）`,
+      compactAvailable ? `• compact strategy: ${describeCompactStrategy(compactSetting.strategy, lang)}（${formatSettingSourceLabel(compactSetting.source, lang)}）` : null,
       `• 回复方式：${formatReplyDeliveryModeLabel(replyDelivery.mode, lang)}（${formatSettingSourceLabel(replyDelivery.source, lang)}）`,
       extraInfoLine,
-      `• compact enabled: ${compactEnabled.enabled ? 'on' : 'off'}（${formatSettingSourceLabel(compactEnabled.source, lang)}）`,
-      `• compact token limit: ${compactThreshold.tokens}（${formatSettingSourceLabel(compactThreshold.source, lang)}）`,
-      `• ${nativeCompact.label}: ${nativeCompact.value}`,
+      compactAvailable ? `• compact enabled: ${compactEnabled.enabled ? 'on' : 'off'}（${formatSettingSourceLabel(compactEnabled.source, lang)}）` : null,
+      `• compact token limit: ${formatCompactThresholdValue(compactThreshold, lang)}（${formatSettingSourceLabel(compactThreshold.source, lang)}）`,
+      compactAvailable ? `• ${nativeCompact.label}: ${nativeCompact.value}` : null,
       `• 界面语言: ${formatLanguageLabel(language)}`,
       `• 权限: ${formatPermissionsLabel(session, lang)}`,
       `• CLI: ${formatCliHealth(cliHealth, lang)}`,
@@ -816,6 +834,7 @@ export function createReportFormatters({
     const rawConfigSurface = formatProviderRawConfigSurface(provider);
     const reasoningSurface = formatProviderReasoningSurface(provider);
     const nativeCompact = formatNativeCompactSetting(provider, nativeLimit);
+    const compactAvailable = getProviderCompactCapabilities(provider).strategies.length > 0;
     return [
       '🩺 **Bot Doctor**',
       `• bot mode: ${formatBotModeLabel()}`,
@@ -842,10 +861,10 @@ export function createReportFormatters({
       `• runner timeout: ${formatTimeoutLabel(timeoutSetting.timeoutMs)} (${timeoutSetting.source})`,
       fastMode.supported ? `• fast mode: ${formatFastModeLabel(fastMode.enabled)} (${fastMode.source})` : null,
       runtimeMode.supported ? `• ${getProviderDisplayName(provider)} runtime: ${formatRuntimeModeLabel(runtimeMode.mode)} (${runtimeMode.source})` : null,
-      `• compact strategy: ${describeCompactStrategy(compactSetting.strategy)} (${compactSetting.source})`,
-      `• compact enabled: ${compactEnabled.enabled ? 'on' : 'off'} (${compactEnabled.source})`,
-      `• compact token limit: ${compactThreshold.tokens} (${compactThreshold.source})`,
-      `• ${nativeCompact.label}: ${nativeCompact.value}`,
+      compactAvailable ? `• compact strategy: ${describeCompactStrategy(compactSetting.strategy)} (${compactSetting.source})` : null,
+      compactAvailable ? `• compact enabled: ${compactEnabled.enabled ? 'on' : 'off'} (${compactEnabled.source})` : null,
+      `• compact token limit: ${formatCompactThresholdValue(compactThreshold)} (${compactThreshold.source})`,
+      compactAvailable ? `• ${nativeCompact.label}: ${nativeCompact.value}` : null,
     ].filter(Boolean).join('\n');
   }
 
@@ -866,7 +885,9 @@ export function createReportFormatters({
         `Usage: \`!compact <${commandKeys}> [value]\``,
         `Slash: \`${slashRef('compact')} key:<...> value:<...>\``,
         `Examples: ${examples.join(', ')}`,
-        compact.supportsNativeLimit
+        compact.strategies.length === 0
+          ? null
+          : compact.supportsNativeLimit
           ? 'Note: this provider supports provider-native compaction. `hard` stays bot-managed, `native_limit` overrides the native token limit, and native runs continue automatically.'
           : compact.supportsNativeStrategy
             ? 'Note: this provider supports provider-native compaction. `hard` stays bot-managed, `native_limit` is not exposed, and native runs continue automatically.'
@@ -877,7 +898,9 @@ export function createReportFormatters({
       `用法：\`!compact <${commandKeys}> [value]\``,
       `Slash：\`${slashRef('compact')} key:<...> value:<...>\``,
       `示例：${examples.join('、')}`,
-      compact.supportsNativeLimit
+      compact.strategies.length === 0
+        ? null
+        : compact.supportsNativeLimit
         ? '说明：当前 provider 支持原生 native 压缩；`hard` 仍由 bot 统一管理，`native_limit` 用来覆盖原生 token limit，native 任务会自动续跑。'
         : compact.supportsNativeStrategy
           ? '说明：当前 provider 支持原生 native 压缩；`hard` 仍由 bot 统一管理，但不暴露 `native_limit`，native 任务会自动续跑。'
@@ -899,9 +922,11 @@ export function createReportFormatters({
         changed ? '✅ Compact config updated' : 'ℹ️ Compact config',
         `• strategy: ${describeCompactStrategy(strategy.strategy, language)} (${formatSettingSourceLabel(strategy.source, language)})`,
         `• enabled: ${enabled.enabled ? 'on' : 'off'} (${formatSettingSourceLabel(enabled.source, language)})`,
-        `• token limit: ${threshold.tokens} (${formatSettingSourceLabel(threshold.source, language)})`,
+        `• token limit: ${formatCompactThresholdValue(threshold, language)} (${formatSettingSourceLabel(threshold.source, language)})`,
         `• ${nativeCompact.label}: ${nativeCompact.value}`,
-        compact.supportsNativeLimit
+        compact.strategies.length === 0
+          ? null
+          : compact.supportsNativeLimit
           ? '• note: native compaction is handled inside the provider CLI and continues automatically; if it rolls to a new session, the bot will disclose the new session id.'
           : compact.supportsNativeStrategy
             ? '• note: native compaction is still handled inside the provider CLI and continues automatically; if it rolls to a new session, the bot will disclose the new session id.'
@@ -912,9 +937,11 @@ export function createReportFormatters({
       changed ? '✅ compact 配置已更新' : 'ℹ️ 当前 compact 配置',
       `• strategy: ${describeCompactStrategy(strategy.strategy, language)}（${formatSettingSourceLabel(strategy.source, language)}）`,
       `• enabled: ${enabled.enabled ? 'on' : 'off'}（${formatSettingSourceLabel(enabled.source, language)}）`,
-      `• token limit: ${threshold.tokens}（${formatSettingSourceLabel(threshold.source, language)}）`,
+      `• token limit: ${formatCompactThresholdValue(threshold, language)}（${formatSettingSourceLabel(threshold.source, language)}）`,
       `• ${nativeCompact.label}: ${nativeCompact.value}`,
-      compact.supportsNativeLimit
+      compact.strategies.length === 0
+        ? null
+        : compact.supportsNativeLimit
         ? '• 说明：native 压缩发生在 provider CLI 内部并自动续跑；如果切到新的 session，bot 会明确显示新的 session id。'
         : compact.supportsNativeStrategy
           ? '• 说明：native 压缩仍发生在 provider CLI 内部并自动续跑；如果切到新的 session，bot 会明确显示新的 session id。'
@@ -1211,7 +1238,7 @@ export function createReportFormatters({
         (provider === 'codex' || provider === 'claude') ? `• \`${slashRef('fork')} [name]\` / \`!fork [name]\` — create a native ${getProviderDisplayName(provider)} fork in a new Discord thread` : null,
         provider === 'codex' ? `• \`${slashRef('side')} action:<start|status|close> name:<optional>\` / \`!side [start|status|close] [name]\` — open or manage a temporary Codex side conversation` : null,
         provider === 'codex' ? `• \`${slashRef('goal')} action:<status|set|pause|resume|done|clear|budget>\` / \`!goal <status|objective|pause|resume|done|clear>\` — manage the current Codex goal; active goals continue until marked complete or blocked` : null,
-        !botProvider ? '• `!provider <codex|claude|antigravity|zcode|pi|omp|status>` — switch provider for current channel' : null,
+        !botProvider ? '• `!provider <codex|claude|cursor|grok|antigravity|zcode|pi|omp|status>` — switch provider for current channel' : null,
         '',
         '**Workspace**',
         '• `!setdir <path|browse|default|status>` — set or clear current thread workspace',
@@ -1225,11 +1252,13 @@ export function createReportFormatters({
         (provider === 'codex' || provider === 'omp') ? `• \`${slashRef('fast')} <on|off|status|default>\` / \`!fast <...>\` — toggle ${getProviderDisplayName(provider)} Fast mode for this channel` : null,
         (provider === 'claude' || provider === 'codex') ? `• \`${slashRef('runtime')} <normal|long|status|default>\` / \`!runtime <...>\` — switch ${getProviderDisplayName(provider)} runtime mode for this channel` : null,
         reasoningLevels.length ? null : `• effort — not exposed by current provider (${getProviderDisplayName(provider)})`,
-        compact.supportsNativeLimit
-          ? `• \`${slashRef('compact')} key:<...> value:<...>\` / \`!compact <...>\` — context compaction config (native + native_limit available on current provider)`
-          : compact.supportsNativeStrategy
-            ? `• \`${slashRef('compact')} key:<...> value:<...>\` / \`!compact <...>\` — context compaction config (native available; current provider keeps the provider-default native limit)`
-            : `• \`${slashRef('compact')} key:<...> value:<...>\` / \`!compact <...>\` — context compaction config (hard only on current provider)`,
+        compact.strategies.length === 0
+          ? null
+          : compact.supportsNativeLimit
+            ? `• \`${slashRef('compact')} key:<...> value:<...>\` / \`!compact <...>\` — context compaction config (native + native_limit available on current provider)`
+            : compact.supportsNativeStrategy
+              ? `• \`${slashRef('compact')} key:<...> value:<...>\` / \`!compact <...>\` — context compaction config (native available; current provider keeps the provider-default native limit)`
+              : `• \`${slashRef('compact')} key:<...> value:<...>\` / \`!compact <...>\` — context compaction config (hard only on current provider)`,
         `• \`${slashRef('extra_info')} key:<...> value:<...>\` / \`!extra_info <...>\` — configure extra context and token cost`,
         '• `!mode <safe|dangerous>` — execution mode',
         providerSupportsRawConfigOverrides(provider)
@@ -1270,7 +1299,7 @@ export function createReportFormatters({
       (provider === 'codex' || provider === 'claude') ? `• \`${slashRef('fork')} [name]\` / \`!fork [name]\` — 用 ${getProviderDisplayName(provider)} 原生 fork 创建新 Discord thread` : null,
       provider === 'codex' ? `• \`${slashRef('side')} action:<start|status|close> name:<可选>\` / \`!side [start|status|close] [name]\` — 开启或管理临时 Codex side conversation` : null,
       provider === 'codex' ? `• \`${slashRef('goal')} action:<status|set|pause|resume|done|clear|budget>\` / \`!goal <状态|目标|暂停|恢复|完成|清除>\` — 管理当前 Codex goal；active 时应持续推进直到标记完成或报告阻塞` : null,
-      !botProvider ? '• `!provider <codex|claude|antigravity|zcode|pi|omp|status>` — 切换当前频道 provider' : null,
+      !botProvider ? '• `!provider <codex|claude|cursor|grok|antigravity|zcode|pi|omp|status>` — 切换当前频道 provider' : null,
       '',
       '**工作目录**',
       '• `!setdir <path|browse|default|status>` — 设置或清除当前 thread 的 workspace',
@@ -1284,11 +1313,13 @@ export function createReportFormatters({
         (provider === 'codex' || provider === 'omp') ? `• \`${slashRef('fast')} <on|off|status|default>\` / \`!fast <...>\` — 切换当前频道的 ${getProviderDisplayName(provider)} Fast mode` : null,
         (provider === 'claude' || provider === 'codex') ? `• \`${slashRef('runtime')} <normal|long|status|default>\` / \`!runtime <...>\` — 切换当前频道的 ${getProviderDisplayName(provider)} 接入方式` : null,
       reasoningLevels.length ? null : `• effort — 当前 provider (${getProviderDisplayName(provider)}) 未暴露`,
-      compact.supportsNativeLimit
-        ? `• \`${slashRef('compact')} key:<...> value:<...>\` / \`!compact <...>\` — 上下文压缩配置（当前 provider 支持 native 与 native_limit）`
-        : compact.supportsNativeStrategy
-          ? `• \`${slashRef('compact')} key:<...> value:<...>\` / \`!compact <...>\` — 上下文压缩配置（当前 provider 支持 native，但 native_limit 走 provider 默认行为）`
-          : `• \`${slashRef('compact')} key:<...> value:<...>\` / \`!compact <...>\` — 上下文压缩配置（当前 provider 仅支持 hard）`,
+      compact.strategies.length === 0
+        ? null
+        : compact.supportsNativeLimit
+          ? `• \`${slashRef('compact')} key:<...> value:<...>\` / \`!compact <...>\` — 上下文压缩配置（当前 provider 支持 native 与 native_limit）`
+          : compact.supportsNativeStrategy
+            ? `• \`${slashRef('compact')} key:<...> value:<...>\` / \`!compact <...>\` — 上下文压缩配置（当前 provider 支持 native，但 native_limit 走 provider 默认行为）`
+            : `• \`${slashRef('compact')} key:<...> value:<...>\` / \`!compact <...>\` — 上下文压缩配置（当前 provider 仅支持 hard）`,
       `• \`${slashRef('extra_info')} key:<...> value:<...>\` / \`!extra_info <...>\` — 配置额外信息和 token 占用`,
       '• `!mode <safe|dangerous>` — 执行模式',
       providerSupportsRawConfigOverrides(provider)

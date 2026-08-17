@@ -197,6 +197,22 @@ test('createReportFormatters.formatStatusReport shows the last observed Claude r
   assert.doesNotMatch(report, /model: `opus`（频道覆盖）/);
 });
 
+test('createReportFormatters.formatStatusReport shows the last observed Grok runtime model', () => {
+  const formatters = createFormatters();
+  const session = {
+    provider: 'grok',
+    language: 'zh',
+    mode: 'safe',
+    model: null,
+    lastObservedModel: 'grok-4.6-build',
+  };
+
+  const report = formatters.formatStatusReport('thread-1', session, { id: 'channel-1' });
+
+  assert.match(report, /model: `grok-4\.6-build`（实际运行）/);
+  assert.doesNotMatch(report, /未知 model/);
+});
+
 test('createReportFormatters.formatStatusReport shows extra info token cost', () => {
   const formatters = createFormatters({
     resolveExtraInfoSetting: () => ({
@@ -514,7 +530,7 @@ test('createReportFormatters.formatHelpReport documents browse actions and provi
   const sharedHelp = sharedFormatters.formatHelpReport({ language: 'en' });
   const lockedHelp = lockedFormatters.formatHelpReport({ language: 'en' });
 
-  assert.match(sharedHelp, /!provider <codex\|claude\|antigravity\|zcode\|pi\|omp\|status>/);
+  assert.match(sharedHelp, /!provider <codex\|claude\|cursor\|grok\|antigravity\|zcode\|pi\|omp\|status>/);
   assert.match(sharedHelp, /!setdir <path\|browse\|default\|status>/);
   assert.match(sharedHelp, /!setdefaultdir <path\|browse\|clear\|status>/);
   assert.match(sharedHelp, /!dq/);
@@ -526,7 +542,43 @@ test('createReportFormatters.formatHelpReport documents browse actions and provi
   assert.doesNotMatch(antigravityHelp, /!config <key=value>/);
   assert.doesNotMatch(antigravityHelp, /!effort </);
   assert.match(antigravityHelp, /raw config passthrough/);
-  assert.doesNotMatch(lockedHelp, /!provider <codex\|claude\|antigravity\|zcode\|pi\|omp\|status>/);
+  assert.doesNotMatch(lockedHelp, /!provider <codex\|claude\|cursor\|grok\|antigravity\|zcode\|pi\|omp\|status>/);
+});
+
+test('createReportFormatters omits unsupported compact and Codex-only commands for Cursor', () => {
+  const formatters = createFormatters({
+    botProvider: 'cursor',
+    getProviderDisplayName: () => 'Cursor Agent',
+    getProviderCompactCapabilities: () => ({
+      strategies: [],
+      supportsNativeStrategy: false,
+      supportsNativeLimit: false,
+    }),
+    getSupportedReasoningEffortLevels: () => [],
+    resolveCompactThresholdSetting: () => ({ tokens: null, source: 'provider unsupported' }),
+  });
+  const session = { provider: 'cursor', language: 'en' };
+  const help = formatters.formatHelpReport(session);
+  const status = formatters.formatStatusReport('thread-1', session, { id: 'channel-1' });
+
+  assert.match(help, /!cursor_resume/);
+  assert.doesNotMatch(help, /!compact|\/bot-compact|!fork|\/bot-fork|!goal|\/bot-goal/);
+  assert.doesNotMatch(status, /compact strategy|compact enabled/);
+  assert.match(status, /compact token limit: n\/a \(provider unsupported\)/);
+});
+
+test('createReportFormatters shows an unset non-Codex threshold as provider default', () => {
+  const formatters = createFormatters({
+    resolveCompactThresholdSetting: () => ({ tokens: null, source: 'provider default' }),
+  });
+  const status = formatters.formatStatusReport(
+    'thread-1',
+    { provider: 'grok', language: 'zh' },
+    { id: 'channel-1' },
+  );
+
+  assert.match(status, /compact token limit: 未设置（provider 默认）/);
+  assert.doesNotMatch(status, /272000/);
 });
 
 test('createReportFormatters.workspace reports explain session reset and lock owner', () => {

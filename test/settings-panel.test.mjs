@@ -199,7 +199,9 @@ function createPanel({
       ],
       error: null,
     },
-    getProviderCompactCapabilities: () => ({ strategies: ['hard', 'native', 'off'] }),
+    getProviderCompactCapabilities: (provider) => ({
+      strategies: provider === 'cursor' ? [] : ['hard', 'native', 'off'],
+    }),
     normalizeUiLanguage: (value) => String(value || '').trim().toLowerCase() === 'en' ? 'en' : 'zh',
     resolveModelSetting: (currentSession) => ({
       value: currentSession?.model || currentSession?.inheritedModel || currentSession?.globalDefaultModel || 'gpt-5.4',
@@ -259,11 +261,17 @@ function createPanel({
       source: currentSession?.compactStrategy ? 'session override' : 'env default',
     }),
     resolveCompactThresholdSetting: (currentSession) => ({
-      tokens: currentSession?.compactThresholdTokens ?? currentSession?.inheritedCompactThresholdTokens ?? 272000,
+      tokens: currentSession?.compactThresholdTokens
+        ?? currentSession?.inheritedCompactThresholdTokens
+        ?? (currentSession?.provider === 'codex' ? 272000 : null),
       source: currentSession?.compactThresholdSource
         || ((currentSession?.compactThresholdTokens ?? currentSession?.inheritedCompactThresholdTokens) !== undefined
           ? (currentSession?.compactThresholdTokens !== null && currentSession?.compactThresholdTokens !== undefined ? 'session override' : 'parent channel')
-          : 'env default'),
+          : (currentSession?.provider === 'codex'
+            ? 'env default'
+            : currentSession?.provider === 'cursor'
+              ? 'provider unsupported'
+              : 'provider default')),
     }),
     resolveReplyDeliverySetting: (currentSession) => ({
       mode: currentSession?.replyDeliveryMode || currentSession?.inheritedReplyDeliveryMode || 'card_only',
@@ -313,6 +321,34 @@ test('createSettingsPanel opens an overview payload with key channel settings', 
   assert.equal(payload.components[1].components[0].data.label, '关闭');
 });
 
+test('createSettingsPanel shows provider default instead of the Codex compact threshold for Grok', () => {
+  const session = { provider: 'grok', language: 'zh', mode: 'safe' };
+  const panel = createPanel({ session });
+  const payload = panel.openSettingsPanel({
+    key: 'thread-1',
+    session,
+    userId: '12345',
+    activeSection: 'overview',
+  });
+
+  assert.match(payload.content, /compact 阈值：未设置（provider 默认）/);
+  assert.doesNotMatch(payload.content, /272000/);
+});
+
+test('createSettingsPanel shows unsupported compact threshold explicitly for Cursor', () => {
+  const session = { provider: 'cursor', language: 'zh', mode: 'safe' };
+  const panel = createPanel({ session });
+  const payload = panel.openSettingsPanel({
+    key: 'thread-1',
+    session,
+    userId: '12345',
+    activeSection: 'overview',
+  });
+
+  assert.match(payload.content, /compact 阈值：不适用（当前 provider 不支持）/);
+  assert.doesNotMatch(payload.content, /272000/);
+});
+
 test('createSettingsPanel keeps provider button rows within Discord limits', () => {
   const session = { provider: 'codex', language: 'zh', mode: 'safe' };
   const panel = createPanel({ session });
@@ -326,8 +362,8 @@ test('createSettingsPanel keeps provider button rows within Discord limits', () 
 
   const labels = payload.components
     .flatMap((row) => row.components.map((component) => component.data.label))
-    .filter((label) => ['codex', 'claude', 'antigravity', 'zcode', 'pi', 'omp'].includes(label));
-  assert.deepEqual(labels, ['codex', 'claude', 'antigravity', 'zcode', 'pi', 'omp']);
+    .filter((label) => ['codex', 'claude', 'cursor', 'grok', 'antigravity', 'zcode', 'pi', 'omp'].includes(label));
+  assert.deepEqual(labels, ['codex', 'claude', 'cursor', 'grok', 'antigravity', 'zcode', 'pi', 'omp']);
   assert.ok(payload.components.every((row) => row.components.length <= 5));
 });
 

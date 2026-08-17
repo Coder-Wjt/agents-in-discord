@@ -3,6 +3,7 @@ import { randomBytes } from 'node:crypto';
 import {
   formatBusyPromptModeLabel,
   formatCodexProfileLabel,
+  formatCompactThresholdValue,
   formatReplyDeliveryModeLabel,
   parseCompactConfigAction,
 } from './session-settings.js';
@@ -47,10 +48,12 @@ function formatSettingSourceLabel(source, language) {
     if (value === 'settings.json') return 'Antigravity settings';
     if (value === 'built-in default') return 'built-in default';
     if (value === 'env default') return 'env default';
+    if (value === 'provider env') return 'provider env';
     if (value === 'provider') return 'provider default';
     if (value === 'provider unsupported') return 'not supported';
     if (value === 'thread override') return 'this channel';
     if (value === 'provider default') return 'provider default';
+    if (value === 'legacy env') return 'legacy env';
     if (value === 'legacy fallback') return 'legacy fallback';
     if (value === 'unset') return 'unset';
     return value || 'unknown';
@@ -62,10 +65,12 @@ function formatSettingSourceLabel(source, language) {
   if (value === 'settings.json') return 'Antigravity 设置';
   if (value === 'built-in default') return '内建默认';
   if (value === 'env default') return '环境默认';
+  if (value === 'provider env') return 'provider 环境配置';
   if (value === 'provider') return 'provider 默认';
   if (value === 'provider unsupported') return '当前 provider 不支持';
   if (value === 'thread override') return '当前频道';
   if (value === 'provider default') return 'provider 默认';
+  if (value === 'legacy env') return '旧版环境配置';
   if (value === 'legacy fallback') return 'legacy 回退';
   if (value === 'unset') return '未设置';
   return value || '未知';
@@ -493,7 +498,8 @@ export function createSettingsPanel({
     if (provider === 'codex' || provider === 'omp') sections.push('fast');
     if (provider === 'codex' || provider === 'claude') sections.push('runtime');
     if (getSupportedReasoningEffortLevels(provider).length) sections.push('effort');
-    sections.push('compact', 'reply', 'language', 'mode', 'workspace');
+    if (getProviderCompactCapabilities(provider).strategies.length > 0) sections.push('compact');
+    sections.push('reply', 'language', 'mode', 'workspace');
     return sections;
   }
 
@@ -638,7 +644,7 @@ export function createSettingsPanel({
     switch (activeSection) {
       case 'provider': {
         if (botProvider) return [];
-        return chunk(['codex', 'claude', 'antigravity', 'zcode', 'pi', 'omp'], 5)
+        return chunk(['codex', 'claude', 'cursor', 'grok', 'antigravity', 'zcode', 'pi', 'omp'], 5)
           .map((providers) => new ActionRowBuilder().addComponents(
             ...providers.map((provider) => new ButtonBuilder()
               .setCustomId(buildSettingsComponentId('set', 'provider', provider, userId))
@@ -1052,8 +1058,8 @@ function formatOverviewSection(snapshot) {
             ? `• effective in this channel: model ${formatValueLabel(snapshot.modelValue, '(provider default)', snapshot.language)}, fast ${formatFastModeLabel(snapshot.fastMode.enabled, snapshot.language)}, effort ${formatValueLabel(snapshot.effortValue, '(provider default)', snapshot.language)}`
             : `• 当前频道生效值：model ${formatValueLabel(snapshot.modelValue, '（provider 默认）', snapshot.language)}，fast ${formatFastModeLabel(snapshot.fastMode.enabled, snapshot.language)}，effort ${formatValueLabel(snapshot.effortValue, '（provider 默认）', snapshot.language)}`,
           snapshot.language === 'en'
-            ? `• compact context limit: ${snapshot.compactThreshold.tokens} (${formatSettingSourceLabel(snapshot.compactThreshold.source, snapshot.language)})`
-            : `• compact context 长度：${snapshot.compactThreshold.tokens}（${formatSettingSourceLabel(snapshot.compactThreshold.source, snapshot.language)}）`,
+            ? `• compact context limit: ${formatCompactThresholdValue(snapshot.compactThreshold, snapshot.language)} (${formatSettingSourceLabel(snapshot.compactThreshold.source, snapshot.language)})`
+            : `• compact context 长度：${formatCompactThresholdValue(snapshot.compactThreshold, snapshot.language)}（${formatSettingSourceLabel(snapshot.compactThreshold.source, snapshot.language)}）`,
         ]
         : [
           snapshot.language === 'en'
@@ -1100,8 +1106,8 @@ function formatOverviewSection(snapshot) {
             ? `• compact: \`${snapshot.compact.strategy}\` (${formatSettingSourceLabel(snapshot.compact.source, snapshot.language)})`
             : `• compact：\`${snapshot.compact.strategy}\`（${formatSettingSourceLabel(snapshot.compact.source, snapshot.language)}）`,
           snapshot.language === 'en'
-            ? `• compact token limit: ${snapshot.compactThreshold.tokens} (${formatSettingSourceLabel(snapshot.compactThreshold.source, snapshot.language)})`
-            : `• compact 阈值：${snapshot.compactThreshold.tokens}（${formatSettingSourceLabel(snapshot.compactThreshold.source, snapshot.language)}）`,
+            ? `• compact token limit: ${formatCompactThresholdValue(snapshot.compactThreshold, snapshot.language)} (${formatSettingSourceLabel(snapshot.compactThreshold.source, snapshot.language)})`
+            : `• compact 阈值：${formatCompactThresholdValue(snapshot.compactThreshold, snapshot.language)}（${formatSettingSourceLabel(snapshot.compactThreshold.source, snapshot.language)}）`,
           snapshot.language === 'en'
             ? `• reply delivery: ${formatReplyDeliveryModeLabel(snapshot.replyDelivery.mode, snapshot.language)} (${formatSettingSourceLabel(snapshot.replyDelivery.source, snapshot.language)})`
             : `• 回复方式：${formatReplyDeliveryModeLabel(snapshot.replyDelivery.mode, snapshot.language)}（${formatSettingSourceLabel(snapshot.replyDelivery.source, snapshot.language)}）`,
