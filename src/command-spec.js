@@ -23,6 +23,22 @@ const PROVIDER_NATIVE_SESSION_COMMANDS = Object.freeze({
       plural: 'project sessions',
     }),
   }),
+  cursor: Object.freeze({
+    resume: 'cursor_resume',
+    sessions: 'cursor_sessions',
+    sessionTerm: Object.freeze({
+      singular: 'Cursor chat session',
+      plural: 'Cursor chat sessions',
+    }),
+  }),
+  grok: Object.freeze({
+    resume: 'grok_resume',
+    sessions: 'grok_sessions',
+    sessionTerm: Object.freeze({
+      singular: 'Grok session',
+      plural: 'Grok sessions',
+    }),
+  }),
   antigravity: Object.freeze({
     resume: 'conversation_resume',
     sessions: 'conversation_sessions',
@@ -58,8 +74,8 @@ const PROVIDER_NATIVE_SESSION_COMMANDS = Object.freeze({
 });
 
 const ALL_SESSION_COMMAND_ALIASES = Object.freeze({
-  sessions: Object.freeze(['rollout_sessions', 'project_sessions', 'conversation_sessions', 'chat_sessions', 'zcode_sessions', 'pi_sessions', 'omp_sessions']),
-  resume: Object.freeze(['rollout_resume', 'project_resume', 'conversation_resume', 'chat_resume', 'zcode_resume', 'pi_resume', 'omp_resume']),
+  sessions: Object.freeze(['rollout_sessions', 'project_sessions', 'cursor_sessions', 'grok_sessions', 'conversation_sessions', 'chat_sessions', 'zcode_sessions', 'pi_sessions', 'omp_sessions']),
+  resume: Object.freeze(['rollout_resume', 'project_resume', 'cursor_resume', 'grok_resume', 'conversation_resume', 'chat_resume', 'zcode_resume', 'pi_resume', 'omp_resume']),
 });
 
 const REASONING_LEVEL_DISPLAY_ORDER = Object.freeze(['auto', 'max', 'xhigh', 'high', 'medium', 'low', 'minimal', 'off']);
@@ -81,6 +97,8 @@ const COMMAND_ALIASES = Object.freeze({
   defaultdir: 'setdefaultdir',
   rollout_sessions: 'sessions',
   project_sessions: 'sessions',
+  cursor_sessions: 'sessions',
+  grok_sessions: 'sessions',
   conversation_sessions: 'sessions',
   chat_sessions: 'sessions',
   zcode_sessions: 'sessions',
@@ -88,6 +106,8 @@ const COMMAND_ALIASES = Object.freeze({
   omp_sessions: 'sessions',
   rollout_resume: 'resume',
   project_resume: 'resume',
+  cursor_resume: 'resume',
+  grok_resume: 'resume',
   conversation_resume: 'resume',
   chat_resume: 'resume',
   zcode_resume: 'resume',
@@ -134,6 +154,8 @@ function getSessionAliasDescriptions(aliases = []) {
   return Object.freeze(Object.fromEntries(aliases.map((alias) => {
     if (alias === 'rollout_sessions') return [alias, '列出最近的 rollout sessions（同 sessions）'];
     if (alias === 'project_sessions') return [alias, '列出最近的 project sessions（同 sessions）'];
+    if (alias === 'cursor_sessions') return [alias, '列出最近的 Cursor chat sessions（同 sessions）'];
+    if (alias === 'grok_sessions') return [alias, '列出最近的 Grok sessions（同 sessions）'];
     if (alias === 'conversation_sessions') return [alias, '列出最近的 conversations（同 sessions）'];
     if (alias === 'chat_sessions') return [alias, '列出最近的 legacy chat sessions（同 sessions）'];
     if (alias === 'zcode_sessions') return [alias, '列出最近的 ZCode sessions（同 sessions）'];
@@ -141,6 +163,7 @@ function getSessionAliasDescriptions(aliases = []) {
     if (alias === 'omp_sessions') return [alias, '列出最近的 OMP sessions（同 sessions）'];
     if (alias === 'rollout_resume') return [alias, '继承一个已有的 rollout session（同 resume）'];
     if (alias === 'project_resume') return [alias, '继承一个已有的 project session（同 resume）'];
+    if (alias === 'grok_resume') return [alias, '继承一个已有的 Grok session（同 resume）'];
     if (alias === 'conversation_resume') return [alias, '继承一个已有的 conversation（同 resume）'];
     if (alias === 'chat_resume') return [alias, '继承一个已有的 legacy chat session（同 resume）'];
     if (alias === 'zcode_resume') return [alias, '继承一个已有的 ZCode session（同 resume）'];
@@ -240,6 +263,8 @@ export function buildSlashCommandEntries({ botProvider = null } = {}) {
           .addChoices(
             { name: 'codex', value: 'codex' },
             { name: 'claude', value: 'claude' },
+            { name: 'cursor', value: 'cursor' },
+            { name: 'grok', value: 'grok' },
             { name: 'antigravity', value: 'antigravity' },
             { name: 'zcode', value: 'zcode' },
             { name: 'pi', value: 'pi' },
@@ -286,7 +311,7 @@ export function buildSlashCommandEntries({ botProvider = null } = {}) {
           .addChoices(...effortChoices));
       },
     },
-    {
+    (!lockedProvider || getProviderCompactCapabilities(lockedProvider).strategies.length > 0) && {
       name: 'compact',
       description: lockedProvider && !getProviderCompactCapabilities(lockedProvider).supportsNativeLimit
         ? '配置上下文压缩（hard/native/off、token_limit、enabled、status）'

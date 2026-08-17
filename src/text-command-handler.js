@@ -366,7 +366,7 @@ export function createTextCommandHandler({
         }
         const requested = parseProviderInput(arg);
         if (!requested) {
-          await safeReply(message, '用法：`!provider <codex|claude|antigravity|zcode|pi|omp|status>`');
+          await safeReply(message, '用法：`!provider <codex|claude|cursor|grok|antigravity|zcode|pi|omp|status>`');
           break;
         }
         const { previous } = commandActions.setProvider(session, requested);

@@ -74,6 +74,74 @@ const PROVIDER_RUNTIME_SURFACES = Object.freeze({
       zh: 'CLI 没有暴露稳定的 raw config passthrough',
     }),
   }),
+  cursor: Object.freeze({
+    sessionTerm: Object.freeze({
+      en: Object.freeze({ singular: 'chat session', plural: 'chat sessions' }),
+      zh: Object.freeze({ singular: 'chat session', plural: 'chat sessions' }),
+    }),
+    recentSessionsTitle: Object.freeze({
+      en: 'Recent Cursor Chat Sessions',
+      zh: '最近 Cursor Chat Sessions',
+    }),
+    recentSessionsLookup: Object.freeze({
+      en: 'workspace chats in `~/.cursor/chats`',
+      zh: 'workspace chats，来源 `~/.cursor/chats`',
+    }),
+    runtimeSummary: Object.freeze({
+      en: 'streaming JSON, workspace chats, sandboxed safe mode',
+      zh: 'streaming JSON、workspace chats、沙箱安全模式',
+    }),
+    sessionStore: Object.freeze({
+      en: 'Cursor chat metadata (`~/.cursor/chats`)',
+      zh: 'Cursor chat 元数据（`~/.cursor/chats`）',
+    }),
+    resumeSurface: Object.freeze({
+      en: 'chat-id resume; workspace changes reset the binding',
+      zh: '按 chat id 恢复；切换 workspace 时重置绑定',
+    }),
+    nativeCompactSurface: Object.freeze({
+      en: 'native compaction is not exposed by the headless runner',
+      zh: 'headless runner 暂未暴露原生压缩',
+    }),
+    rawConfigSurface: Object.freeze({
+      en: 'configuration is managed by Cursor CLI flags and settings',
+      zh: '配置由 Cursor CLI 参数和设置管理',
+    }),
+  }),
+  grok: Object.freeze({
+    sessionTerm: Object.freeze({
+      en: Object.freeze({ singular: 'session', plural: 'sessions' }),
+      zh: Object.freeze({ singular: 'session', plural: 'sessions' }),
+    }),
+    recentSessionsTitle: Object.freeze({
+      en: 'Recent Grok Sessions',
+      zh: '最近 Grok Sessions',
+    }),
+    recentSessionsLookup: Object.freeze({
+      en: 'workspace sessions in `~/.grok/sessions`',
+      zh: 'workspace sessions，来源 `~/.grok/sessions`',
+    }),
+    runtimeSummary: Object.freeze({
+      en: 'streaming JSON, workspace sessions, sandboxed safe mode, provider-native compaction',
+      zh: 'streaming JSON、workspace sessions、沙箱安全模式、provider 原生压缩',
+    }),
+    sessionStore: Object.freeze({
+      en: 'Grok session directories (`~/.grok/sessions`)',
+      zh: 'Grok session 目录（`~/.grok/sessions`）',
+    }),
+    resumeSurface: Object.freeze({
+      en: 'session-id resume via `--session-id`; workspace changes reset the binding',
+      zh: '通过 `--session-id` 恢复；切换 workspace 时重置绑定',
+    }),
+    nativeCompactSurface: Object.freeze({
+      en: 'provider-native compaction; no exposed native limit override',
+      zh: 'provider 原生压缩；不暴露 native limit 覆盖',
+    }),
+    rawConfigSurface: Object.freeze({
+      en: 'configuration is managed by `~/.grok/config.toml` and stable CLI flags',
+      zh: '配置由 `~/.grok/config.toml` 和稳定 CLI 参数管理',
+    }),
+  }),
   antigravity: Object.freeze({
     sessionTerm: Object.freeze({
       en: Object.freeze({ singular: 'conversation', plural: 'conversations' }),
