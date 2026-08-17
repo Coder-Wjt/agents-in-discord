@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { createSessionStore, normalizeChildThreadWorkspaceMode } from '../src/session-store.js';
+import { normalizeProvider as normalizeAllProviders } from '../src/provider-metadata.js';
 
 function normalizeProvider(value) {
   const raw = String(value || '').trim().toLowerCase();
@@ -712,6 +713,103 @@ test('createSessionStore surfaces malformed state instead of replacing it with e
   }), /Failed to load session DB/);
 
   assert.equal(fs.readFileSync(dataFile, 'utf8'), '{bad json');
+});
+
+test('createSessionStore surfaces malformed compact thresholds without rewriting the session', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-cli-discord-session-store-'));
+  const dataFile = path.join(root, 'sessions.json');
+  const workspaceRoot = path.join(root, 'workspaces');
+  const original = JSON.stringify({
+    threads: {
+      'thread-1': {
+        provider: 'claude',
+        mode: 'safe',
+        language: 'zh',
+        onboardingEnabled: true,
+        compactThresholdTokens: 'broken',
+      },
+    },
+    workspaceFavorites: {},
+  }, null, 2);
+  fs.writeFileSync(dataFile, original, 'utf8');
+
+  const store = createSessionStore({
+    dataFile,
+    workspaceRoot,
+    defaults: {
+      provider: 'codex',
+      mode: 'safe',
+      language: 'zh',
+      onboardingEnabled: true,
+    },
+    getSessionId: (session) => String(session?.runnerSessionId || session?.codexThreadId || '').trim() || null,
+    normalizeProvider,
+    normalizeUiLanguage,
+    normalizeSessionSecurityProfile,
+    normalizeSessionTimeoutMs,
+    normalizeSessionCompactStrategy,
+    normalizeSessionCompactEnabled,
+    normalizeSessionCompactTokenLimit,
+  });
+
+  assert.throws(
+    () => store.getSession('thread-1'),
+    /invalid persisted compact threshold for claude/i,
+  );
+  assert.equal(fs.readFileSync(dataFile, 'utf8'), original);
+});
+
+test('createSessionStore preserves explicit and unset compact thresholds for every provider across reload', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-cli-discord-session-store-'));
+  const dataFile = path.join(root, 'sessions.json');
+  const workspaceRoot = path.join(root, 'workspaces');
+  const providers = ['codex', 'claude', 'cursor', 'grok', 'antigravity', 'zcode', 'pi', 'omp'];
+  const threads = {};
+  for (const provider of providers) {
+    for (const [suffix, compactThresholdTokens] of [['explicit', 272_000], ['default', null]]) {
+      threads[`${provider}-${suffix}`] = {
+        provider,
+        mode: 'safe',
+        language: 'zh',
+        onboardingEnabled: true,
+        compactThresholdTokens,
+      };
+    }
+  }
+  fs.writeFileSync(dataFile, JSON.stringify({ threads, workspaceFavorites: {} }, null, 2));
+
+  const store = createSessionStore({
+    dataFile,
+    workspaceRoot,
+    defaults: {
+      provider: 'codex',
+      mode: 'safe',
+      language: 'zh',
+      onboardingEnabled: true,
+    },
+    getSessionId: (session) => String(session?.runnerSessionId || session?.codexThreadId || '').trim() || null,
+    normalizeProvider: normalizeAllProviders,
+    normalizeUiLanguage,
+    normalizeSessionSecurityProfile,
+    normalizeSessionTimeoutMs,
+    normalizeSessionCompactStrategy,
+    normalizeSessionCompactEnabled,
+    normalizeSessionCompactTokenLimit,
+  });
+
+  for (const provider of providers) {
+    assert.equal(store.getSession(`${provider}-explicit`).compactThresholdTokens, 272_000, provider);
+    assert.equal(store.getSession(`${provider}-default`).compactThresholdTokens, null, provider);
+  }
+  store.saveDb();
+
+  const persisted = JSON.parse(fs.readFileSync(dataFile, 'utf8'));
+  for (const provider of providers) {
+    assert.equal(persisted.threads[`${provider}-explicit`].compactThresholdTokens, 272_000, provider);
+    assert.equal(persisted.threads[`${provider}-explicit`].providers[provider].compactThresholdTokens, 272_000, provider);
+    assert.equal(persisted.threads[`${provider}-default`].compactThresholdTokens, null, provider);
+    assert.equal(persisted.threads[`${provider}-default`].providers[provider].compactThresholdTokens, null, provider);
+  }
 });
 
 test('createSessionStore.saveDb preserves untouched provider buckets before a session is hydrated', () => {

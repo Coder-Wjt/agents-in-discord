@@ -180,6 +180,19 @@ export function createSessionStore({
     fs.writeFileSync(dataFile, JSON.stringify(db, null, 2));
   }
 
+  function normalizePersistedCompactTokenLimit(value, field, provider) {
+    if (value === null || value === undefined || value === '') return null;
+    const numeric = Number(value);
+    const normalized = normalizeSessionCompactTokenLimit(value);
+    if (!Number.isSafeInteger(numeric) || numeric <= 0 || normalized === null) {
+      const label = field === 'nativeCompactTokenLimit'
+        ? 'native compact threshold'
+        : 'compact threshold';
+      throw new Error(`invalid persisted ${label} for ${provider}: ${String(value)}`);
+    }
+    return normalized;
+  }
+
   if (ensureDbShape()) {
     saveDb();
   }
@@ -494,12 +507,20 @@ export function createSessionStore({
       session.compactEnabled = normalizedCompactEnabled;
       migrated = true;
     }
-    const normalizedCompactThresholdTokens = normalizeSessionCompactTokenLimit(session.compactThresholdTokens);
+    const normalizedCompactThresholdTokens = normalizePersistedCompactTokenLimit(
+      session.compactThresholdTokens,
+      'compactThresholdTokens',
+      normalizedProvider,
+    );
     if (session.compactThresholdTokens !== normalizedCompactThresholdTokens) {
       session.compactThresholdTokens = normalizedCompactThresholdTokens;
       migrated = true;
     }
-    const normalizedNativeCompactTokenLimit = normalizeSessionCompactTokenLimit(session.nativeCompactTokenLimit);
+    const normalizedNativeCompactTokenLimit = normalizePersistedCompactTokenLimit(
+      session.nativeCompactTokenLimit,
+      'nativeCompactTokenLimit',
+      normalizedProvider,
+    );
     if (session.nativeCompactTokenLimit !== normalizedNativeCompactTokenLimit) {
       session.nativeCompactTokenLimit = normalizedNativeCompactTokenLimit;
       migrated = true;
