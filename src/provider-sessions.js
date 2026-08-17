@@ -7,6 +7,10 @@ export function listRecentSessions({ provider = 'codex', workspaceDir = '', limi
   switch (normalizeProvider(provider)) {
     case 'claude':
       return listRecentClaudeSessions(limit, workspaceDir);
+    case 'cursor':
+      return listRecentCursorSessions(limit, workspaceDir);
+    case 'grok':
+      return listRecentGrokSessions(limit, workspaceDir);
     case 'antigravity':
       return listRecentAntigravitySessions(limit, workspaceDir);
     case 'zcode':
@@ -18,6 +22,137 @@ export function listRecentSessions({ provider = 'codex', workspaceDir = '', limi
     default:
       return listRecentCodexSessions(limit);
   }
+}
+
+function getCursorChatsDir() {
+  const home = process.env.HOME || process.env.USERPROFILE || '';
+  return home ? path.join(home, '.cursor', 'chats') : '';
+}
+
+function readCursorSessionMetaFile(metaPath) {
+  const meta = readJsonFile(metaPath);
+  if (!meta || typeof meta !== 'object') return null;
+  const id = String(path.basename(path.dirname(metaPath)) || '').trim();
+  const cwd = String(meta.cwd || '').trim();
+  if (!id || !cwd) return null;
+  return {
+    id,
+    cwd: path.resolve(cwd),
+    meta,
+    file: metaPath,
+  };
+}
+
+function listRecentCursorSessions(limit = 10, workspaceDir = '') {
+  const chatsRoot = getCursorChatsDir();
+  if (!chatsRoot || !fs.existsSync(chatsRoot)) return [];
+  const targetWorkspace = String(workspaceDir || '').trim();
+  const sessions = [];
+  for (const file of findFilesRecursive(chatsRoot, (name) => name === 'meta.json')) {
+    const session = readCursorSessionMetaFile(file);
+    if (!session) continue;
+    if (targetWorkspace && path.resolve(session.cwd) !== path.resolve(targetWorkspace)) continue;
+    try {
+      const stat = fs.statSync(file);
+      if (!stat.isFile()) continue;
+      const updatedAtMs = Number(session.meta.updatedAtMs);
+      sessions.push({
+        id: session.id,
+        mtime: Number.isFinite(updatedAtMs) && updatedAtMs > 0 ? updatedAtMs : stat.mtimeMs,
+      });
+    } catch {
+    }
+  }
+  return sessions.sort((a, b) => b.mtime - a.mtime).slice(0, limit);
+}
+
+export function readCursorSessionMetaBySessionId(sessionId, notOlderThanMs = 0) {
+  const targetId = String(sessionId || '').trim();
+  const chatsRoot = getCursorChatsDir();
+  if (!targetId || !chatsRoot || !fs.existsSync(chatsRoot)) return null;
+  let latest = null;
+  for (const file of findFilesRecursive(chatsRoot, (name, fullPath) => (
+    name === 'meta.json' && path.basename(path.dirname(fullPath)) === targetId
+  ))) {
+    try {
+      const stat = fs.statSync(file);
+      const session = readCursorSessionMetaFile(file);
+      if (!stat.isFile() || !session) continue;
+      const updatedAtMs = Number(session.meta.updatedAtMs);
+      const mtimeMs = Number.isFinite(updatedAtMs) && updatedAtMs > 0 ? updatedAtMs : stat.mtimeMs;
+      if (notOlderThanMs > 0 && mtimeMs < notOlderThanMs) continue;
+      if (!latest || mtimeMs > latest.mtimeMs) latest = { ...session, mtimeMs };
+    } catch {
+    }
+  }
+  return latest;
+}
+
+function getGrokSessionsDir() {
+  const home = process.env.HOME || process.env.USERPROFILE || '';
+  return home ? path.join(home, '.grok', 'sessions') : '';
+}
+
+function readGrokSessionSummary(summaryPath) {
+  const summary = readJsonFile(summaryPath);
+  if (!summary || typeof summary !== 'object') return null;
+  const sessionDir = path.dirname(summaryPath);
+  const id = String(summary.id || summary.sessionId || summary.session_id || path.basename(sessionDir)).trim();
+  if (!id) return null;
+  const encodedCwd = path.basename(path.dirname(sessionDir));
+  let decodedCwd = '';
+  try {
+    decodedCwd = decodeURIComponent(encodedCwd);
+  } catch {
+    decodedCwd = '';
+  }
+  const cwd = String(
+    summary.cwd
+      || summary.workingDirectory
+      || summary.working_directory
+      || summary.workspaceDir
+      || summary.workspace_dir
+      || decodedCwd,
+  ).trim();
+  return { id, cwd, summary, file: summaryPath };
+}
+
+function listRecentGrokSessions(limit = 10, workspaceDir = '') {
+  const sessionsRoot = getGrokSessionsDir();
+  if (!sessionsRoot || !fs.existsSync(sessionsRoot)) return [];
+  const targetWorkspace = String(workspaceDir || '').trim();
+  const sessions = [];
+  for (const file of findFilesRecursive(sessionsRoot, (name) => name === 'summary.json')) {
+    const meta = readGrokSessionSummary(file);
+    if (!meta) continue;
+    if (targetWorkspace && (!meta.cwd || path.resolve(meta.cwd) !== path.resolve(targetWorkspace))) continue;
+    try {
+      const stat = fs.statSync(file);
+      if (stat.isFile()) sessions.push({ id: meta.id, mtime: stat.mtimeMs });
+    } catch {
+    }
+  }
+  return sessions.sort((a, b) => b.mtime - a.mtime).slice(0, limit);
+}
+
+export function readGrokSessionMetaBySessionId(sessionId, notOlderThanMs = 0) {
+  const targetId = String(sessionId || '').trim();
+  const sessionsRoot = getGrokSessionsDir();
+  if (!targetId || !sessionsRoot || !fs.existsSync(sessionsRoot)) return null;
+  let latest = null;
+  for (const file of findFilesRecursive(sessionsRoot, (name, fullPath) => (
+    name === 'summary.json' && path.basename(path.dirname(fullPath)) === targetId
+  ))) {
+    try {
+      const stat = fs.statSync(file);
+      if (!stat.isFile() || (notOlderThanMs > 0 && stat.mtimeMs < notOlderThanMs)) continue;
+      const meta = readGrokSessionSummary(file);
+      if (!meta?.cwd) continue;
+      if (!latest || stat.mtimeMs > latest.mtimeMs) latest = { ...meta, mtimeMs: stat.mtimeMs };
+    } catch {
+    }
+  }
+  return latest;
 }
 
 function listRecentPiFamilySessions(provider, limit = 10, workspaceDir = '') {
@@ -77,8 +212,7 @@ export function readPiFamilySessionMetaBySessionId(provider, sessionId, notOlder
 }
 
 function listRecentZCodeSessions(limit = 10) {
-  const home = process.env.HOME || process.env.USERPROFILE || '';
-  const rolloutDir = home ? path.join(home, '.zcode', 'cli', 'rollout') : '';
+  const rolloutDir = getZCodeRolloutDir();
   if (!rolloutDir || !fs.existsSync(rolloutDir)) return [];
 
   const sessions = [];
@@ -145,6 +279,68 @@ function listRecentClaudeSessions(limit = 10, workspaceDir = '') {
     .filter(Boolean)
     .sort((a, b) => b.mtime - a.mtime)
     .slice(0, limit);
+}
+
+function getZCodeRolloutDir() {
+  const home = process.env.HOME || process.env.USERPROFILE || '';
+  return home ? path.join(home, '.zcode', 'cli', 'rollout') : '';
+}
+
+function extractZCodeRolloutWorkspace(row) {
+  const system = Array.isArray(row?.request?.body?.system) ? row.request.body.system : [];
+  for (const part of system) {
+    const text = String(part?.text || '').trim();
+    const match = text.match(/(?:^|\n)- Primary working directory:\s*([^\n]+)/);
+    const workspaceDir = String(match?.[1] || '').trim();
+    if (workspaceDir) return path.resolve(workspaceDir);
+  }
+  return null;
+}
+
+export function findLatestZCodeRolloutFile({
+  sessionId = '',
+  workspaceDir = '',
+  notOlderThanMs = 0,
+} = {}) {
+  const targetSessionId = String(sessionId || '').trim();
+  const targetWorkspaceDir = String(workspaceDir || '').trim();
+  if (!targetSessionId && !targetWorkspaceDir) return null;
+
+  const rolloutDir = getZCodeRolloutDir();
+  if (!rolloutDir || !fs.existsSync(rolloutDir)) return null;
+  const normalizedWorkspaceDir = targetWorkspaceDir ? path.resolve(targetWorkspaceDir) : null;
+  let latest = null;
+
+  for (const filename of fs.readdirSync(rolloutDir)) {
+    const match = /^model-io-(sess_.+)\.jsonl$/.exec(filename);
+    const candidateSessionId = String(match?.[1] || '').trim();
+    if (!candidateSessionId) continue;
+    if (targetSessionId && candidateSessionId !== targetSessionId) continue;
+
+    const file = path.join(rolloutDir, filename);
+    let stat = null;
+    try {
+      stat = fs.statSync(file);
+    } catch {
+      continue;
+    }
+    if (!stat.isFile() || (notOlderThanMs > 0 && stat.mtimeMs < notOlderThanMs)) continue;
+
+    if (normalizedWorkspaceDir) {
+      const first = readFirstJsonLine(file);
+      if (extractZCodeRolloutWorkspace(first) !== normalizedWorkspaceDir) continue;
+    }
+    if (!latest || stat.mtimeMs > latest.mtimeMs) {
+      latest = {
+        file,
+        sessionId: candidateSessionId,
+        mtimeMs: stat.mtimeMs,
+        sizeBytes: stat.size,
+      };
+    }
+  }
+
+  return latest;
 }
 
 function listRecentAntigravitySessions(limit = 10, workspaceDir = '') {

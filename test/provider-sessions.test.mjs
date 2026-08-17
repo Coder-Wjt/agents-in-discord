@@ -6,13 +6,75 @@ import assert from 'node:assert/strict';
 
 import {
   buildClaudeSessionRescueSummary,
+  findLatestZCodeRolloutFile,
   listRecentSessions,
   readClaudeSessionMetaBySessionId,
   readCodexSessionMetaBySessionId,
+  readCursorSessionMetaBySessionId,
+  readGrokSessionMetaBySessionId,
   readPiFamilySessionMetaBySessionId,
   readAntigravitySessionState,
   resolveAntigravityProjectRootBySessionId,
 } from '../src/provider-sessions.js';
+
+test('provider-sessions lists and resolves Cursor workspace chats', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agents-in-discord-cursor-'));
+  const workspaceDir = path.join(root, 'workspace');
+  const otherWorkspaceDir = path.join(root, 'other-workspace');
+  const oldDir = path.join(root, '.cursor', 'chats', 'workspace-hash', 'cursor-old');
+  const newDir = path.join(root, '.cursor', 'chats', 'workspace-hash', 'cursor-new');
+  const otherDir = path.join(root, '.cursor', 'chats', 'other-hash', 'cursor-other');
+  fs.mkdirSync(oldDir, { recursive: true });
+  fs.mkdirSync(newDir, { recursive: true });
+  fs.mkdirSync(otherDir, { recursive: true });
+  fs.writeFileSync(path.join(oldDir, 'meta.json'), JSON.stringify({ cwd: workspaceDir, updatedAtMs: 1000 }));
+  fs.writeFileSync(path.join(newDir, 'meta.json'), JSON.stringify({ cwd: workspaceDir, updatedAtMs: 2000 }));
+  fs.writeFileSync(path.join(otherDir, 'meta.json'), JSON.stringify({ cwd: otherWorkspaceDir, updatedAtMs: 3000 }));
+
+  const previousHome = process.env.HOME;
+  process.env.HOME = root;
+  try {
+    assert.deepEqual(listRecentSessions({ provider: 'cursor', workspaceDir, limit: 2 }), [
+      { id: 'cursor-new', mtime: 2000 },
+      { id: 'cursor-old', mtime: 1000 },
+    ]);
+    assert.equal(readCursorSessionMetaBySessionId('cursor-new')?.cwd, path.resolve(workspaceDir));
+    assert.equal(readCursorSessionMetaBySessionId('missing'), null);
+  } finally {
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
+  }
+});
+
+test('provider-sessions lists and resolves Grok workspace sessions', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agents-in-discord-grok-'));
+  const workspaceDir = path.join(root, 'workspace');
+  const encodedCwd = encodeURIComponent(workspaceDir);
+  const olderDir = path.join(root, '.grok', 'sessions', encodedCwd, 'grok-old');
+  const newerDir = path.join(root, '.grok', 'sessions', encodedCwd, 'grok-new');
+  fs.mkdirSync(olderDir, { recursive: true });
+  fs.mkdirSync(newerDir, { recursive: true });
+  const older = path.join(olderDir, 'summary.json');
+  const newer = path.join(newerDir, 'summary.json');
+  fs.writeFileSync(older, JSON.stringify({ sessionId: 'grok-old' }));
+  fs.writeFileSync(newer, JSON.stringify({ sessionId: 'grok-new', cwd: workspaceDir }));
+  fs.utimesSync(older, new Date(1000), new Date(1000));
+  fs.utimesSync(newer, new Date(2000), new Date(2000));
+
+  const previousHome = process.env.HOME;
+  process.env.HOME = root;
+  try {
+    assert.deepEqual(listRecentSessions({ provider: 'grok', workspaceDir, limit: 2 }), [
+      { id: 'grok-new', mtime: 2000 },
+      { id: 'grok-old', mtime: 1000 },
+    ]);
+    assert.equal(readGrokSessionMetaBySessionId('grok-new')?.cwd, workspaceDir);
+    assert.equal(readGrokSessionMetaBySessionId('missing'), null);
+  } finally {
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
+  }
+});
 
 test('provider-sessions reads Antigravity conversation id from workspace cache', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agents-in-discord-antigravity-'));
@@ -67,6 +129,43 @@ test('provider-sessions lists recent ZCode rollout sessions', () => {
       { id: 'sess_zcode_new', mtime: 2000 },
       { id: 'sess_zcode_old', mtime: 1000 },
     ]);
+  } finally {
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
+  }
+});
+
+test('provider-sessions resolves the active ZCode rollout by session or workspace', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agents-in-discord-zcode-active-'));
+  const rolloutDir = path.join(root, '.zcode', 'cli', 'rollout');
+  const workspaceDir = path.join(root, 'workspace');
+  const otherWorkspaceDir = path.join(root, 'other-workspace');
+  fs.mkdirSync(rolloutDir, { recursive: true });
+  fs.mkdirSync(workspaceDir, { recursive: true });
+  fs.mkdirSync(otherWorkspaceDir, { recursive: true });
+
+  const createRow = (sessionId, cwd) => JSON.stringify({
+    type: 'model_io',
+    sessionId,
+    request: {
+      body: {
+        system: [{ text: `# Environment\n- Primary working directory: ${cwd}\n- Platform: darwin` }],
+      },
+    },
+  });
+  const target = path.join(rolloutDir, 'model-io-sess_zcode_target.jsonl');
+  const other = path.join(rolloutDir, 'model-io-sess_zcode_other.jsonl');
+  fs.writeFileSync(target, `${createRow('sess_zcode_target', workspaceDir)}\n`);
+  fs.writeFileSync(other, `${createRow('sess_zcode_other', otherWorkspaceDir)}\n`);
+  fs.utimesSync(target, new Date(2000), new Date(2000));
+  fs.utimesSync(other, new Date(3000), new Date(3000));
+
+  const previousHome = process.env.HOME;
+  process.env.HOME = root;
+  try {
+    assert.equal(findLatestZCodeRolloutFile({ sessionId: 'sess_zcode_target' })?.file, target);
+    assert.equal(findLatestZCodeRolloutFile({ workspaceDir })?.file, target);
+    assert.equal(findLatestZCodeRolloutFile({ workspaceDir: path.join(root, 'missing') }), null);
   } finally {
     if (previousHome === undefined) delete process.env.HOME;
     else process.env.HOME = previousHome;
