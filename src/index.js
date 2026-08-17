@@ -54,15 +54,19 @@ import {
 import {
   findLatestClaudeSessionFileBySessionId,
   findLatestRolloutFileBySessionId,
+  findLatestZCodeRolloutFile,
   listRecentSessions as listRecentProviderSessions,
   readAntigravitySessionState,
   readClaudeSessionMetaBySessionId,
   readCodexSessionMetaBySessionId,
+  readCursorSessionMetaBySessionId,
+  readGrokSessionMetaBySessionId,
   readPiFamilySessionMetaBySessionId,
   resolveAntigravityProjectRootBySessionId,
 } from './provider-sessions.js';
 import { stopChildProcess } from './channel-runtime.js';
 import { loadRuntimeEnv } from './env-loader.js';
+import { buildCompactThresholdDefaults } from './compact-threshold-defaults.js';
 import {
   extractRawProgressTextFromEvent as extractRawProgressTextFromEventBase,
 } from './progress-utils.js';
@@ -150,6 +154,7 @@ import {
   readCodexModelCatalog,
   readCodexProfileCatalog,
   readClaudeModelCatalog,
+  readCursorModelCatalog,
   readOmpDefaults,
   renderMissingDiscordTokenHint,
   writeAntigravityModelSetting,
@@ -288,6 +293,8 @@ const SHARED_CHILD_THREAD_WORKSPACE_MODE = process.env.CHILD_THREAD_WORKSPACE_MO
 const PROVIDER_CHILD_THREAD_WORKSPACE_MODE_OVERRIDES = {
   codex: process.env.CODEX__CHILD_THREAD_WORKSPACE_MODE,
   claude: process.env.CLAUDE__CHILD_THREAD_WORKSPACE_MODE,
+  cursor: process.env.CURSOR__CHILD_THREAD_WORKSPACE_MODE,
+  grok: process.env.GROK__CHILD_THREAD_WORKSPACE_MODE,
   antigravity: process.env.ANTIGRAVITY__CHILD_THREAD_WORKSPACE_MODE,
   zcode: process.env.ZCODE__CHILD_THREAD_WORKSPACE_MODE,
 };
@@ -304,6 +311,8 @@ const SHARED_DEFAULT_WORKSPACE_DIR = resolveConfiguredWorkspaceDir(process.env.D
 const PROVIDER_DEFAULT_WORKSPACE_OVERRIDES = {
   codex: resolveConfiguredWorkspaceDir(process.env.CODEX__DEFAULT_WORKSPACE_DIR),
   claude: resolveConfiguredWorkspaceDir(process.env.CLAUDE__DEFAULT_WORKSPACE_DIR),
+  cursor: resolveConfiguredWorkspaceDir(process.env.CURSOR__DEFAULT_WORKSPACE_DIR),
+  grok: resolveConfiguredWorkspaceDir(process.env.GROK__DEFAULT_WORKSPACE_DIR),
   antigravity: resolveConfiguredWorkspaceDir(process.env.ANTIGRAVITY__DEFAULT_WORKSPACE_DIR),
   zcode: resolveConfiguredWorkspaceDir(process.env.ZCODE__DEFAULT_WORKSPACE_DIR),
 };
@@ -348,6 +357,8 @@ const TASK_RETRY_MAX_DELAY_MS = Math.max(
 );
 const CODEX_BIN = (process.env.CODEX_BIN || 'codex').trim() || 'codex';
 const CLAUDE_BIN = (process.env.CLAUDE_BIN || 'claude').trim() || 'claude';
+const CURSOR_BIN = (process.env.CURSOR_BIN || 'agent').trim() || 'agent';
+const GROK_BIN = (process.env.GROK_BIN || 'grok').trim() || 'grok';
 const ANTIGRAVITY_BIN = (process.env.ANTIGRAVITY_BIN || 'agy').trim() || 'agy';
 const ZCODE_BIN = (process.env.ZCODE_BIN || 'zcode').trim() || 'zcode';
 const PI_BIN = (process.env.PI_BIN || 'pi').trim() || 'pi';
@@ -393,11 +404,12 @@ const PROGRESS_HEARTBEAT_INTERVAL_MS = normalizeIntervalMs(
 const SELF_HEAL_ENABLED = String(process.env.SELF_HEAL_ENABLED || 'true').toLowerCase() !== 'false';
 const SELF_HEAL_RESTART_DELAY_MS = toInt(process.env.SELF_HEAL_RESTART_DELAY_MS, 5000);
 const SELF_HEAL_MAX_LOGIN_BACKOFF_MS = toInt(process.env.SELF_HEAL_MAX_LOGIN_BACKOFF_MS, 60000);
-const LEGACY_MAX_INPUT_TOKENS_BEFORE_RESET = toOptionalInt(process.env.MAX_INPUT_TOKENS_BEFORE_RESET);
-const MAX_INPUT_TOKENS_BEFORE_COMPACT = toInt(
-  process.env.MAX_INPUT_TOKENS_BEFORE_COMPACT,
-  Number.isFinite(LEGACY_MAX_INPUT_TOKENS_BEFORE_RESET) ? LEGACY_MAX_INPUT_TOKENS_BEFORE_RESET : 250000,
-);
+const COMPACT_THRESHOLD_DEFAULTS = buildCompactThresholdDefaults({
+  env: process.env,
+  appliedProviderScope: envState.appliedProviderScope,
+  appliedScopedKeys: envState.appliedScopedKeys,
+});
+const MAX_INPUT_TOKENS_BEFORE_COMPACT = COMPACT_THRESHOLD_DEFAULTS.codex.tokens;
 const COMPACT_STRATEGY = normalizeCompactStrategy(process.env.COMPACT_STRATEGY || 'native');
 const COMPACT_ON_THRESHOLD = String(process.env.COMPACT_ON_THRESHOLD || 'true').toLowerCase() !== 'false';
 const MODEL_AUTO_COMPACT_TOKEN_LIMIT = toInt(
@@ -462,6 +474,8 @@ const SPAWN_ENV = buildSpawnEnv(process.env);
 const getProviderBin = (provider) => getProviderBinBase(provider, {
   codexBin: CODEX_BIN,
   claudeBin: CLAUDE_BIN,
+  cursorBin: CURSOR_BIN,
+  grokBin: GROK_BIN,
   antigravityBin: ANTIGRAVITY_BIN,
   zcodeBin: ZCODE_BIN,
   piBin: PI_BIN,
@@ -470,6 +484,8 @@ const getProviderBin = (provider) => getProviderBinBase(provider, {
 const getCliHealth = (provider = DEFAULT_PROVIDER) => getCliHealthBase(provider, {
   codexBin: CODEX_BIN,
   claudeBin: CLAUDE_BIN,
+  cursorBin: CURSOR_BIN,
+  grokBin: GROK_BIN,
   antigravityBin: ANTIGRAVITY_BIN,
   zcodeBin: ZCODE_BIN,
   piBin: PI_BIN,
@@ -555,6 +571,7 @@ const appContext = createAppContext({
     codexRuntimeMode: CODEX_RUNTIME_MODE,
     compactOnThreshold: COMPACT_ON_THRESHOLD,
     maxInputTokensBeforeCompact: MAX_INPUT_TOKENS_BEFORE_COMPACT,
+    compactThresholdDefaults: COMPACT_THRESHOLD_DEFAULTS,
     modelAutoCompactTokenLimit: MODEL_AUTO_COMPACT_TOKEN_LIMIT,
     defaultReplyDeliveryMode: resolveReplyDeliveryDefault().mode,
     readDefaultReplyDeliveryMode: () => resolveReplyDeliveryDefault().mode,
@@ -569,6 +586,7 @@ const appContext = createAppContext({
     readOmpDefaults: () => readOmpDefaults({ ompBin: OMP_BIN, env: SPAWN_ENV }),
     readCodexProfileCatalog,
     normalizeProvider,
+    getProviderCompactCapabilities,
     getSupportedCompactStrategies,
   },
   securityPolicyOptions: {
@@ -609,6 +627,8 @@ const appContext = createAppContext({
     resolveSessionWorkspace: (provider, sessionId) => {
       if (provider === 'codex') return readCodexSessionMetaBySessionId(sessionId)?.cwd || null;
       if (provider === 'claude') return readClaudeSessionMetaBySessionId(sessionId)?.cwd || null;
+      if (provider === 'cursor') return readCursorSessionMetaBySessionId(sessionId)?.cwd || null;
+      if (provider === 'grok') return readGrokSessionMetaBySessionId(sessionId)?.cwd || null;
       if (provider === 'antigravity') return resolveAntigravityProjectRootBySessionId(sessionId) || null;
       if (provider === 'pi' || provider === 'omp') {
         return readPiFamilySessionMetaBySessionId(provider, sessionId)?.cwd || null;
@@ -623,6 +643,8 @@ const appContext = createAppContext({
     writeCodexDefaults,
     readCodexSessionMetaBySessionId,
     readClaudeSessionMetaBySessionId,
+    readCursorSessionMetaBySessionId,
+    readGrokSessionMetaBySessionId,
     readPiFamilySessionMetaBySessionId,
     resolveAntigravityProjectRootBySessionId,
     formatProviderSessionLabel,
@@ -665,6 +687,7 @@ const appContext = createAppContext({
       extractRawProgressTextFromEvent: extractRawProgressTextFromEventBase,
       findLatestRolloutFileBySessionId,
       findLatestClaudeSessionFileBySessionId,
+      findLatestZCodeRolloutFile,
     },
     runnerExecutorOptions: {
       debugEvents: DEBUG_EVENTS,
@@ -791,6 +814,7 @@ const appContext = createAppContext({
       getModelCatalog: (provider) => {
         if (provider === 'codex') return readCodexModelCatalog({ codexBin: CODEX_BIN, env: SPAWN_ENV });
         if (provider === 'claude') return readClaudeModelCatalog({ claudeBin: CLAUDE_BIN, env: SPAWN_ENV });
+        if (provider === 'cursor') return readCursorModelCatalog({ cursorBin: CURSOR_BIN, env: SPAWN_ENV });
         if (normalizeProvider(provider) === 'antigravity') return readAntigravityModelCatalog({ env: SPAWN_ENV });
         const normalizedProvider = normalizeProvider(provider);
         if (normalizedProvider === 'pi' || normalizedProvider === 'omp') {
