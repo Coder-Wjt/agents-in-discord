@@ -727,6 +727,70 @@ test('createPromptProgressReporterFactory replaces requested Claude model with t
   assert.doesNotMatch(harness.edits[harness.edits.length - 1].content, /• model: `opus`/);
 });
 
+test('createPromptProgressReporterFactory shows the observed ZCode model from progress events', async () => {
+  const session = {
+    provider: 'zcode',
+    model: null,
+  };
+  const harness = createHarness({ session });
+
+  await harness.reporter.start();
+  harness.reporter.onEvent({
+    type: 'tool_execution_start',
+    model: 'GLM-5.3',
+    toolName: 'Read',
+    args: { description: 'Read project overview' },
+  });
+  await harness.reporter.finish({ ok: true });
+
+  assert.equal(session.lastObservedModel, 'GLM-5.3');
+  assert.match(harness.edits[harness.edits.length - 1].content, /• model: `GLM-5\.3` \(runtime observed\)/);
+  assert.match(harness.edits[harness.edits.length - 1].content, /event count: 1/);
+});
+
+test('createPromptProgressReporterFactory shows Grok tool lifecycle and observed model', async () => {
+  const session = {
+    provider: 'grok',
+    model: null,
+  };
+  const harness = createHarness({
+    session,
+    factoryOptions: {
+      presentation: createRealPresentation(),
+      resolveModelSetting: () => ({ value: null, source: 'provider' }),
+    },
+  });
+
+  await harness.reporter.start();
+  harness.channelState.activeRun.phase = 'exec';
+  harness.reporter.onEvent({
+    type: 'tool_call',
+    toolCallId: 'call-grok-1',
+    toolName: 'run_terminal_command',
+    status: 'pending',
+    rawInput: { command: 'pwd', description: 'Inspect current directory' },
+  });
+  harness.reporter.onEvent({
+    type: 'tool_call_update',
+    toolCallId: 'call-grok-1',
+    status: 'completed',
+  });
+  harness.reporter.onEvent({
+    type: 'end',
+    stopReason: 'end_turn',
+    modelUsage: {
+      'grok-4.6-build': { inputTokens: 20, outputTokens: 5 },
+    },
+  });
+  await harness.reporter.finish({ ok: true });
+
+  const finalCard = harness.edits.at(-1).content;
+  assert.equal(session.lastObservedModel, 'grok-4.6-build');
+  assert.match(finalCard, /• model: `grok-4\.6-build` \(runtime observed\)/);
+  assert.match(finalCard, /run_terminal_command/);
+  assert.match(finalCard, /completed/);
+});
+
 test('createPromptProgressReporterFactory shows resolved default model instead of provider default text', async () => {
   const harness = createHarness({
     session: {

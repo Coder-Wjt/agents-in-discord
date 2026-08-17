@@ -705,7 +705,7 @@ function formatSettingSourceLabel(source, language = 'en') {
   return language === 'en' ? 'provider default' : 'provider 默认';
 }
 
-function extractClaudeObservedModel(event) {
+function extractObservedModel(event) {
   const directMessage = event?.message && typeof event.message === 'object' ? event.message : null;
   const nestedMessage = event?.event?.message && typeof event.event.message === 'object'
     ? event.event.message
@@ -714,12 +714,62 @@ function extractClaudeObservedModel(event) {
     directMessage?.model,
     nestedMessage?.model,
     event?.model,
+    event?._meta?.modelId,
+    event?.params?.update?._meta?.modelId,
   ];
   for (const candidate of candidates) {
-    const model = String(candidate || '').trim();
+    const value = candidate && typeof candidate === 'object'
+      ? candidate.modelId || candidate.model_id || candidate.id || candidate.name
+      : candidate;
+    const model = String(value || '').trim();
     if (model) return model;
   }
+
+  const modelUsageCandidates = [
+    event?.modelUsage,
+    event?.model_usage,
+    event?.usage?.modelUsage,
+    event?.usage?.model_usage,
+  ];
+  for (const modelUsage of modelUsageCandidates) {
+    if (!modelUsage || typeof modelUsage !== 'object' || Array.isArray(modelUsage)) continue;
+    const models = Object.keys(modelUsage).map((model) => String(model || '').trim()).filter(Boolean);
+    if (models.length === 1) return models[0];
+  }
   return '';
+}
+
+function normalizeGrokProgressEvent(event, toolCalls) {
+  const type = String(event?.type || '').trim().toLowerCase();
+  if (type === 'tool_call') {
+    const toolCallId = String(event?.toolCallId || event?.tool_call_id || '').trim();
+    const toolName = String(event?.toolName || event?.tool_name || event?.title || 'tool').trim() || 'tool';
+    const args = event?.rawInput && typeof event.rawInput === 'object' ? event.rawInput : {};
+    if (toolCallId) toolCalls.set(toolCallId, { toolName, args });
+    return {
+      type: 'tool_execution_start',
+      toolCallId,
+      toolName,
+      tool_name: toolName,
+      args,
+      intent: String(args.description || '').trim(),
+    };
+  }
+  if (type !== 'tool_call_update') return event;
+
+  const toolCallId = String(event?.toolCallId || event?.tool_call_id || '').trim();
+  const tracked = toolCalls.get(toolCallId) || {};
+  const status = String(event?.status || '').trim().toLowerCase();
+  if (!status) return null;
+  if (['completed', 'failed', 'cancelled', 'canceled'].includes(status)) toolCalls.delete(toolCallId);
+  return {
+    type: 'tool_result',
+    toolCallId,
+    toolName: tracked.toolName || 'tool',
+    tool_name: tracked.toolName || 'tool',
+    status,
+    args: tracked.args || {},
+  };
 }
 
 function formatModelValue(modelSetting, language = 'en') {
@@ -841,6 +891,7 @@ export function createPromptProgressReporterFactory({
     let isEmitting = false;
     let rerunEmit = false;
     let observedModel = '';
+    const grokToolCalls = new Map();
     let lastOmpStageKey = '';
     let parentAttentionNotified = false;
     const isDuplicateProgressEvent = createProgressEventDeduper({
@@ -1197,12 +1248,23 @@ export function createPromptProgressReporterFactory({
         }
       }
       let observedModelChanged = false;
-      if (session?.provider === 'claude') {
-        const nextObservedModel = extractClaudeObservedModel(event);
+      const normalizedProvider = String(session?.provider || '').trim().toLowerCase();
+      if (['claude', 'cursor', 'grok', 'zcode'].includes(normalizedProvider)) {
+        const nextObservedModel = extractObservedModel(event);
         if (nextObservedModel && nextObservedModel !== observedModel) {
           observedModel = nextObservedModel;
           session.lastObservedModel = nextObservedModel;
           observedModelChanged = true;
+        }
+      }
+      if (normalizedProvider === 'grok') {
+        event = normalizeGrokProgressEvent(event, grokToolCalls);
+        if (!event) {
+          if (observedModelChanged) {
+            syncActiveRun();
+            void emit(false);
+          }
+          return;
         }
       }
       if (session?.provider === 'omp') {
