@@ -16,6 +16,7 @@ import {
   readCodexModelCatalog,
   readCodexProfileCatalog,
   readClaudeModelCatalog,
+  readCursorModelCatalog,
   readOmpDefaults,
   readPiFamilyModelCatalog,
   readProviderModelCatalog,
@@ -23,6 +24,32 @@ import {
   writeAntigravityModelSetting,
   writeCodexDefaults,
 } from '../src/runtime-bootstrap.js';
+
+test('readCursorModelCatalog parses the Cursor Agent model list', () => {
+  const calls = [];
+  const catalog = readCursorModelCatalog({
+    cursorBin: '/tmp/cursor-agent-test-bin',
+    now: () => 1,
+    execFileSyncFn(bin, args) {
+      calls.push({ bin, args });
+      return [
+        'Available models',
+        '',
+        'auto - Auto (default)',
+        'gpt-5.6-sol-high - GPT-5.6 Sol 1M High',
+        '',
+        'Tip: use --model <id> to switch.',
+      ].join('\n');
+    },
+  });
+
+  assert.deepEqual(calls, [{ bin: '/tmp/cursor-agent-test-bin', args: ['models'] }]);
+  assert.deepEqual(catalog.models.map((model) => [model.slug, model.displayName]), [
+    ['auto', 'Auto (default)'],
+    ['gpt-5.6-sol-high', 'GPT-5.6 Sol 1M High'],
+  ]);
+  assert.equal(catalog.error, null);
+});
 
 function makeTempRoot() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'agents-in-discord-runtime-bootstrap-'));

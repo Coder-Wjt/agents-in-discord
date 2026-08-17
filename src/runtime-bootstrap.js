@@ -10,6 +10,7 @@ import { autoRepairProxyEnv } from './proxy-env.js';
 const FEATURES_SECTION = 'features';
 const CODEX_MODEL_CATALOG_CACHE = new Map();
 const CLAUDE_MODEL_CATALOG_CACHE = new Map();
+const CURSOR_MODEL_CATALOG_CACHE = new Map();
 const ANTIGRAVITY_MODEL_CATALOG_CACHE = new Map();
 const PI_FAMILY_MODEL_CATALOG_CACHE = new Map();
 const OMP_DEFAULTS_CACHE = new Map();
@@ -410,6 +411,32 @@ function normalizeClaudeModelCatalog(raw) {
   };
 }
 
+function normalizeCursorModelCatalog(raw) {
+  const models = [];
+  const seen = new Set();
+  for (const line of String(raw || '').split(/\r?\n/)) {
+    const match = line.match(/^([^\s]+)\s+-\s+(.+)$/);
+    if (!match) continue;
+    const slug = String(match[1] || '').trim();
+    const displayName = String(match[2] || '').trim();
+    const key = slug.toLowerCase();
+    if (!slug || !displayName || seen.has(key)) continue;
+    seen.add(key);
+    models.push({
+      slug,
+      displayName,
+      description: 'Cursor Agent model from CLI catalog',
+      defaultReasoningLevel: null,
+      supportedReasoningLevels: [],
+      visibility: 'catalog',
+    });
+  }
+  return {
+    models,
+    error: models.length ? null : 'Cursor Agent did not report any models',
+  };
+}
+
 function readClaudeConfiguredModelCatalog({ env = process.env } = {}) {
   const settingsPath = resolveClaudeSettingsPath({ env });
   try {
@@ -773,10 +800,42 @@ export function readClaudeModelCatalog({
   }
 }
 
+export function readCursorModelCatalog({
+  cursorBin = 'agent',
+  env = process.env,
+  execFileSyncFn = execFileSync,
+  now = Date.now,
+  ttlMs = 5 * 60_000,
+} = {}) {
+  const bin = String(cursorBin || 'agent').trim() || 'agent';
+  const cached = CURSOR_MODEL_CATALOG_CACHE.get(bin);
+  const currentTime = typeof now === 'function' ? now() : Date.now();
+  if (cached && currentTime - cached.timestamp < ttlMs) return cached.catalog;
+
+  let catalog;
+  try {
+    const raw = execFileSyncFn(bin, ['models'], {
+      encoding: 'utf-8',
+      env,
+      maxBuffer: 8 * 1024 * 1024,
+      timeout: 10_000,
+    });
+    catalog = normalizeCursorModelCatalog(raw);
+  } catch (err) {
+    catalog = {
+      models: [],
+      error: String(err?.message || err || 'unknown error').trim() || 'unknown error',
+    };
+  }
+  CURSOR_MODEL_CATALOG_CACHE.set(bin, { timestamp: currentTime, catalog });
+  return catalog;
+}
+
 export function readProviderModelCatalog({
   provider = 'codex',
   codexBin = 'codex',
   claudeBin = 'claude',
+  cursorBin = 'agent',
   piBin = 'pi',
   ompBin = 'omp',
   env = process.env,
@@ -790,6 +849,9 @@ export function readProviderModelCatalog({
   }
   if (normalized === 'claude') {
     return readClaudeModelCatalog({ claudeBin, env, execFileSyncFn, now, ttlMs });
+  }
+  if (normalized === 'cursor' || normalized === 'cursor-agent') {
+    return readCursorModelCatalog({ cursorBin, env, execFileSyncFn, now, ttlMs });
   }
   if (normalized === 'agy' || normalized === 'antigravity') {
     return readAntigravityModelCatalog({ env, now, ttlMs });
@@ -906,15 +968,23 @@ export function renderMissingDiscordTokenHint({ botProvider = null, env = proces
 
   const hasCodexScopedToken = Boolean(String(env.CODEX__DISCORD_TOKEN || env.DISCORD_TOKEN_CODEX || '').trim());
   const hasClaudeScopedToken = Boolean(String(env.CLAUDE__DISCORD_TOKEN || env.DISCORD_TOKEN_CLAUDE || '').trim());
+  const hasCursorScopedToken = Boolean(String(env.CURSOR__DISCORD_TOKEN || env.DISCORD_TOKEN_CURSOR || '').trim());
+  const hasGrokScopedToken = Boolean(String(env.GROK__DISCORD_TOKEN || env.DISCORD_TOKEN_GROK || '').trim());
   const hasAntigravityScopedToken = Boolean(String(env.ANTIGRAVITY__DISCORD_TOKEN || env.DISCORD_TOKEN_ANTIGRAVITY || '').trim());
   const hasZCodeScopedToken = Boolean(String(env.ZCODE__DISCORD_TOKEN || env.DISCORD_TOKEN_ZCODE || '').trim());
+  const hasPiScopedToken = Boolean(String(env.PI__DISCORD_TOKEN || env.DISCORD_TOKEN_PI || '').trim());
+  const hasOmpScopedToken = Boolean(String(env.OMP__DISCORD_TOKEN || env.DISCORD_TOKEN_OMP || '').trim());
 
-  if (hasCodexScopedToken || hasClaudeScopedToken || hasAntigravityScopedToken || hasZCodeScopedToken) {
+  if (hasCodexScopedToken || hasClaudeScopedToken || hasCursorScopedToken || hasGrokScopedToken || hasAntigravityScopedToken || hasZCodeScopedToken || hasPiScopedToken || hasOmpScopedToken) {
     const availableProviders = [
       hasCodexScopedToken ? 'codex' : null,
       hasClaudeScopedToken ? 'claude' : null,
+      hasCursorScopedToken ? 'cursor' : null,
+      hasGrokScopedToken ? 'grok' : null,
       hasAntigravityScopedToken ? 'antigravity' : null,
       hasZCodeScopedToken ? 'zcode' : null,
+      hasPiScopedToken ? 'pi' : null,
+      hasOmpScopedToken ? 'omp' : null,
     ].filter(Boolean).join(', ');
     return `Missing DISCORD_TOKEN in shared mode. Found provider-scoped tokens for: ${availableProviders}. Start the matching dedicated provider instance, or add a shared DISCORD_TOKEN.`;
   }
