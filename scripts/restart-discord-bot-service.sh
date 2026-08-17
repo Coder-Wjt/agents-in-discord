@@ -15,6 +15,12 @@ resolve_label() {
     claude|"${PROJECT_LABEL_PREFIX}.claude"|"${LEGACY_LABEL_PREFIX}.claude")
       printf '%s\n' "${PROJECT_LABEL_PREFIX}.claude"
       ;;
+    cursor|"${PROJECT_LABEL_PREFIX}.cursor")
+      printf '%s\n' "${PROJECT_LABEL_PREFIX}.cursor"
+      ;;
+    grok|"${PROJECT_LABEL_PREFIX}.grok")
+      printf '%s\n' "${PROJECT_LABEL_PREFIX}.grok"
+      ;;
     antigravity|agy|"${PROJECT_LABEL_PREFIX}.antigravity")
       printf '%s\n' "${PROJECT_LABEL_PREFIX}.antigravity"
       ;;
@@ -59,13 +65,13 @@ restart_label() {
 main() {
   local raw="${1:-}"
   if [[ -z "${raw}" ]]; then
-    printf 'usage: %s <codex|claude|antigravity|zcode|pi|omp|wechat|all|label>\n' "$0" >&2
+    printf 'usage: %s <codex|claude|cursor|grok|antigravity|zcode|pi|omp|wechat|all|label>\n' "$0" >&2
     exit 64
   fi
 
   if [[ "${raw}" == "all" ]]; then
     local suffix
-    for suffix in "" ".claude" ".antigravity" ".zcode" ".pi" ".omp" ".wechat"; do
+    for suffix in "" ".claude" ".cursor" ".grok" ".antigravity" ".zcode" ".pi" ".omp" ".wechat"; do
       if [[ -f "${USER_AGENTS_DIR}/${PROJECT_LABEL_PREFIX}${suffix}.plist" ]]; then
         restart_label "${PROJECT_LABEL_PREFIX}${suffix}"
       fi
