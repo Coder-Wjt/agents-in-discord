@@ -4,6 +4,8 @@ import assert from 'node:assert/strict';
 import {
   handleClaudeRunnerEvent,
   handleCodexRunnerEvent,
+  handleCursorRunnerEvent,
+  handleGrokRunnerEvent,
   handleAntigravityRunnerEvent,
   handleZCodeRunnerEvent,
   handlePiFamilyRunnerEvent,
@@ -12,6 +14,69 @@ import {
   extractAgentMessageText,
   isFinalAnswerLikeAgentMessage,
 } from '../src/codex-event-utils.js';
+
+test('handleCursorRunnerEvent captures the native session and decisive result event', () => {
+  const state = {
+    messages: [],
+    finalAnswerMessages: [],
+    reasonings: [],
+    logs: [],
+    usage: null,
+    threadId: null,
+    meta: {},
+  };
+  const bridges = [];
+  handleCursorRunnerEvent({
+    type: 'system',
+    subtype: 'init',
+    session_id: 'cursor-session-1',
+    model: 'GPT-5.6 Sol',
+  }, state, (sessionId) => bridges.push(sessionId));
+  handleCursorRunnerEvent({
+    type: 'assistant',
+    message: { role: 'assistant', content: [{ type: 'text', text: 'working' }] },
+    session_id: 'cursor-session-1',
+  }, state, () => {});
+  handleCursorRunnerEvent({
+    type: 'result',
+    subtype: 'success',
+    is_error: false,
+    result: 'CURSOR_DONE',
+    session_id: 'cursor-session-1',
+    usage: { inputTokens: 2, outputTokens: 3 },
+  }, state, () => {});
+
+  assert.equal(state.threadId, 'cursor-session-1');
+  assert.deepEqual(bridges, ['cursor-session-1']);
+  assert.deepEqual(state.messages, ['working']);
+  assert.deepEqual(state.finalAnswerMessages, ['CURSOR_DONE']);
+  assert.deepEqual(state.usage, { inputTokens: 2, outputTokens: 3 });
+  assert.equal(state.meta.cursorSawInit, true);
+  assert.equal(state.meta.cursorSawResult, true);
+  assert.equal(state.meta.cursorModel, 'GPT-5.6 Sol');
+});
+
+test('handleCursorRunnerEvent preserves native result errors', () => {
+  const state = {
+    messages: [],
+    finalAnswerMessages: [],
+    reasonings: [],
+    logs: [],
+    usage: null,
+    threadId: null,
+    meta: {},
+  };
+  handleCursorRunnerEvent({
+    type: 'result',
+    subtype: 'error',
+    is_error: true,
+    result: 'Cursor authentication expired',
+    session_id: 'cursor-session-2',
+  }, state, () => {});
+  assert.equal(state.meta.cursorError, 'Cursor authentication expired');
+  assert.deepEqual(state.logs, ['Cursor authentication expired']);
+  assert.deepEqual(state.finalAnswerMessages, []);
+});
 
 test('handlePiFamilyRunnerEvent captures session header, reasoning, final text, and usage', () => {
   const state = {
@@ -48,6 +113,64 @@ test('handlePiFamilyRunnerEvent captures session header, reasoning, final text, 
   assert.deepEqual(state.reasonings, ['checked the repository']);
   assert.deepEqual(state.finalAnswerMessages, ['PI_FAMILY_OK']);
   assert.deepEqual(state.usage, { input: 12, output: 3, totalTokens: 15 });
+});
+
+test('handleGrokRunnerEvent assembles streaming text and requires the end session', () => {
+  const state = {
+    messages: [],
+    finalAnswerMessages: [],
+    reasonings: [],
+    logs: [],
+    usage: null,
+    threadId: null,
+    meta: {},
+  };
+  const bridges = [];
+  handleGrokRunnerEvent({ type: 'thought', data: 'checking' }, state, () => {});
+  handleGrokRunnerEvent({ type: 'text', data: 'GROK_' }, state, () => {});
+  handleGrokRunnerEvent({ type: 'text', data: 'OK' }, state, () => {});
+  handleGrokRunnerEvent({
+    type: 'end',
+    stopReason: 'EndTurn',
+    sessionId: 'grok-session-1',
+    usage: { inputTokens: 10, outputTokens: 2 },
+  }, state, (sessionId) => bridges.push(sessionId));
+
+  assert.deepEqual(state.reasonings, ['checking']);
+  assert.deepEqual(state.finalAnswerMessages, ['GROK_OK']);
+  assert.equal(state.threadId, 'grok-session-1');
+  assert.deepEqual(bridges, ['grok-session-1']);
+  assert.equal(state.meta.grokSawEnd, true);
+  assert.deepEqual(state.usage, { inputTokens: 10, outputTokens: 2 });
+});
+
+test('handleGrokRunnerEvent separates pre-tool commentary from the final answer', () => {
+  const state = {
+    messages: [],
+    finalAnswerMessages: [],
+    reasonings: [],
+    logs: [],
+    usage: null,
+    threadId: null,
+    meta: {},
+  };
+
+  handleGrokRunnerEvent({ type: 'text', data: 'I will inspect the workspace.' }, state, () => {});
+  handleGrokRunnerEvent({
+    type: 'tool_call',
+    toolCallId: 'call-1',
+    toolName: 'run_terminal_command',
+    rawInput: { command: 'pwd' },
+  }, state, () => {});
+  handleGrokRunnerEvent({ type: 'text', data: 'GROK_TOOL_OK' }, state, () => {});
+  handleGrokRunnerEvent({
+    type: 'end',
+    stopReason: 'end_turn',
+    sessionId: 'grok-session-2',
+  }, state, () => {});
+
+  assert.deepEqual(state.messages, ['I will inspect the workspace.']);
+  assert.deepEqual(state.finalAnswerMessages, ['GROK_TOOL_OK']);
 });
 
 test('handleCodexRunnerEvent captures codex 0.111 item.completed final answer', () => {

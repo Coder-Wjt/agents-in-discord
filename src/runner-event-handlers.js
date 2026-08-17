@@ -1,5 +1,7 @@
 import { createClaudeProviderAdapter } from './providers/claude.js';
 import { createCodexProviderAdapter } from './providers/codex.js';
+import { createCursorProviderAdapter } from './providers/cursor.js';
+import { createGrokProviderAdapter } from './providers/grok.js';
 import { createAntigravityProviderAdapter } from './providers/antigravity.js';
 import { createZCodeProviderAdapter } from './providers/zcode.js';
 import { createPiProviderAdapter } from './providers/pi.js';
@@ -26,6 +28,12 @@ export function createRunnerEventParser({
     createClaudeProviderAdapter({
       parseEvent: (event, state, ensureSessionBridge) => handleClaudeRunnerEvent(event, state, ensureSessionBridge),
     }),
+    createCursorProviderAdapter({
+      parseEvent: (event, state, ensureSessionBridge) => handleCursorRunnerEvent(event, state, ensureSessionBridge),
+    }),
+    createGrokProviderAdapter({
+      parseEvent: (event, state, ensureSessionBridge) => handleGrokRunnerEvent(event, state, ensureSessionBridge),
+    }),
     createAntigravityProviderAdapter({
       parseEvent: (event, state, ensureSessionBridge) => handleAntigravityRunnerEvent(event, state, ensureSessionBridge),
     }),
@@ -44,6 +52,101 @@ export function createRunnerEventParser({
     const adapter = providerAdapters.get(normalizeProvider(provider));
     adapter.runtime.parseEvent(event, state, ensureSessionBridge);
   };
+}
+
+export function handleCursorRunnerEvent(event, state, ensureSessionBridge = () => {}) {
+  const eventType = String(event?.type || '').trim().toLowerCase();
+  const sessionId = String(event?.session_id || event?.sessionId || '').trim();
+  if (sessionId) {
+    state.threadId = sessionId;
+    ensureSessionBridge(sessionId);
+  }
+
+  if (eventType === 'system' && String(event?.subtype || '').trim().toLowerCase() === 'init') {
+    state.meta.cursorSawInit = true;
+    const model = String(event?.model || '').trim();
+    if (model) state.meta.cursorModel = model;
+    return;
+  }
+
+  if (eventType === 'assistant') {
+    const text = extractCursorMessageText(event?.message);
+    if (text) appendUniqueText(state.messages, text);
+    return;
+  }
+
+  if (eventType !== 'result') return;
+  state.meta.cursorSawResult = true;
+  const subtype = String(event?.subtype || '').trim().toLowerCase();
+  const isError = event?.is_error === true || subtype !== 'success';
+  if (isError) {
+    const error = String(event?.error || event?.result || event?.message || 'Cursor Agent returned an error').trim();
+    state.meta.cursorError = error;
+    state.logs.push(error);
+    return;
+  }
+
+  const text = String(event?.result || '').trim();
+  if (text) appendUniqueText(state.finalAnswerMessages, text);
+  if (event?.usage && typeof event.usage === 'object') state.usage = event.usage;
+}
+
+function extractCursorMessageText(message) {
+  if (!message || typeof message !== 'object') return '';
+  const parts = [];
+  for (const part of Array.isArray(message.content) ? message.content : []) {
+    if (String(part?.type || '').trim().toLowerCase() !== 'text') continue;
+    const text = String(part?.text || '').trim();
+    if (text) parts.push(text);
+  }
+  return parts.join('\n\n').trim();
+}
+
+export function handleGrokRunnerEvent(event, state, ensureSessionBridge = () => {}) {
+  const eventType = String(event?.type || '').trim().toLowerCase();
+  if (eventType === 'text') {
+    state.meta.grokCurrentTextBuffer = `${state.meta.grokCurrentTextBuffer || ''}${String(event?.data || '')}`;
+    return;
+  }
+  if (eventType === 'thought') {
+    const text = String(event?.data || '').trim();
+    if (text) appendUniqueText(state.reasonings, text);
+    return;
+  }
+  if (eventType === 'error') {
+    const message = String(event?.message || event?.data || 'Grok runner returned an error').trim();
+    state.meta.grokError = message;
+    state.logs.push(message);
+    return;
+  }
+  if (eventType === 'tool_call') {
+    const commentary = String(state.meta.grokCurrentTextBuffer || '').trim();
+    if (commentary) appendUniqueText(state.messages, commentary);
+    state.meta.grokCurrentTextBuffer = '';
+    state.meta.grokSawToolCall = true;
+    return;
+  }
+  if (eventType !== 'end') return;
+
+  state.meta.grokSawEnd = true;
+  const sessionId = String(event?.sessionId || event?.session_id || '').trim();
+  if (sessionId) {
+    state.threadId = sessionId;
+    ensureSessionBridge(sessionId);
+  }
+  const text = String(state.meta.grokCurrentTextBuffer || '').trim();
+  const stopReason = String(event?.stopReason || event?.stop_reason || '').trim();
+  if (text && isSuccessfulGrokStopReason(stopReason)) appendUniqueText(state.finalAnswerMessages, text);
+  if (event?.usage && typeof event.usage === 'object') state.usage = event.usage;
+  state.meta.grokStopReason = stopReason;
+}
+
+export function normalizeGrokStopReason(value) {
+  return String(value || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '');
+}
+
+export function isSuccessfulGrokStopReason(value) {
+  return ['endturn', 'stop', 'complete', 'completed'].includes(normalizeGrokStopReason(value));
 }
 
 export function handlePiFamilyRunnerEvent(event, state, ensureSessionBridge = () => {}) {
