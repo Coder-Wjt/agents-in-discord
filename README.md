@@ -1,6 +1,6 @@
 # Agents in Discord
 
-在 Discord 线程里运行 Codex CLI、Claude Code、Antigravity CLI、ZCode CLI、Pi Agent 和 Oh My Pi 的 bot。
+在 Discord 线程里运行 Codex CLI、Claude Code、Cursor Agent、Grok Build、Antigravity CLI、ZCode CLI、Pi Agent 和 Oh My Pi 的 bot。
 
 它是一个独立 bridge，不是 OpenClaw 插件，也不需要 OpenClaw。
 
@@ -14,7 +14,7 @@ ZCode CLI 支持从 [v0.13.0](https://github.com/atou42/agents-in-discord/releas
 
 一个 Discord 频道或线程，对应一条 provider 会话。
 
-你可以在同一个 Discord 服务器里使用共享 bot，也可以把 Codex、Claude、Antigravity、ZCode、Pi、OMP 拆成独立 bot。每个 provider 有自己的 session、workspace、模型和运行配置，不会混在一起。Pi 和 OMP 共用兼容层，但会分别读取 `~/.pi` 和 `~/.omp`，恢复参数和权限参数也按各自 CLI 处理。ZCode 使用 headless JSON runner。Antigravity 的模型菜单会合并当前设置、官方 reasoning model 列表和本机日志里出现过的模型。
+你可以在同一个 Discord 服务器里使用共享 bot，也可以把 Codex、Claude、Cursor、Grok、Antigravity、ZCode、Pi、OMP 拆成独立 bot。每个 provider 有自己的 session、workspace、模型和运行配置，不会混在一起。Cursor 和 Grok 使用原生 JSON 流与真实 session id；安全模式把文件操作限制在当前 workspace。Pi 和 OMP 共用兼容层，但会分别读取 `~/.pi` 和 `~/.omp`，恢复参数和权限参数也按各自 CLI 处理。ZCode 使用 headless JSON runner。Antigravity 的模型菜单会合并当前设置、官方 reasoning model 列表和本机日志里出现过的模型。
 
 长任务不会一直刷屏。bot 会更新进度卡，也可以按频道设置成持续发送过程消息。最终回复是否 @ 发起人，也可以在设置里选。
 
@@ -39,6 +39,8 @@ Codex 的安全模式现在使用 workspace-write 沙盒，并把需要审批的
 ```bash
 codex --version
 claude --version
+agent --version
+grok --version
 agy --version
 zcode --version
 pi --version
@@ -50,6 +52,8 @@ omp --version
 ```env
 CODEX_BIN=/opt/homebrew/bin/codex
 CLAUDE_BIN=/opt/homebrew/bin/claude
+CURSOR_BIN=/Users/you/.local/bin/agent
+GROK_BIN=/Users/you/.grok/bin/grok
 ANTIGRAVITY_BIN=/opt/homebrew/bin/agy
 ZCODE_BIN=/Users/you/.local/bin/zcode
 PI_BIN=/Users/you/.local/bin/pi
@@ -71,7 +75,7 @@ npm start
 
 ## Discord 里怎么用
 
-默认 shared bot 的 slash 前缀是 `cx_`。独立 Claude、Antigravity、ZCode、Pi 和 OMP bot 默认使用 `cc_`、`ag_`、`zc_`、`pi_` 和 `omp_`。
+默认 shared bot 的 slash 前缀是 `cx_`。独立 Claude、Cursor、Grok、Antigravity、ZCode、Pi 和 OMP bot 默认使用 `cc_`、`cursor_`、`grok_`、`ag_`、`zc_`、`pi_` 和 `omp_`。
 
 最常用的入口是这些。
 
@@ -228,6 +232,16 @@ CLAUDE__DISCORD_TOKEN=...
 CLAUDE__DEFAULT_WORKSPACE_DIR=/Users/you/claude-work
 CLAUDE__SLASH_PREFIX=cc
 
+CURSOR__DISCORD_TOKEN=...
+CURSOR__DEFAULT_WORKSPACE_DIR=/Users/you/cursor-work
+CURSOR__SLASH_PREFIX=cursor
+CURSOR_BIN=/Users/you/.local/bin/agent
+
+GROK__DISCORD_TOKEN=...
+GROK__DEFAULT_WORKSPACE_DIR=/Users/you/grok-work
+GROK__SLASH_PREFIX=grok
+GROK_BIN=/Users/you/.grok/bin/grok
+
 ANTIGRAVITY__DISCORD_TOKEN=...
 ANTIGRAVITY__DEFAULT_WORKSPACE_DIR=/Users/you/antigravity-work
 ANTIGRAVITY__SLASH_PREFIX=ag
@@ -251,11 +265,12 @@ OMP_BIN=/Users/you/.local/bin/omp
 访问控制建议至少设置 `ALLOWED_CHANNEL_IDS` 或 `ALLOWED_USER_IDS`。多人服务器里不要默认使用 dangerous mode。
 
 compact 相关配置可以在 `.env` 里设默认，也可以在 Discord 里按频道覆盖。
+压缩阈值按 provider 隔离。Codex 使用 `CODEX__MAX_INPUT_TOKENS_BEFORE_COMPACT`；其他 provider 未配置时保持未设置，交给各自 CLI 的默认行为。需要覆盖时使用对应的 `<PROVIDER>__MAX_INPUT_TOKENS_BEFORE_COMPACT`。
 
 ```env
 COMPACT_STRATEGY=native
 COMPACT_ON_THRESHOLD=true
-MAX_INPUT_TOKENS_BEFORE_COMPACT=272000
+CODEX__MAX_INPUT_TOKENS_BEFORE_COMPACT=272000
 ```
 
 进度卡默认只展示 agent 自己的过程叙述，不展示模型的 reasoning 摘要。想开的话设 `SHOW_REASONING=true`，同时 CLI 那边也要产出 reasoning 事件——Codex 需要在 `~/.codex/config.toml` 里设 `model_reasoning_summary = "detailed"`。
@@ -301,6 +316,8 @@ macOS 上推荐用仓库自带脚本重启 bot 服务。
 ```bash
 scripts/restart-discord-bot-service.sh codex
 scripts/restart-discord-bot-service.sh claude
+scripts/restart-discord-bot-service.sh cursor
+scripts/restart-discord-bot-service.sh grok
 scripts/restart-discord-bot-service.sh antigravity
 scripts/restart-discord-bot-service.sh zcode
 scripts/restart-discord-bot-service.sh pi
@@ -383,6 +400,7 @@ npm run release:major
 ```bash
 which codex
 which claude
+which agent
 which agy
 which zcode
 which pi

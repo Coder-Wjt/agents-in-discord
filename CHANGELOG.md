@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 
 The format is based on Keep a Changelog and this project follows Semantic Versioning.
 
+## [0.15.0] - 2026-08-17
+
+### Added
+- Added Cursor Agent as a first-class shared or dedicated provider, including streaming JSON execution, workspace-bound chat resume, CLI-backed model discovery, provider-scoped sessions, safe and dangerous permission modes, slash commands, service management, and explicit protocol failures.
+- Added Grok Build as a first-class shared or dedicated provider, including streaming JSON execution, workspace-bound session resume, model and effort controls, provider-native compaction, image references, service management, and live tool progress.
+
+### Changed
+- Made command, settings, status, help, session, workspace, and compaction surfaces follow each provider's real capabilities instead of exposing Codex-only controls everywhere.
+- Isolated compact thresholds by provider so an unset non-Codex provider keeps its own CLI default instead of inheriting Codex's token limit.
+- Added ZCode rollout progress bridging so the progress card can show the observed model and tool activity from the active session.
+
+### Fixed
+- Rejected cancelled, incomplete, malformed, or output-free Cursor and Grok runs instead of reporting a successful task.
+- Preserved Grok pre-tool commentary as progress while keeping only the post-tool answer as the final result.
+- Rejected corrupt persisted compact thresholds without rewriting the original session file, and stopped unset thresholds from being coerced to zero.
+- Completed the Codex app-server initialization handshake, allowed longer native forks, and replayed every chunk of the latest parent answer into a fork thread.
+
 ## [0.14.0] - 2026-07-25
 
 ### Added

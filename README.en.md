@@ -1,6 +1,6 @@
 # Agents in Discord
 
-A standalone Discord bot that lets you direct **Codex CLI**, **Claude Code**, **Antigravity CLI**, **ZCode CLI**, **Pi Agent**, and **Oh My Pi** from inside Discord.
+A standalone Discord bot that lets you direct **Codex CLI**, **Claude Code**, **Cursor Agent**, **Grok Build**, **Antigravity CLI**, **ZCode CLI**, **Pi Agent**, and **Oh My Pi** from inside Discord.
 
 > This project is a standalone Discord bot / bridge. It is **not** an OpenClaw plugin, and it does **not** depend on OpenClaw to run.
 
@@ -20,6 +20,8 @@ ZCode CLI support is available starting with [v0.13.0](https://github.com/atou42
 - Provider-aware runtime surface:
   - Codex: rollout sessions, global `~/.codex/sessions` history, raw config passthrough, configurable `native_limit`
   - Claude: project sessions, portable resume across workspaces, provider-default native compaction
+  - Cursor: streaming JSON runs, workspace-bound chat resume, CLI-backed model catalog, and sandboxed safe mode
+  - Grok: streaming JSON runs, workspace-bound session resume, provider-native compaction, and sandboxed safe mode
   - Antigravity: conversations, workspace-bound resume, provider-default native compaction, model choices merged from local Antigravity settings, documented reasoning models, and observed CLI logs
   - ZCode: headless JSON runs, file attachments, workspace-bound resume, and rollout history from `~/.zcode/cli/rollout`
 - Self-healing runtime: auto relogin with backoff after transient Discord/runtime failures
@@ -47,12 +49,14 @@ ZCode CLI support is available starting with [v0.13.0](https://github.com/atou42
 - Install the CLI(s) you plan to use
   - Codex: `codex` available in shell, or set `CODEX_BIN=/absolute/path/to/codex`
   - Claude: `claude` available in shell, or set `CLAUDE_BIN=/absolute/path/to/claude`
+  - Cursor: `agent` available in shell, or set `CURSOR_BIN=/absolute/path/to/agent`
+  - Grok: `grok` available in shell, or set `GROK_BIN=/absolute/path/to/grok`
   - Antigravity: `agy` available in shell, or set `ANTIGRAVITY_BIN=/absolute/path/to/agy`
   - ZCode: `zcode` available in shell, or set `ZCODE_BIN=/absolute/path/to/zcode`
 - If the CLI itself needs login, complete that in the CLI first; this project does not manage provider auth in `.env`
 - One or two Discord Application/Bot tokens
   - Shared mode: one bot token is enough
-  - Dedicated mode: use separate tokens for Codex, Claude, Antigravity, ZCode, Pi, and OMP bots
+  - Dedicated mode: use separate tokens for Codex, Claude, Cursor, Grok, Antigravity, ZCode, Pi, and OMP bots
 
 ## Quickstart
 
@@ -141,11 +145,13 @@ Provider-native session aliases:
 
 - Codex: `/cx_rollout_sessions`, `/cx_rollout_resume`
 - Claude: `/cc_project_sessions`, `/cc_project_resume`
+- Cursor: `/cursor_cursor_sessions`, `/cursor_cursor_resume`
+- Grok: `/grok_grok_sessions`, `/grok_grok_resume`
 - Antigravity: `/ag_conversation_sessions`, `/ag_conversation_resume`
 - ZCode: `/zc_zcode_sessions`, `/zc_zcode_resume`
 - The canonical `/cx_sessions`, `/cx_resume`, `!sessions`, and `!resume` still work; dedicated bots narrow the help text to the current provider's native terminology
 
-If you want **separate Discord bots** for Codex, Claude, Antigravity, and ZCode, keep everything in one `.env`, but group provider-specific values with clear prefixes:
+If you want **separate Discord bots** for Codex, Claude, Cursor, Grok, Antigravity, ZCode, Pi, and OMP, keep everything in one `.env`, but group provider-specific values with clear prefixes:
 
 ```bash
 # one-time setup
@@ -154,13 +160,15 @@ cp .env.example .env
 # start dedicated bots
 npm run start:codex
 npm run start:claude
+npm run start:cursor
+npm run start:grok
 npm run start:antigravity
 npm run start:zcode
 npm run start:pi
 npm run start:omp
 ```
 
-Use plain keys for shared Discord/runtime settings, then put dedicated bot settings under `CODEX__*`, `CLAUDE__*`, `ANTIGRAVITY__*`, `ZCODE__*`, `PI__*`, and `OMP__*` sections in the same file. In practice, you usually only need `DISCORD_TOKEN`, optional `DEFAULT_MODEL`, optional `DEFAULT_MODE`, and optional CLI path overrides. Pi and OMP share a compatibility layer while keeping their session stores, resume flags, and permission flags separate. Each locked instance uses its own provider-scoped state file and process lock, so channel/session context does not mix across bots.
+Use plain keys for shared Discord/runtime settings, then put dedicated bot settings under `CODEX__*`, `CLAUDE__*`, `CURSOR__*`, `GROK__*`, `ANTIGRAVITY__*`, `ZCODE__*`, `PI__*`, and `OMP__*` sections in the same file. In practice, you usually only need `DISCORD_TOKEN`, optional `DEFAULT_MODEL`, optional `DEFAULT_MODE`, and optional CLI path overrides. Pi and OMP share a compatibility layer while keeping their session stores, resume flags, and permission flags separate. Each locked instance uses its own provider-scoped state file and process lock, so channel/session context does not mix across bots.
 
 ## Configuration (.env)
 
@@ -168,13 +176,15 @@ See `.env.example`.
 
 Important knobs:
 
-- `ALLOWED_CHANNEL_IDS` / `ALLOWED_USER_IDS`: lock the bot down (recommended); dedicated bots can also use `CODEX__ALLOWED_*` / `CLAUDE__ALLOWED_*` / `ANTIGRAVITY__ALLOWED_*` / `ZCODE__ALLOWED_*`
+- `ALLOWED_CHANNEL_IDS` / `ALLOWED_USER_IDS`: lock the bot down (recommended); dedicated bots can also use `CODEX__ALLOWED_*` / `CLAUDE__ALLOWED_*` / `CURSOR__ALLOWED_*` / `GROK__ALLOWED_*` / `ANTIGRAVITY__ALLOWED_*` / `ZCODE__ALLOWED_*`
 - Shared `.env` keys: Discord/runtime settings only (`ALLOWED_*`, `WORKSPACE_ROOT`, `DEFAULT_WORKSPACE_DIR`, proxy, etc.)
 - `CODEX__*`: Codex bot section in the same `.env` (normally `CODEX__DISCORD_TOKEN`, plus optional `CODEX__DEFAULT_MODEL`, `CODEX__DEFAULT_MODE`, `CODEX__DEFAULT_WORKSPACE_DIR`, `CODEX__MAX_INPUT_TOKENS_BEFORE_COMPACT`, `CODEX__CODEX_BIN`)
 - `CLAUDE__*`: Claude bot section in the same `.env` (normally `CLAUDE__DISCORD_TOKEN`, plus optional `CLAUDE__DEFAULT_MODEL`, `CLAUDE__DEFAULT_MODE`, `CLAUDE__DEFAULT_WORKSPACE_DIR`, `CLAUDE__CLAUDE_BIN`)
+- `CURSOR__*`: Cursor bot section in the same `.env` (normally `CURSOR__DISCORD_TOKEN`, plus optional `CURSOR__DEFAULT_MODEL`, `CURSOR__DEFAULT_MODE`, `CURSOR__DEFAULT_WORKSPACE_DIR`, `CURSOR__SLASH_PREFIX`)
+- `GROK__*`: Grok bot section in the same `.env` (normally `GROK__DISCORD_TOKEN`, plus optional `GROK__DEFAULT_MODEL`, `GROK__DEFAULT_MODE`, `GROK__DEFAULT_WORKSPACE_DIR`, `GROK__SLASH_PREFIX`)
 - `ANTIGRAVITY__*`: Antigravity bot section in the same `.env` (normally `ANTIGRAVITY__DISCORD_TOKEN`, plus optional `ANTIGRAVITY__DEFAULT_MODE`, `ANTIGRAVITY__DEFAULT_WORKSPACE_DIR`, `ANTIGRAVITY__SLASH_PREFIX`)
 - `ZCODE__*`: ZCode bot section in the same `.env` (normally `ZCODE__DISCORD_TOKEN`, plus optional `ZCODE__DEFAULT_MODE`, `ZCODE__DEFAULT_WORKSPACE_DIR`, `ZCODE__SLASH_PREFIX`)
-- `BOT_PROVIDER`: leave empty for shared mode, or set `codex` / `claude` / `antigravity` / `zcode` to lock one bot instance to a single provider; the matching `npm run start:*` command sets this automatically
+- `BOT_PROVIDER`: leave empty for shared mode, or set `codex` / `claude` / `cursor` / `grok` / `antigravity` / `zcode` / `pi` / `omp` to lock one bot instance to a single provider; the matching `npm run start:*` command sets this automatically
 - `ENV_FILE`: optional extra overlay file if you really need one, but the normal setup is now a single grouped `.env`
 - `DISCORD_TOKEN_CODEX` / `DISCORD_TOKEN_CLAUDE` / `DISCORD_TOKEN_ZCODE`: legacy fallback for older single-file setups
 - Provider auth is outside this project's config surface; keep CLI-specific login or secrets outside this `.env` unless you intentionally need them for your own runtime
@@ -187,19 +197,21 @@ Important knobs:
 - `ENABLE_CONFIG_CMD`: enable/disable `!config` command (default `false`)
 - `CONFIG_ALLOWLIST`: allowed keys for `!config key=value` (comma-separated, or `*` to allow all)
 - `SLASH_PREFIX`: shared/global slash prefix; default `cx` in shared mode (e.g. `/cx_status`)
-- `CODEX__SLASH_PREFIX` / `CLAUDE__SLASH_PREFIX` / `ANTIGRAVITY__SLASH_PREFIX` / `ZCODE__SLASH_PREFIX`: dedicated-bot slash prefix overrides; defaults are `cx`, `cc`, `ag`, and `zc`
+- `CODEX__SLASH_PREFIX` / `CLAUDE__SLASH_PREFIX` / `CURSOR__SLASH_PREFIX` / `GROK__SLASH_PREFIX` / `ANTIGRAVITY__SLASH_PREFIX` / `ZCODE__SLASH_PREFIX`: dedicated-bot slash prefix overrides; defaults are `cx`, `cc`, `cursor`, `grok`, `ag`, and `zc`
 - `DEFAULT_UI_LANGUAGE`: default bot message language for new channels (`zh` or `en`, default `zh`)
 - `SHOW_REASONING`: stream model reasoning summaries onto the progress card (default `false`). The CLI has to emit reasoning events as well — for Codex, set `model_reasoning_summary = "detailed"` in `~/.codex/config.toml`. Note that `gpt-5.6` models (sol/terra/luna) emit no reasoning events under codex-cli 0.144.0, since their `models_cache.json` entries omit the `supports_reasoning_summaries` field the CLI requires; `gpt-5.4` does emit them.
 - `ONBOARDING_ENABLED_DEFAULT`: onboarding default for new channels (`true` or `false`, default `true`)
 - `DEFAULT_MODE`: `safe` or `dangerous`; the example `.env` now uses **`dangerous` by default** so local devs get full power out of the box. For shared / prod servers you should:
-  - change `CODEX__DEFAULT_MODE` / `CLAUDE__DEFAULT_MODE` / `ANTIGRAVITY__DEFAULT_MODE` / `ZCODE__DEFAULT_MODE` back to `safe` in `.env`, and only enable `/cx_mode dangerous` in trusted channels; or
+  - change `CODEX__DEFAULT_MODE` / `CLAUDE__DEFAULT_MODE` / `CURSOR__DEFAULT_MODE` / `GROK__DEFAULT_MODE` / `ANTIGRAVITY__DEFAULT_MODE` / `ZCODE__DEFAULT_MODE` back to `safe` in `.env`, and only enable dangerous mode in trusted channels; or
   - run the bot in a private guild where you trust all members
 - `DEFAULT_WORKSPACE_DIR`: optional shared default workspace for all providers
-- `CODEX__DEFAULT_WORKSPACE_DIR` / `CLAUDE__DEFAULT_WORKSPACE_DIR` / `ANTIGRAVITY__DEFAULT_WORKSPACE_DIR` / `ZCODE__DEFAULT_WORKSPACE_DIR`: provider-specific default workspaces that override the shared default
+- `CODEX__DEFAULT_WORKSPACE_DIR` / `CLAUDE__DEFAULT_WORKSPACE_DIR` / `CURSOR__DEFAULT_WORKSPACE_DIR` / `GROK__DEFAULT_WORKSPACE_DIR` / `ANTIGRAVITY__DEFAULT_WORKSPACE_DIR` / `ZCODE__DEFAULT_WORKSPACE_DIR`: provider-specific default workspaces that override the shared default
 - `CHILD_THREAD_WORKSPACE_MODE`: child thread workspace strategy; `inherit` reuses the parent channel's explicit workspace, while `separate` makes each child thread use its own provider default or `WORKSPACE_ROOT/<threadId>` fallback
 - `WORKSPACE_ROOT`: legacy fallback root used only when neither thread override nor provider default is configured
 - `CODEX_BIN`: codex command/path (default `codex`)
 - `CLAUDE_BIN`: claude command/path (default `claude`)
+- `CURSOR_BIN`: Cursor Agent command/path (default `agent`)
+- `GROK_BIN`: Grok command/path (default `grok`)
 - `ANTIGRAVITY_BIN`: agy command/path (default `agy`)
 - `ZCODE_BIN`: zcode command/path (default `zcode`)
 - Codex provider defaults for `model`, `effort`, and `fast mode` are read from `~/.codex/config.toml`; unless `[features].fast_mode = false` is set explicitly, fast mode defaults to on, and channel-level `!model`, `!effort`, and `!fast` only override the current thread
@@ -221,7 +233,7 @@ Important knobs:
 - `SELF_HEAL_ENABLED`: enable runtime self-healing (default `true`)
 - `SELF_HEAL_RESTART_DELAY_MS`: delay before self-heal restart (default `5000`)
 - `SELF_HEAL_MAX_LOGIN_BACKOFF_MS`: max retry backoff for Discord login (default `60000`)
-- `MAX_INPUT_TOKENS_BEFORE_COMPACT`: compact threshold
+- `<PROVIDER>__MAX_INPUT_TOKENS_BEFORE_COMPACT`: provider-scoped compact threshold. Codex can use `CODEX__MAX_INPUT_TOKENS_BEFORE_COMPACT`; an unset non-Codex provider keeps its own CLI/default behavior instead of inheriting the Codex value.
 - `COMPACT_STRATEGY`: `hard | native | off`
   - `hard`: bot summarizes then switches to a new session
   - `native`: use provider-native compaction and continue the same session
@@ -283,7 +295,7 @@ Default IDs:
 If you manage bot services manually:
 
 - The runtime now blocks dangerous `launchctl` operations for protected bot labels, or rewrites them to a safe restart helper
-- Prefer `scripts/restart-discord-bot-service.sh <codex|claude|antigravity|zcode|all>`
+- Prefer `scripts/restart-discord-bot-service.sh <codex|claude|cursor|grok|antigravity|zcode|all>`
 
 Check service and logs:
 
@@ -385,7 +397,7 @@ npm run send:channel -- --channel 1487823042121040036 --content "hello" --provid
 Notes:
 
 - By default it reuses the current `.env` Discord token, proxy settings, and `BOT_PROVIDER`
-- Use `--provider shared|codex|claude|antigravity` to choose a specific token group
+- Use `--provider shared|codex|claude|cursor|grok|antigravity` to choose a specific token group
 - Choose exactly one content source: `--content`, `--content-file`, or `--stdin`
 
 ## Standalone runtime notes
