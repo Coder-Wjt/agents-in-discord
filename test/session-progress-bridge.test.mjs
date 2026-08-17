@@ -234,6 +234,81 @@ test('claude session progress bridge forwards assistant tool_use snapshots even 
   }
 });
 
+test('zcode session progress bridge forwards new model and tool activity then stops cleanly', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agents-in-discord-progress-zcode-'));
+  const rolloutFile = path.join(root, 'model-io-sess_zcode.jsonl');
+  fs.writeFileSync(rolloutFile, `${JSON.stringify({
+    type: 'model_io',
+    sessionId: 'sess_zcode',
+    startedAt: '2026-03-25T10:00:00.000Z',
+    model: { providerId: 'bigmodel', modelId: 'GLM-5.3' },
+    response: { finishReason: 'stop', toolCalls: [] },
+  })}\n`);
+
+  const seen = [];
+  const factory = createSessionProgressBridgeFactory({
+    normalizeProvider: (provider) => provider,
+    extractRawProgressTextFromEvent: (event) => String(event?.args?.description || event?.type || ''),
+    findLatestRolloutFileBySessionId: () => null,
+    findLatestClaudeSessionFileBySessionId: () => null,
+    findLatestZCodeRolloutFile: () => readMatch(rolloutFile),
+  });
+
+  const stop = factory.startSessionProgressBridge({
+    provider: 'zcode',
+    threadId: 'sess_zcode',
+    workspaceDir: '/tmp/demo',
+    onEvent: (event) => seen.push(event),
+  });
+
+  await wait(150);
+  fs.appendFileSync(rolloutFile, `${JSON.stringify({
+    type: 'model_io',
+    sessionId: 'sess_zcode',
+    startedAt: '2026-03-25T10:00:01.000Z',
+    model: { providerId: 'bigmodel', modelId: 'GLM-5.3' },
+    response: {
+      finishReason: 'tool-calls',
+      toolCalls: [{
+        id: 'call-1',
+        name: 'Read',
+        input: { file_path: '/tmp/demo/README.md', description: 'Read project overview' },
+      }],
+    },
+  })}\n`);
+  fs.appendFileSync(rolloutFile, `${JSON.stringify({
+    type: 'model_io',
+    sessionId: 'sess_zcode',
+    startedAt: '2026-03-25T10:00:01.500Z',
+    model: { providerId: 'bigmodel', modelId: 'GLM-5.3' },
+    requestId: 'request-error',
+    error: { message: 'provider request failed' },
+  })}\n`);
+
+  await wait(900);
+  assert.equal(seen.length, 2);
+  assert.equal(seen[0]?.type, 'tool_execution_start');
+  assert.equal(seen[0]?.toolName, 'Read');
+  assert.equal(seen[0]?.model, 'GLM-5.3');
+  assert.equal(seen[0]?.args?.description, 'Read project overview');
+  assert.equal(seen[1]?.type, 'error');
+  assert.equal(seen[1]?.error, 'provider request failed');
+
+  stop();
+  fs.appendFileSync(rolloutFile, `${JSON.stringify({
+    type: 'model_io',
+    sessionId: 'sess_zcode',
+    startedAt: '2026-03-25T10:00:02.000Z',
+    model: { providerId: 'bigmodel', modelId: 'GLM-5.3' },
+    response: {
+      finishReason: 'tool-calls',
+      toolCalls: [{ id: 'call-2', name: 'Bash', input: { description: 'Should not be forwarded' } }],
+    },
+  })}\n`);
+  await wait(900);
+  assert.equal(seen.length, 2);
+});
+
 test('session progress bridge does not treat Pi-family sessions as Codex rollouts', () => {
   let codexLookupCount = 0;
   const factory = createSessionProgressBridgeFactory({

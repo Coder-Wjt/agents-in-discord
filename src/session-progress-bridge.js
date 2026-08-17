@@ -5,6 +5,7 @@ export function createSessionProgressBridgeFactory({
   extractRawProgressTextFromEvent,
   findLatestRolloutFileBySessionId,
   findLatestClaudeSessionFileBySessionId,
+  findLatestZCodeRolloutFile = () => null,
 } = {}) {
   function normalizeEventType(value) {
     return String(value || '').trim().toLowerCase().replace(/[./-]/g, '_');
@@ -102,10 +103,193 @@ export function createSessionProgressBridgeFactory({
     if (normalizedProvider === 'claude') {
       return startClaudeSessionProgressBridge({ threadId, workspaceDir, onEvent });
     }
-    if (['antigravity', 'zcode', 'pi', 'omp'].includes(normalizedProvider)) {
+    if (normalizedProvider === 'zcode') {
+      return startZCodeSessionProgressBridge({ threadId, workspaceDir, onEvent });
+    }
+    if (['grok', 'antigravity', 'pi', 'omp'].includes(normalizedProvider)) {
       return () => {};
     }
     return startCodexSessionProgressBridge({ threadId, onEvent });
+  }
+
+  function createZCodeProgressEvents(row) {
+    if (String(row?.type || '').trim().toLowerCase() !== 'model_io') return [];
+    const sessionId = String(row?.sessionId || '').trim() || null;
+    const model = String(
+      row?.model?.modelId
+      || row?.model?.id
+      || row?.request?.body?.model
+      || '',
+    ).trim() || null;
+    const base = {
+      sessionId,
+      model,
+      timestamp: row?.completedAt || row?.startedAt || null,
+      requestId: row?.requestId || null,
+      turnId: row?.turnId || null,
+    };
+    if (row?.error) {
+      return [{
+        ...base,
+        type: 'error',
+        error: String(row.error?.message || row.error || 'ZCode model request failed'),
+      }];
+    }
+
+    const toolCalls = Array.isArray(row?.response?.toolCalls) ? row.response.toolCalls : [];
+    if (toolCalls.length) {
+      return toolCalls.map((call) => ({
+        ...base,
+        type: 'tool_execution_start',
+        toolCallId: String(call?.id || '').trim() || null,
+        toolName: String(call?.name || 'tool').trim() || 'tool',
+        args: call?.input && typeof call.input === 'object' ? call.input : {},
+      }));
+    }
+
+    if (String(row?.response?.finishReason || '').trim().toLowerCase() === 'stop') {
+      return [{
+        ...base,
+        type: 'turn_completed',
+        usage: row?.response?.usage && typeof row.response.usage === 'object'
+          ? row.response.usage
+          : null,
+      }];
+    }
+    return [];
+  }
+
+  function startZCodeSessionProgressBridge({ threadId, workspaceDir, onEvent }) {
+    const sessionId = String(threadId || '').trim();
+    const normalizedWorkspaceDir = String(workspaceDir || '').trim();
+    if ((!sessionId && !normalizedWorkspaceDir) || typeof onEvent !== 'function') return () => {};
+
+    const bridgeStartedAtMs = Date.now();
+    const minMtimeMs = bridgeStartedAtMs - 2 * 60 * 1000;
+    const baselineMatch = findLatestZCodeRolloutFile({
+      sessionId,
+      workspaceDir: normalizedWorkspaceDir,
+      notOlderThanMs: 0,
+    });
+    const dedupeKeys = [];
+    const dedupeSet = new Set();
+
+    let stopped = false;
+    let rolloutFile = null;
+    let offset = 0;
+    let remainder = '';
+    let pollTimer = null;
+    let lastScanAt = 0;
+
+    const rememberKey = (key) => {
+      if (!key || dedupeSet.has(key)) return false;
+      dedupeSet.add(key);
+      dedupeKeys.push(key);
+      if (dedupeKeys.length > 500) {
+        const stale = dedupeKeys.shift();
+        if (stale) dedupeSet.delete(stale);
+      }
+      return true;
+    };
+
+    const handleSessionLine = (line) => {
+      const raw = String(line || '').trim();
+      if (!raw || !raw.startsWith('{') || !raw.endsWith('}')) return;
+      let row = null;
+      try {
+        row = JSON.parse(raw);
+      } catch {
+        return;
+      }
+      for (const event of createZCodeProgressEvents(row)) {
+        const key = [
+          event.requestId || '',
+          event.turnId || '',
+          event.type || '',
+          event.toolCallId || '',
+          event.timestamp || '',
+        ].join('|');
+        if (!rememberKey(key)) continue;
+        onEvent(event);
+      }
+    };
+
+    const consumeChunk = (chunk) => {
+      if (!chunk) return;
+      remainder += chunk;
+      const lines = remainder.split('\n');
+      remainder = lines.pop() ?? '';
+      for (const line of lines) handleSessionLine(line);
+    };
+
+    const readNewTail = () => {
+      if (!rolloutFile) return;
+      let stat = null;
+      try {
+        stat = fs.statSync(rolloutFile);
+      } catch {
+        rolloutFile = null;
+        offset = 0;
+        remainder = '';
+        return;
+      }
+      if (!stat.isFile()) return;
+      if (stat.size < offset) {
+        offset = 0;
+        remainder = '';
+      }
+      if (stat.size === offset) return;
+
+      const bytesToRead = stat.size - offset;
+      const fd = fs.openSync(rolloutFile, 'r');
+      try {
+        const buf = Buffer.allocUnsafe(bytesToRead);
+        const readBytes = fs.readSync(fd, buf, 0, bytesToRead, offset);
+        offset += readBytes;
+        consumeChunk(buf.toString('utf8', 0, readBytes));
+      } finally {
+        fs.closeSync(fd);
+      }
+    };
+
+    const resolveRolloutFile = (force = false) => {
+      const now = Date.now();
+      if (!force && now - lastScanAt < 2500) return false;
+      lastScanAt = now;
+      const match = findLatestZCodeRolloutFile({
+        sessionId,
+        workspaceDir: normalizedWorkspaceDir,
+        notOlderThanMs: minMtimeMs,
+      });
+      if (!match?.file) return false;
+      if (match.file === rolloutFile) return true;
+
+      rolloutFile = match.file;
+      offset = resolveInitialOffset({
+        match,
+        bridgeStartedAtMs,
+        baselineMatch,
+      });
+      remainder = '';
+      readNewTail();
+      return true;
+    };
+
+    const poll = () => {
+      if (stopped) return;
+      if (!resolveRolloutFile(!rolloutFile) && !rolloutFile) return;
+      readNewTail();
+    };
+
+    pollTimer = setInterval(poll, 700);
+    pollTimer.unref?.();
+    poll();
+
+    return () => {
+      stopped = true;
+      if (pollTimer) clearInterval(pollTimer);
+      pollTimer = null;
+    };
   }
 
   function startCodexSessionProgressBridge({ threadId, onEvent }) {
